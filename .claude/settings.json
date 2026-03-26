@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp /Users/kubotie/Desktop/cxm-next-app/app/src/app/components/ui/*.tsx /Users/kubotie/Desktop/cxm-next-app/src/components/ui/)",
+      "Bash(cp /Users/kubotie/Desktop/cxm-next-app/app/src/app/components/cards/*.tsx /Users/kubotie/Desktop/cxm-next-app/src/components/cards/)",
+      "Bash(cp /Users/kubotie/Desktop/cxm-next-app/app/src/app/components/org-chart/*.tsx /Users/kubotie/Desktop/cxm-next-app/src/components/org-chart/)",
+      "Bash(cp /Users/kubotie/Desktop/cxm-next-app/app/src/app/components/unified-log/*.tsx /Users/kubotie/Desktop/cxm-next-app/src/components/unified-log/)",
+      "Read(//dev/**)",
+      "Bash(grep -n \"useParams\" /Users/kubotie/Desktop/cxm-next-app/src/components/pages/*.tsx)",
+      "Bash(npm show:*)",
+      "Bash(npm install:*)",
+      "Bash(npx next:*)",
+      "Bash(grep -r \"from.*command\\\\|Command\" /Users/kubotie/Desktop/cxm-next-app/src/components/pages/*.tsx)",
+      "Bash(ls /Users/kubotie/Desktop/cxm-next-app/app/*.tsx)",
+      "Bash(echo 'no tsx at root of app/' find /Users/kubotie/Desktop/cxm-next-app/app -maxdepth 2 -name *.tsx -not -path */node_modules/*)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({**d.get\\(''''dependencies'''',{}\\), **d.get\\(''''devDependencies'''',{}\\)}, indent=2\\)\\)\")",
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(ls -la /Users/kubotie/Desktop/cxm-next-app/src/app/companies/[companyUid]/log/)"
+    ],
+    "additionalDirectories": [
+      "/Users/kubotie/Desktop/cxm-next-app/app/src/app/pages",
+      "/Users/kubotie/Desktop/cxm-next-app/src/app/companies/[companyId]",
+      "/^\\/\\/ @ts-nocheck$/{n;/^\\/\\/ @ts-nocheck$",
+      "/Users/kubotie/Desktop/cxm-next-app/src/app/api/support/[caseId]",
+      "/Users/kubotie/Desktop/cxm-next-app/src/app/api/company/[companyUid]",
+      "/Users/kubotie/Desktop/cxm-next-app/src/app/api/companies/[companyUid]/log"
+    ]
+  }
+}
