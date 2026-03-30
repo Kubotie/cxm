@@ -477,8 +477,10 @@ export interface RawSupportCaseAIState {
   urgency?: string | null;            // "high" | "medium" | "low"
   next_steps?: string | null;         // JSON 配列文字列 e.g. '["step1","step2"]'
   similar_case_ids?: string | null;   // JSON 配列文字列
-  // AI 生成タイトル（一覧・詳細の表示用 20〜40 文字）
+  // AI 生成タイトル（一覧表示用 20〜40 文字）
   display_title?: string | null;
+  // AI 整形済み本文（詳細画面表示用。不要な挨拶・署名・引用を除去した body）
+  display_message?: string | null;
   // AI サマリー生成で追加されるフィールド
   customer_intent?: string | null;
   product_area?: string | null;
@@ -511,8 +513,10 @@ export interface AppSupportCaseAIState {
   urgency: string;
   nextSteps: string[];
   similarCaseIds: string[];
-  // AI 生成タイトル（一覧・詳細の表示用）
+  // AI 生成タイトル（一覧表示用）
   displayTitle: string | null;
+  // AI 整形済み本文（詳細画面表示用）
+  displayMessage: string | null;
   // AI サマリー生成フィールド
   customerIntent: string;
   productArea: string;
@@ -546,6 +550,7 @@ export function toAppSupportCaseAIState(raw: RawSupportCaseAIState): AppSupportC
     sourceId: s(raw.source_record_id, ''),
     sourceTable: s(raw.source_queue, 'support_queue'),
     displayTitle: raw.display_title ? String(raw.display_title) : null,
+    displayMessage: raw.display_message ? String(raw.display_message) : null,
     summary: s(raw.summary),
     suggestedOwner: s(raw.suggested_owner, '—'),
     suggestedTeam: s(raw.suggested_team, '—'),
@@ -726,12 +731,20 @@ export function cseTicketToAppSupportCase(raw: RawCseTicket): AppSupportCase {
 
 export function toAppSupportCase(raw: RawSupportCase): AppSupportCase {
   const rawStatus = s(raw.routing_status).toLowerCase().replace(/ /g, '_');
+  // body: log_intercom の実カラム。original_message は存在しないため body を優先
+  const bodyText = raw.body ? s(raw.body) : (raw.original_message ? s(raw.original_message) : undefined);
+  // company: account_name（Intercom アカウント名）→ company_name → company_uid の優先順
+  const rawAccountName = raw.account_name ? String(raw.account_name).trim() : '';
+  const companyDisplay = rawAccountName
+    || (raw.company_name ? s(raw.company_name) : '')
+    || s(raw.company_uid, '—');
   return {
     id: raw.case_id ? s(raw.case_id) : String(raw.Id),
-    title: deriveTitle(raw.title, raw.original_message),
+    title: deriveTitle(raw.title, bodyText),
     caseType: deriveCaseType(raw),
-    source: s(raw.source, '—'),
-    company: s(raw.company_name, s(raw.company_uid, '—')),
+    // source: log_intercom に source カラムは存在しない → 固定値 'Intercom'
+    source: s(raw.source) || 'Intercom',
+    company: companyDisplay,
     companyId: s(raw.company_uid, ''),
     project: raw.project_name ? s(raw.project_name) : null,
     projectId: raw.project_id ? s(raw.project_id) : null,
@@ -740,14 +753,20 @@ export function toAppSupportCase(raw: RawSupportCase): AppSupportCase {
     routingStatus: ROUTING_STATUS_MAP[rawStatus] ?? s(raw.routing_status, 'unassigned'),
     sourceStatus: raw.source_status ? s(raw.source_status) : null,
     severity: s(raw.severity, 'medium'),
-    createdAt: raw.created_at ? String(raw.created_at).slice(0, 16).replace('T', ' ') : '—',
-    firstResponseTime: raw.first_response_time ? s(raw.first_response_time) : null,
+    // createdAt: log_intercom は sent_at_jst を使用（created_at は存在しない）
+    createdAt: (raw.sent_at_jst ?? raw.created_at)
+      ? String(raw.sent_at_jst ?? raw.created_at).slice(0, 16).replace('T', ' ')
+      : '—',
+    // firstResponseTime: log_intercom は first_response_at を使用
+    firstResponseTime: (raw.first_response_at ?? raw.first_response_time)
+      ? s(raw.first_response_at ?? raw.first_response_time)
+      : null,
     openDuration: s(raw.open_duration, '—'),
     waitingDuration: raw.waiting_duration ? s(raw.waiting_duration) : null,
     linkedCSETicket: raw.linked_cse_ticket ? s(raw.linked_cse_ticket) : null,
     relatedContent: n(raw.related_content_count),
-    originalMessage: raw.original_message ? s(raw.original_message) : undefined,
-    triageNote:      raw.triage_note      ? s(raw.triage_note)      : undefined,
+    originalMessage: bodyText,
+    triageNote:      raw.triage_note ? s(raw.triage_note) : undefined,
   };
 }
 

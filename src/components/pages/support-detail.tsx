@@ -2,8 +2,9 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { fetchSupportCaseAIState, fetchCseTickets } from "@/lib/nocodb-client";
-import type { AppSupportCaseAIState, AppCseTicket } from "@/lib/nocodb-client";
+import { fetchCaseDetail, fetchSupportCaseAIState, fetchCseTickets } from "@/lib/nocodb-client";
+import type { CaseDetail, AppSupportCaseAIState, AppCseTicket } from "@/lib/nocodb-client";
+import { routingLabel, routingColor, severityLabel, severityBg } from "@/lib/support/labels";
 import type { SupportSummaryApiResponse } from "@/lib/prompts/support-summary";
 import type { SupportTriageApiResponse } from "@/lib/prompts/support-triage";
 import type { SupportDraftReplyApiResponse } from "@/lib/prompts/support-draft-reply";
@@ -129,6 +130,9 @@ export function SupportDetail() {
   const params = useParams();
   const id = params.caseId as string;
   const [internalNote, setInternalNote] = useState("");
+
+  // ── source: 実ケースデータ（NocoDB log_intercom / cse_tickets から）─────
+  const [caseData, setCaseData] = useState<CaseDetail | null>(null);
 
   // ── derived: AI state（NocoDB から）─────────────────────────────────────
   const [aiState, setAiState] = useState<AppSupportCaseAIState | null>(null);
@@ -365,10 +369,10 @@ export function SupportDetail() {
   useEffect(() => {
     if (!id) return;
 
-    // derived: AI解析状態（support_case_ai_state テーブル）
-    fetchSupportCaseAIState(id, 'support_queue')
-      .then(data => { if (data) setAiState(data); })
-      .catch(err => console.warn('[SupportDetail] AI state fetch failed, using mock:', err));
+    // source: ケースデータ（log_intercom / cse_tickets — CaseDetail adapter 経由）
+    fetchCaseDetail(id)
+      .then(data => { if (data) setCaseData(data); })
+      .catch(err => console.warn('[SupportDetail] case fetch failed, using mock:', err));
 
     // source: リンクされた CSE Ticket（cseticket_queue テーブル）
     fetchCseTickets({ caseId: id })
@@ -376,10 +380,48 @@ export function SupportDetail() {
       .catch(err => console.warn('[SupportDetail] CSE tickets fetch failed:', err));
   }, [id]);
 
-  // source: オリジナルメッセージ・トリアージ・ルーティング履歴は
-  //         support_queue の拡張フィールドまたは別テーブルから取得予定
-  //         → OpenAI 連携フェーズまでは mock を使用する
-  const c = CASE_DETAIL;
+  // derived: AI解析状態（support_case_ai_state テーブル）
+  // caseData が取得できてから sourceTable を判定して fetch する。
+  // log_intercom → 'support_queue' / cse_tickets → 'cseticket_queue'
+  useEffect(() => {
+    if (!id) return;
+    const sourceTable = caseData?.sourceTable === 'cse_tickets' ? 'cseticket_queue' : 'support_queue';
+    fetchSupportCaseAIState(id, sourceTable)
+      .then(data => { if (data) setAiState(data); })
+      .catch(err => console.warn('[SupportDetail] AI state fetch failed:', err));
+  }, [id, caseData?.sourceTable]);
+
+  // 実ケースデータ（NocoDB）優先。未取得時は mock にフォールバック。
+  // firstResponse / routingHistory など NocoDB にないフィールドは mock のまま。
+  // CaseDetail は companyName/companyUid/projectName を使うが、
+  // c オブジェクトは CASE_DETAIL（company/companyId/project）との互換を維持するため
+  // ここでリマップする。JSX 側は変更不要。
+  const c = caseData
+    ? {
+        ...CASE_DETAIL,             // firstResponse / routingHistory は mock を維持
+        id:               caseData.id,
+        title:            caseData.title,    // adapter 解決済み（body excerpt fallback 含む）
+        caseType:         caseData.caseType,
+        source:           caseData.source,
+        company:          caseData.companyName,   // CaseDetail.companyName → c.company
+        companyId:        caseData.companyUid,    // CaseDetail.companyUid  → c.companyId
+        project:          caseData.projectName,   // CaseDetail.projectName → c.project
+        projectId:        caseData.projectId,
+        owner:            caseData.owner,
+        assignedTeam:     caseData.assignedTeam,
+        routingStatus:    caseData.routingStatus,
+        sourceStatus:     caseData.sourceStatus,
+        severity:         caseData.severity,
+        createdAt:        caseData.createdAt,
+        firstResponseTime: caseData.firstResponseTime,
+        openDuration:     caseData.openDuration,
+        waitingDuration:  caseData.waitingDuration,
+        linkedCSETicket:  caseData.linkedCSETicket,
+        relatedContent:   caseData.relatedContent,
+        originalMessage:  caseData.originalMessage,          // 常に string（空文字もあり得る）
+        triageNote:       caseData.triageNote ?? undefined,  // QueueItem は string | null
+      }
+    : CASE_DETAIL;
 
   // derived: AI サジェスト（取得済みなら API データ、なければ mock）
   const aiSuggestions = aiState
@@ -411,12 +453,18 @@ export function SupportDetail() {
                 </Link>
                 <div className="h-6 w-px bg-slate-300" />
                 <div>
-                  <h1 className="text-xl font-bold text-slate-900">{c.title}</h1>
+                  {/* タイトル優先順: AI display_title → adapter解決済みタイトル（source title / body excerpt / fallback）*/}
+                  <h1 className="text-xl font-bold text-slate-900">
+                    {aiState?.displayTitle ?? c.title}
+                  </h1>
                   <div className="flex items-center gap-2 mt-1">
                     <Badge variant="outline" className="text-xs">{c.caseType}</Badge>
                     <Badge variant="outline" className="text-xs">{c.source}</Badge>
                     <span className="text-xs text-slate-400">•</span>
                     <span className="text-xs text-slate-500">{c.id}</span>
+                    {aiState?.displayTitle && (
+                      <span className="text-xs text-violet-500">AI タイトル</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -517,7 +565,10 @@ export function SupportDetail() {
                   </CardHeader>
                   <CardContent>
                     <div className="bg-slate-50 border rounded-lg p-4">
-                      <pre className="whitespace-pre-wrap text-sm text-slate-700 font-sans">{c.originalMessage}</pre>
+                      {/* display_message（AI整形済み）が生成済みならそちらを優先 */}
+                      <pre className="whitespace-pre-wrap text-sm text-slate-700 font-sans">
+                        {aiState?.displayMessage ?? c.originalMessage}
+                      </pre>
                     </div>
                   </CardContent>
                 </Card>
@@ -643,35 +694,46 @@ export function SupportDetail() {
                     </CardContent>
                   )}
 
-                  {/* ── 未生成（初期状態: mock を薄く表示）── */}
+                  {/* ── 未生成（初期状態）── */}
                   {!summaryLoading && !summaryResult && !summaryError && (
-                    <CardContent className="space-y-4 opacity-60">
-                      <div>
-                        <div className="text-xs font-semibold text-blue-900 mb-1">要約</div>
-                        <p className="text-sm text-blue-800">{aiSuggestions.summary}</p>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <div className="text-xs font-semibold text-blue-900 mb-1">推奨オーナー</div>
-                          <p className="text-sm text-blue-800">{aiSuggestions.suggestedOwner}</p>
+                    <CardContent>
+                      {aiState ? (
+                        // NocoDB に保存済みの AI state があれば薄く表示
+                        <div className="space-y-4 opacity-60">
+                          <div>
+                            <div className="text-xs font-semibold text-blue-900 mb-1">要約</div>
+                            <p className="text-sm text-blue-800">{aiSuggestions.summary}</p>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <div className="text-xs font-semibold text-blue-900 mb-1">推奨オーナー</div>
+                              <p className="text-sm text-blue-800">{aiSuggestions.suggestedOwner}</p>
+                            </div>
+                            <div>
+                              <div className="text-xs font-semibold text-blue-900 mb-1">推奨チーム</div>
+                              <p className="text-sm text-blue-800">{aiSuggestions.suggestedTeam}</p>
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-blue-900 mb-2">Next Steps</div>
+                            <ul className="space-y-1">
+                              {aiSuggestions.nextSteps.map((step, idx) => (
+                                <li key={idx} className="text-sm text-blue-800 flex items-start gap-2">
+                                  <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                  {step}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                          <p className="text-xs text-blue-600">↑ 「Generate AI Summary」を押すとリアルタイムで生成します</p>
                         </div>
-                        <div>
-                          <div className="text-xs font-semibold text-blue-900 mb-1">推奨チーム</div>
-                          <p className="text-sm text-blue-800">{aiSuggestions.suggestedTeam}</p>
+                      ) : (
+                        // AI state 未保存 → モックを出さずにプロンプトだけ表示
+                        <div className="py-6 text-center opacity-60">
+                          <Lightbulb className="w-8 h-8 mx-auto text-blue-400 mb-2" />
+                          <p className="text-xs text-blue-600">「Generate Only」または「Generate &amp; Save」を押してサマリーを生成します</p>
                         </div>
-                      </div>
-                      <div>
-                        <div className="text-xs font-semibold text-blue-900 mb-2">Next Steps</div>
-                        <ul className="space-y-1">
-                          {aiSuggestions.nextSteps.map((step, idx) => (
-                            <li key={idx} className="text-sm text-blue-800 flex items-start gap-2">
-                              <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                              {step}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                      <p className="text-xs text-blue-600">↑ 「Generate AI Summary」を押すとリアルタイムで生成します</p>
+                      )}
                     </CardContent>
                   )}
                 </Card>
@@ -1081,8 +1143,8 @@ export function SupportDetail() {
                   </Card>
                 )}
 
-                {/* First Response */}
-                {c.firstResponse && (
+                {/* First Response: NocoDB にないフィールド。実データ取得時はモックを表示しない。*/}
+                {!caseData && c.firstResponse && (
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-base">First Response</CardTitle>
@@ -1096,7 +1158,8 @@ export function SupportDetail() {
                   </Card>
                 )}
 
-                {/* Routing History */}
+                {/* Routing History: NocoDB にないフィールド。実データ取得時はモックを表示しない。*/}
+                {!caseData && (
                 <Card>
                   <CardHeader><CardTitle className="text-base">Routing History</CardTitle></CardHeader>
                   <CardContent>
@@ -1118,8 +1181,10 @@ export function SupportDetail() {
                     </div>
                   </CardContent>
                 </Card>
+                )}
 
-                {/* Similar Cases */}
+                {/* Similar Cases: モックデータのみ。実データ取得時は非表示。*/}
+                {!caseData && (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base">Similar Cases</CardTitle>
@@ -1151,6 +1216,7 @@ export function SupportDetail() {
                     </div>
                   </CardContent>
                 </Card>
+                )}
 
                 {/* Internal Note */}
                 <Card>
@@ -1180,20 +1246,27 @@ export function SupportDetail() {
                   <CardHeader><CardTitle className="text-base">Case Details</CardTitle></CardHeader>
                   <CardContent className="space-y-3">
                     <div className="flex justify-between text-sm">
-                      <span className="text-slate-500">Current Owner</span>
-                      <span className="font-medium text-slate-900">{c.owner}</span>
+                      <span className="text-slate-500">担当者</span>
+                      {c.owner
+                        ? <span className="font-medium text-slate-900">{c.owner}</span>
+                        : <span className="text-slate-400 italic text-xs">未アサイン</span>
+                      }
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-slate-500">Assigned Team</span>
-                      <Badge variant="outline" className="text-xs">{c.assignedTeam}</Badge>
+                      <span className="text-slate-500">担当チーム</span>
+                      <Badge variant="outline" className="text-xs">{c.assignedTeam ?? '—'}</Badge>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-slate-500">Routing Status</span>
-                      <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-xs">{c.routingStatus}</Badge>
+                      <span className="text-slate-500">対応ステータス</span>
+                      <Badge variant="outline" className={`text-xs ${routingColor(c.routingStatus)}`}>
+                        {routingLabel(c.routingStatus)}
+                      </Badge>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-slate-500">Severity</span>
-                      <Badge className="bg-amber-600 text-white text-xs">{c.severity}</Badge>
+                      <span className="text-slate-500">重要度</span>
+                      <Badge className={`${severityBg(c.severity)} text-white text-xs`}>
+                        {severityLabel(c.severity)}
+                      </Badge>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-slate-500">Open Duration</span>
@@ -1279,8 +1352,8 @@ export function SupportDetail() {
                   </CardContent>
                 </Card>
 
-                {/* Related Actions */}
-                {RELATED_ACTIONS.length > 0 && (
+                {/* Related Actions / Related Content: モックデータのみ。実データ取得時は非表示。*/}
+                {!caseData && RELATED_ACTIONS.length > 0 && (
                   <Card>
                     <CardHeader><CardTitle className="text-base">Related Actions</CardTitle></CardHeader>
                     <CardContent>
@@ -1299,8 +1372,7 @@ export function SupportDetail() {
                   </Card>
                 )}
 
-                {/* Related Content */}
-                {RELATED_CONTENT.length > 0 && (
+                {!caseData && RELATED_CONTENT.length > 0 && (
                   <Card>
                     <CardHeader><CardTitle className="text-base">Related Content</CardTitle></CardHeader>
                     <CardContent>

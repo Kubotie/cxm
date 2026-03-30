@@ -114,8 +114,12 @@ export interface DraftReplyRequestBody {
 
 /** support_case_ai_state テーブルへの upsert ペイロード */
 export interface SupportCaseAIStateWritePayload {
-  source_id: string;
-  source_table: string;
+  source_record_id: string;
+  source_queue: string;
+  /** AI が生成した表示用タイトル（20〜40 文字）。summary 生成時に一緒に保存 */
+  display_title?: string;
+  /** AI が整形した本文（詳細画面表示用）。不要な挨拶・署名・引用を除去した body */
+  display_message?: string;
   summary?: string;
   suggested_owner?: string;
   suggested_team?: string;
@@ -147,9 +151,9 @@ export interface SupportAlertWritePayload {
   /** 既存レコードを更新する場合は指定。新規の場合は省略 */
   alert_id?: string;
   /** upsert キーの一部: source 案件の ID */
-  source_id: string;
-  /** upsert キーの一部: source テーブル名 */
-  source_table: string;
+  source_record_id: string;
+  /** upsert キーの一部: source キュー名 */
+  source_queue: string;
   alert_type: string;
   priority: string;
   title: string;
