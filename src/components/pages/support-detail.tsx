@@ -565,10 +565,9 @@ export function SupportDetail() {
                   </CardHeader>
                   <CardContent>
                     <div className="bg-slate-50 border rounded-lg p-4">
-                      {/* display_message（AI整形済み）が生成済みならそちらを優先 */}
-                      <pre className="whitespace-pre-wrap text-sm text-slate-700 font-sans">
-                        {aiState?.displayMessage ?? c.originalMessage}
-                      </pre>
+                      {/* originalMessage は adapter で優先順位解決済み */}
+                      {/* source.display_message → aiState.displayMessage → raw body */}
+                      <pre className="whitespace-pre-wrap text-sm text-slate-700 font-sans">{c.originalMessage}</pre>
                     </div>
                   </CardContent>
                 </Card>

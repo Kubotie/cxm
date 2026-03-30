@@ -303,6 +303,9 @@ export interface RawCseTicket {
   Id: number;
   ticket_id?: string | null;
   title?: string | null;
+  // 同期スクリプトが書き込む表示用キャッシュ列
+  display_title?: string | null;    // AI生成タイトル（20〜40文字）
+  display_message?: string | null;  // AI整形済み本文（挨拶・署名・引用を除去）
   status?: string | null;          // "open" | "in_progress" | "resolved" | "closed"
   priority?: string | null;        // "high" | "medium" | "low"
   company_uid?: string | null;
@@ -580,6 +583,9 @@ export function toAppSupportCaseAIState(raw: RawSupportCaseAIState): AppSupportC
 export interface RawSupportCase {
   Id: number;
   case_id?: string | null;
+  // ── 同期スクリプトが書き込む表示用キャッシュ列 ─────────────────────────────
+  display_title?: string | null;     // AI生成タイトル（20〜40文字）
+  display_message?: string | null;   // AI整形済み本文（挨拶・署名・引用を除去）
   // ── log_intercom 実在カラム ──────────────────────────────────────────────────
   body?: string | null;              // 問い合わせ本文（original_message は存在しない）
   sent_at_jst?: string | null;       // 受信日時 JST（created_at は存在しない）

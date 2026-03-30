@@ -103,29 +103,43 @@ function excerptFrom(text: string | null | undefined): string {
   return String(text).replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * タイトル解決（優先順位）:
+ * 1. source.display_title  — 同期スクリプトが書き込んだ AI 生成タイトル（最高品質）
+ * 2. aiState.displayTitle  — support_case_ai_state の display_title（後方互換）
+ * 3. source.title          — cse_tickets 等が持つ元タイトル
+ * 4. body 先頭抜粋         — raw body / description の冒頭
+ * 5. aiState.summary 先頭  — body もない場合の最終手段
+ * 6. '(タイトルなし)'      — fallback
+ */
 export function resolveTitle(
-  sourceTitle: string | null | undefined,
-  body: string | null | undefined,
+  sourceDisplayTitle: string | null | undefined,  // raw.display_title（同期キャッシュ）
+  sourceTitle: string | null | undefined,          // raw.title（cse_tickets 等）
+  body: string | null | undefined,                 // raw.body / raw.description
   aiState?: AppSupportCaseAIState | null,
 ): string {
-  // 1. source title（cse_tickets 等に title カラムがある場合）
-  const src = sourceTitle ? String(sourceTitle).trim() : '';
-  if (src) return src;
+  // 1. source.display_title（同期スクリプトが書き込んだ AI タイトル）
+  const sd = sourceDisplayTitle ? String(sourceDisplayTitle).trim() : '';
+  if (sd) return sd;
 
-  // 2. AI display_title（サマリー生成時に保存された表示タイトル）
+  // 2. aiState.displayTitle（support_case_ai_state — 後方互換）
   if (aiState?.displayTitle) return aiState.displayTitle;
 
-  // 3. 本文冒頭（log_intercom の body 等）— AI summary より優先
+  // 3. source.title（cse_tickets の title カラム等）
+  const st = sourceTitle ? String(sourceTitle).trim() : '';
+  if (st) return st;
+
+  // 4. body 先頭抜粋
   const excerpt = excerptFrom(body);
   if (excerpt) return excerpt.length > 40 ? excerpt.slice(0, 38) + '…' : excerpt;
 
-  // 4. AI summary 先頭（body がない場合の最終手段）
+  // 5. aiState.summary 先頭（body も title も全くない場合）
   if (aiState?.summary) {
     const sm = aiState.summary.trim();
     return sm.length > 40 ? sm.slice(0, 38) + '…' : sm;
   }
 
-  // 5. fallback
+  // 6. fallback
   return '(タイトルなし)';
 }
 
@@ -181,8 +195,9 @@ export function fromLogIntercomRecord(
   return {
     id:               raw.case_id ? s(raw.case_id) : String(raw.Id),
     sourceTable:      'log_intercom',
-    // log_intercom に title カラムは存在しないため null を渡す
-    title:            resolveTitle(null, body, aiState),
+    // display_title（同期キャッシュ） → aiState → body 抜粋 の優先順
+    // log_intercom に title カラムは存在しないため sourceTitle=null
+    title:            resolveTitle(raw.display_title, null, body, aiState),
     bodyExcerpt:      excerptFrom(body),
     caseType:         deriveCaseType(raw),
     source:           'Intercom',   // log_intercom に source カラムは存在しない → 固定値
@@ -228,7 +243,8 @@ export function fromCseTicketRecord(
   return {
     id:               ticketId,
     sourceTable:      'cse_tickets',
-    title:            resolveTitle(raw.title, body, aiState),
+    // display_title（同期キャッシュ） → aiState → source.title → body 抜粋 の優先順
+    title:            resolveTitle(raw.display_title, raw.title, body, aiState),
     bodyExcerpt:      excerptFrom(body),
     caseType:         raw.linked_case_id ? 'CSE Ticket Linked' : 'CSE Ticket',
     source:           'CSE Ticket',
@@ -265,10 +281,17 @@ export function fromLogIntercomRecordForDetail(
   raw: RawSupportCase,
   aiState?: AppSupportCaseAIState | null,
 ): CaseDetail {
+  // 詳細本文の優先順:
+  // 1. source.display_message（同期スクリプトが書き込んだ AI 整形済み本文）
+  // 2. aiState.displayMessage（support_case_ai_state — 後方互換）
+  // 3. raw.body（未整形の元本文）
+  const originalMessage =
+    (raw.display_message ? s(raw.display_message) : null)
+    ?? (aiState?.displayMessage ?? null)
+    ?? (raw.body ? s(raw.body) : '');
   return {
     ...fromLogIntercomRecord(raw, aiState),
-    // log_intercom は body カラムを使用（original_message は存在しない）
-    originalMessage: raw.body ? s(raw.body) : '',
+    originalMessage,
   };
 }
 
@@ -278,8 +301,16 @@ export function fromCseTicketRecordForDetail(
   raw: RawCseTicket,
   aiState?: AppSupportCaseAIState | null,
 ): CaseDetail {
+  // 詳細本文の優先順:
+  // 1. source.display_message（同期スクリプトが書き込んだ AI 整形済み本文）
+  // 2. aiState.displayMessage（support_case_ai_state — 後方互換）
+  // 3. raw.description（元本文）
+  const originalMessage =
+    (raw.display_message ? s(raw.display_message) : null)
+    ?? (aiState?.displayMessage ?? null)
+    ?? (raw.description ? s(raw.description) : '');
   return {
     ...fromCseTicketRecord(raw, aiState),
-    originalMessage: raw.description ? s(raw.description) : '',
+    originalMessage,
   };
 }
