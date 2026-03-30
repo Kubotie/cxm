@@ -108,22 +108,22 @@ export function resolveTitle(
   body: string | null | undefined,
   aiState?: AppSupportCaseAIState | null,
 ): string {
-  // 1. source title（DB の title カラム）
+  // 1. source title（cse_tickets 等に title カラムがある場合）
   const src = sourceTitle ? String(sourceTitle).trim() : '';
   if (src) return src;
 
-  // 2. AI display_title（サマリー生成時に生成・保存された表示タイトル）
+  // 2. AI display_title（サマリー生成時に保存された表示タイトル）
   if (aiState?.displayTitle) return aiState.displayTitle;
 
-  // 3. AI summary 先頭（サマリーがある場合）
+  // 3. 本文冒頭（log_intercom の body 等）— AI summary より優先
+  const excerpt = excerptFrom(body);
+  if (excerpt) return excerpt.length > 40 ? excerpt.slice(0, 38) + '…' : excerpt;
+
+  // 4. AI summary 先頭（body がない場合の最終手段）
   if (aiState?.summary) {
     const sm = aiState.summary.trim();
     return sm.length > 40 ? sm.slice(0, 38) + '…' : sm;
   }
-
-  // 4. 本文冒頭
-  const excerpt = excerptFrom(body);
-  if (excerpt) return excerpt.length > 40 ? excerpt.slice(0, 38) + '…' : excerpt;
 
   // 5. fallback
   return '(タイトルなし)';
@@ -134,6 +134,7 @@ export function resolveTitle(
 const CASE_TYPE_MAP: Record<string, string> = {
   inquiry:    'Inquiry',
   support:    'Support',
+  billing:    'Billing',
   cse_linked: 'CSE Ticket Linked',
 };
 
@@ -156,9 +157,9 @@ function deriveCaseType(raw: RawSupportCase): string {
     if (mapped) return mapped;
   }
   const mt = raw.massage_type ? String(raw.massage_type).toLowerCase() : '';
-  if (mt === 'support') return 'Support';
-  if (mt === 'inquiry') return 'Inquiry';
-  return 'Support'; // fallback: Support（Inquiry に寄らない）
+  const mtMapped = CASE_TYPE_MAP[mt];
+  if (mtMapped) return mtMapped;
+  return 'Support'; // fallback: Support（Inquiry / Billing に寄らない）
 }
 
 export function fromLogIntercomRecord(
@@ -167,26 +168,40 @@ export function fromLogIntercomRecord(
 ): QueueItem {
   // routing_status: スペースを _ に変換してから MAP lookup
   const rawStatus = s(raw.routing_status).toLowerCase().replace(/\s+/g, '_');
-  const body = raw.original_message ? s(raw.original_message) : undefined;
+
+  // 本文: log_intercom は body カラムを使用（original_message は存在しない）
+  const body = raw.body ? s(raw.body) : undefined;
+
+  // 会社名: account_name（Intercom のアカウント名） → sanitized company_uid → '—'
+  // log_intercom に company_name カラムは存在しない
+  const companyUid = sanitizeUid(raw.company_uid);
+  const rawAccountName = raw.account_name ? String(raw.account_name).trim() : '';
+  const companyName = rawAccountName || companyUid || '—';
+
   return {
     id:               raw.case_id ? s(raw.case_id) : String(raw.Id),
     sourceTable:      'log_intercom',
-    title:            resolveTitle(raw.title, body, aiState),
+    // log_intercom に title カラムは存在しないため null を渡す
+    title:            resolveTitle(null, body, aiState),
     bodyExcerpt:      excerptFrom(body),
     caseType:         deriveCaseType(raw),
-    source:           s(raw.source, '—'),
-    companyUid:       sanitizeUid(raw.company_uid),                             // Unknown_UID → ''
-    companyName:      resolveCompanyName(raw.company_name, raw.company_uid),    // Unknown_UID → '—'
+    source:           'Intercom',   // log_intercom に source カラムは存在しない → 固定値
+    companyUid,
+    companyName,
     projectName:      raw.project_name  ? s(raw.project_name)  : null,
     projectId:        raw.project_id    ? s(raw.project_id)    : null,
     owner:            raw.owner_name    ? s(raw.owner_name)    : null,
     assignedTeam:     raw.assigned_team ? s(raw.assigned_team) : null,
-    routingStatus:    ROUTING_STATUS_MAP[rawStatus] ?? s(raw.routing_status, 'unassigned'),
-    sourceStatus:     normalizeStatus(raw.source_status),                       // "in_progress" → "in progress"
-    severity:         normalizeSeverity(raw.severity),                          // "High" → "high"
-    createdAt:        raw.created_at ? String(raw.created_at).slice(0, 16).replace('T', ' ') : '—',
-    firstResponseTime: raw.first_response_time ? s(raw.first_response_time) : null,
-    openDuration:     raw.open_duration ? s(raw.open_duration) : '',            // 空文字 = 未取得（'—'と区別）
+    routingStatus:    ROUTING_STATUS_MAP[rawStatus] ?? 'unassigned',
+    sourceStatus:     null,         // log_intercom に source_status カラムは存在しない
+    severity:         normalizeSeverity(raw.severity),
+    // 日時: log_intercom は sent_at_jst を使用（created_at は存在しない）
+    createdAt:        raw.sent_at_jst
+                        ? String(raw.sent_at_jst).slice(0, 16).replace('T', ' ')
+                        : '—',
+    // 初回応答: log_intercom は first_response_at を使用（first_response_time は存在しない）
+    firstResponseTime: raw.first_response_at ? s(raw.first_response_at) : null,
+    openDuration:     raw.open_duration ? s(raw.open_duration) : '',
     waitingDuration:  raw.waiting_duration ? s(raw.waiting_duration) : null,
     linkedCSETicket:  raw.linked_cse_ticket ? s(raw.linked_cse_ticket) : null,
     relatedContent:   n(raw.related_content_count),
@@ -252,7 +267,8 @@ export function fromLogIntercomRecordForDetail(
 ): CaseDetail {
   return {
     ...fromLogIntercomRecord(raw, aiState),
-    originalMessage: raw.original_message ? s(raw.original_message) : '',
+    // log_intercom は body カラムを使用（original_message は存在しない）
+    originalMessage: raw.body ? s(raw.body) : '',
   };
 }
 

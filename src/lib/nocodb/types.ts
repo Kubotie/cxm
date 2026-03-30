@@ -392,7 +392,9 @@ export function toAppInquiry(raw: RawInquiry): AppInquiry {
 export interface RawSupportAlert {
   Id: number;
   alert_id?: string | null;
-  alert_type?: string | null;      // "Opportunity" | "Risk" | "Content Suggestion" | "Waiting on CSE" | "Urgent"
+  support_alert_id?: string | null;  // UUID（AI 生成時に自動採番）
+  ai_generated?: boolean | null;     // AI が生成したアラートか
+  alert_type?: string | null;        // 運用アラート種別
   priority?: string | null;        // "Critical" | "High" | "Medium" | "Low"
   title?: string | null;
   summary?: string | null;
@@ -407,8 +409,8 @@ export interface RawSupportAlert {
   suggested_action?: string | null;
   why_this_matters?: string | null;
   // AI 生成情報（source 案件との紐付け）
-  source_id?: string | null;
-  source_table?: string | null;
+  source_record_id?: string | null;
+  source_queue?: string | null;
   escalation_needed?: boolean | null;
   generated_by?: string | null;
   created_at?: string | null;
@@ -455,8 +457,8 @@ export function toAppSupportAlert(raw: RawSupportAlert): AppSupportAlert {
     status: s(raw.status, 'Untriaged'),
     suggestedAction: s(raw.suggested_action, '—'),
     whyThisMatters: s(raw.why_this_matters),
-    sourceId: raw.source_id ? String(raw.source_id) : null,
-    sourceTable: raw.source_table ? String(raw.source_table) : null,
+    sourceId: raw.source_record_id ? String(raw.source_record_id) : null,
+    sourceTable: raw.source_queue ? String(raw.source_queue) : null,
     escalationNeeded: raw.escalation_needed != null ? Boolean(raw.escalation_needed) : null,
     generatedBy: raw.generated_by ? String(raw.generated_by) : null,
     createdAt: raw.created_at ? String(raw.created_at).slice(0, 16).replace('T', ' ') : '—',
@@ -467,14 +469,16 @@ export function toAppSupportAlert(raw: RawSupportAlert): AppSupportAlert {
 
 export interface RawSupportCaseAIState {
   Id: number;
-  source_id?: string | null;
-  source_table?: string | null;       // "support_queue" | "inquiry_queue" | "cseticket_queue"
+  source_record_id?: string | null;
+  source_queue?: string | null;       // "support_queue" | "inquiry_queue" | "cseticket_queue"
   summary?: string | null;
   suggested_owner?: string | null;
   suggested_team?: string | null;
   urgency?: string | null;            // "high" | "medium" | "low"
   next_steps?: string | null;         // JSON 配列文字列 e.g. '["step1","step2"]'
   similar_case_ids?: string | null;   // JSON 配列文字列
+  // AI 生成タイトル（一覧・詳細の表示用 20〜40 文字）
+  display_title?: string | null;
   // AI サマリー生成で追加されるフィールド
   customer_intent?: string | null;
   product_area?: string | null;
@@ -507,6 +511,8 @@ export interface AppSupportCaseAIState {
   urgency: string;
   nextSteps: string[];
   similarCaseIds: string[];
+  // AI 生成タイトル（一覧・詳細の表示用）
+  displayTitle: string | null;
   // AI サマリー生成フィールド
   customerIntent: string;
   productArea: string;
@@ -537,8 +543,9 @@ function parseJsonArray(v: unknown): string[] {
 export function toAppSupportCaseAIState(raw: RawSupportCaseAIState): AppSupportCaseAIState {
   return {
     id: String(raw.Id),
-    sourceId: s(raw.source_id, ''),
-    sourceTable: s(raw.source_table, 'support_queue'),
+    sourceId: s(raw.source_record_id, ''),
+    sourceTable: s(raw.source_queue, 'support_queue'),
+    displayTitle: raw.display_title ? String(raw.display_title) : null,
     summary: s(raw.summary),
     suggestedOwner: s(raw.suggested_owner, '—'),
     suggestedTeam: s(raw.suggested_team, '—'),
@@ -568,27 +575,39 @@ export function toAppSupportCaseAIState(raw: RawSupportCaseAIState): AppSupportC
 export interface RawSupportCase {
   Id: number;
   case_id?: string | null;
-  title?: string | null;
+  // ── log_intercom 実在カラム ──────────────────────────────────────────────────
+  body?: string | null;              // 問い合わせ本文（original_message は存在しない）
+  sent_at_jst?: string | null;       // 受信日時 JST（created_at は存在しない）
+  update_at_jst?: string | null;
+  close_at_unix?: number | null;
+  account_name?: string | null;      // Intercom アカウント名（company_name は存在しない）
+  first_response_at?: string | null; // 初回応答日時（first_response_time は存在しない）
+  message_count?: number | null;
+  // ── log_intercom 行分類キー ──────────────────────────────────────────────────
+  // ※ スペルは DB の実カラム名に合わせて massage_type（message_ ではない）
+  massage_type?: string | null;      // "support" | "inquiry" | "billing"
   case_type?: string | null;         // "inquiry" | "support" | "cse_linked"
-  source?: string | null;            // "Intercom" | "Slack" | "Email" | "Chatwork" | "CSE Ticket"
+  // ── CSM チームが付与するカラム（存在する場合のみ値が入る）──────────────────
   company_uid?: string | null;
-  company_name?: string | null;
   project_name?: string | null;
   project_id?: string | null;
   owner_name?: string | null;
   assigned_team?: string | null;     // "CSM" | "Support" | "CSE"
   routing_status?: string | null;    // "unassigned" | "triaged" | "assigned" | "in progress" | "waiting on customer" | "waiting on CSE"
-  source_status?: string | null;     // "open" | "pending"
   severity?: string | null;          // "high" | "medium" | "low"
-  created_at?: string | null;
-  first_response_time?: string | null;
-  open_duration?: string | null;
-  waiting_duration?: string | null;
   linked_cse_ticket?: string | null;
   related_content_count?: number | null;
-  // AI サマリー生成の入力として使う（NocoDB フィールド追加後に流れる）
-  original_message?: string | null;
   triage_note?: string | null;
+  // ── 将来追加予定 / 旧フィールド（現在 log_intercom には存在しない）─────────
+  title?: string | null;             // 存在しない（resolveTitle で AI/body から導出）
+  original_message?: string | null;  // 存在しない（body を使用）
+  company_name?: string | null;      // 存在しない（account_name を使用）
+  source?: string | null;            // 存在しない（'Intercom' に固定）
+  created_at?: string | null;        // 存在しない（sent_at_jst を使用）
+  first_response_time?: string | null; // 存在しない（first_response_at を使用）
+  source_status?: string | null;     // 存在しない
+  open_duration?: string | null;
+  waiting_duration?: string | null;
   [key: string]: unknown;
 }
 
@@ -632,12 +651,85 @@ const ROUTING_STATUS_MAP: Record<string, string> = {
   waiting_on_cse:      'waiting on CSE',
 };
 
+/**
+ * タイトル未設定時に fallbackText（本文等）の冒頭から表示用タイトルを導出する。
+ * @param titleField  元テーブルの title カラム値
+ * @param fallbackText original_message / description など本文フィールド
+ */
+function deriveTitle(
+  titleField: string | null | undefined,
+  fallbackText: string | null | undefined,
+): string {
+  const src = titleField ? String(titleField).trim() : '';
+  if (src) return src;
+  if (fallbackText) {
+    const msg = String(fallbackText)
+      .replace(/[\r\n]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return msg.length > 40 ? msg.slice(0, 38) + '…' : msg;
+  }
+  return '(タイトルなし)';
+}
+
+/** massage_type / case_type から caseType を確定する */
+function deriveCaseType(raw: RawSupportCase): string {
+  // case_type フィールドが明示されている場合はそちらを優先
+  if (raw.case_type) {
+    const mapped = CASE_TYPE_MAP[String(raw.case_type).toLowerCase()];
+    if (mapped) return mapped;
+  }
+  // log_intercom の massage_type からの導出
+  const mt = raw.massage_type ? String(raw.massage_type).toLowerCase() : '';
+  if (mt === 'support') return 'Support';
+  if (mt === 'inquiry') return 'Inquiry';
+  // fallback: Support（Inquiry に寄らない）
+  return 'Support';
+}
+
+const CSE_STATUS_TO_ROUTING: Record<string, string> = {
+  open:        'waiting on CSE',
+  in_progress: 'in progress',
+  resolved:    'resolved_like',
+  closed:      'resolved_like',
+};
+
+/**
+ * RawCseTicket を AppSupportCase 形式に変換する（queue 統合表示用）。
+ * source table は更新しない。
+ */
+export function cseTicketToAppSupportCase(raw: RawCseTicket): AppSupportCase {
+  const statusKey = s(raw.status, 'open').toLowerCase();
+  return {
+    id: raw.ticket_id ? s(raw.ticket_id) : String(raw.Id),
+    title: deriveTitle(raw.title, raw.description),
+    caseType: raw.linked_case_id ? 'CSE Ticket Linked' : 'CSE Ticket',
+    source: 'CSE Ticket',
+    company: s(raw.company_name, s(raw.company_uid, '—')),
+    companyId: s(raw.company_uid, ''),
+    project: null,
+    projectId: null,
+    owner: null,
+    assignedTeam: 'CSE',
+    routingStatus: CSE_STATUS_TO_ROUTING[statusKey] ?? 'waiting on CSE',
+    sourceStatus: s(raw.status, 'open'),
+    severity: s(raw.priority, 'medium'),
+    createdAt: raw.created_at ? String(raw.created_at).slice(0, 16).replace('T', ' ') : '—',
+    firstResponseTime: null,
+    openDuration: '—',
+    waitingDuration: raw.waiting_hours != null ? `${raw.waiting_hours}h` : null,
+    linkedCSETicket: raw.ticket_id ? s(raw.ticket_id) : String(raw.Id),
+    relatedContent: 0,
+    originalMessage: raw.description ? s(raw.description) : undefined,
+  };
+}
+
 export function toAppSupportCase(raw: RawSupportCase): AppSupportCase {
   const rawStatus = s(raw.routing_status).toLowerCase().replace(/ /g, '_');
   return {
     id: raw.case_id ? s(raw.case_id) : String(raw.Id),
-    title: s(raw.title, '(タイトルなし)'),
-    caseType: CASE_TYPE_MAP[s(raw.case_type).toLowerCase()] ?? s(raw.case_type, 'Inquiry'),
+    title: deriveTitle(raw.title, raw.original_message),
+    caseType: deriveCaseType(raw),
     source: s(raw.source, '—'),
     company: s(raw.company_name, s(raw.company_uid, '—')),
     companyId: s(raw.company_uid, ''),
