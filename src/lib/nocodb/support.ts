@@ -5,27 +5,82 @@
 // テーブル ID が空（未設定）のときは空配列 / null を返す。
 // 呼び出し元で mock fallback すること。
 
-import { nocoFetch, TABLE_IDS } from './client';
+import { nocoFetch, nocoCount, TABLE_IDS } from './client';
 import {
   RawSupportCase,    AppSupportCase,         toAppSupportCase,
-  RawCseTicket,      AppCseTicket,            toAppCseTicket,
+  RawCseTicket,      AppCseTicket,            toAppCseTicket,  cseTicketToAppSupportCase,
   RawInquiry,        AppInquiry,              toAppInquiry,
   RawSupportAlert,   AppSupportAlert,         toAppSupportAlert,
   RawSupportCaseAIState, AppSupportCaseAIState, toAppSupportCaseAIState,
 } from './types';
 import { sourceRefToWhere, buildSourceRef } from '../support/source-ref';
 export { sourceRefToWhere, buildSourceRef }; // 呼び出し元が support.ts 経由で使えるよう re-export
+import {
+  fromLogIntercomRecord, fromCseTicketRecord,
+  fromLogIntercomRecordForDetail, fromCseTicketRecordForDetail,
+} from '../support/queue-adapter';
+import type { QueueItem, CaseDetail } from '../support/queue-adapter';
+export type { QueueItem, CaseDetail } from '../support/queue-adapter';
 
-// ── support_queue ────────────────────────────────────────────────────────────
+// ── 統合 Support Queue（UI 一覧用）──────────────────────────────────────────
+//
+// log_intercom（massage_type = support / inquiry）+ cse_tickets を統合して返す。
+// source table は更新しない。massage_type / caseType のマッピングはコード側で解決。
+// NOCODB_LOG_INTERCOM_TABLE_ID が未設定なら即エラー。NOCODB_CSE_TICKETS_TABLE_ID
+// が未設定の場合は CSE tickets なしで続行する（部分的フォールバック）。
 
-/** Support Queue の一覧を取得する（デフォルト 100 件, 新しい順）*/
-export async function getSupportQueueList(limit = 100): Promise<AppSupportCase[]> {
-  if (!TABLE_IDS.support_queue) return [];
-  const raw = await nocoFetch<RawSupportCase>(TABLE_IDS.support_queue, {
-    sort: '-created_at',
-    limit: String(limit),
-  });
-  return raw.map(toAppSupportCase);
+/**
+ * log_intercom + cse_tickets を統合した Support Queue 一覧を返す。
+ * caseType は massage_type / source から自動判定するため massage_type フィルタなし。
+ * 各レコードは fromLogIntercomRecord / fromCseTicketRecord で QueueItem に変換される。
+ */
+export async function getUnifiedQueueList(limit = 100): Promise<QueueItem[]> {
+  const logId = TABLE_IDS.log_intercom;
+  const cseId = TABLE_IDS.cse_tickets;
+
+  if (!logId && !cseId) {
+    throw new Error(
+      'NOCODB_LOG_INTERCOM_TABLE_ID と NOCODB_CSE_TICKETS_TABLE_ID がどちらも未設定です',
+    );
+  }
+
+  const [logItems, cseItems] = await Promise.all([
+    logId
+      ? nocoFetch<RawSupportCase>(logId, {
+          sort: '-CreatedAt',
+          limit: String(limit),
+        }).then(rows => rows.map(r => fromLogIntercomRecord(r)))
+      : Promise.resolve([] as QueueItem[]),
+    cseId
+      ? nocoFetch<RawCseTicket>(cseId, {
+          sort: '-CreatedAt',
+          limit: String(Math.min(limit, 50)),
+        }).then(rows => rows.map(r => fromCseTicketRecord(r))).catch(() => [] as QueueItem[])
+      : Promise.resolve([] as QueueItem[]),
+  ]);
+
+  const merged = [...logItems, ...cseItems];
+  // createdAt は "YYYY-MM-DD HH:MM" 形式なので辞書順 desc ソートが機能する
+  merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return merged.slice(0, limit);
+}
+
+/** Support Queue の一覧を取得する（後方互換。内部で getUnifiedQueueList を使用）*/
+export async function getSupportQueueList(limit = 100): Promise<QueueItem[]> {
+  return getUnifiedQueueList(limit);
+}
+
+/**
+ * cse_tickets テーブルから ticket_id で 1 件取得し AppSupportCase 形式で返す。
+ * getSupportCaseById（log_intercom）がヒットしない場合の fallback として使用。
+ */
+export async function getCseTicketByIdAsCase(ticketId: string): Promise<AppSupportCase | null> {
+  if (!TABLE_IDS.cse_tickets) return null;
+  const raw = await nocoFetch<RawCseTicket>(TABLE_IDS.cse_tickets, {
+    where: `(ticket_id,eq,${ticketId})`,
+    limit: '1',
+  }).catch(() => [] as RawCseTicket[]);
+  return raw.length > 0 ? cseTicketToAppSupportCase(raw[0]) : null;
 }
 
 /** company_uid で絞り込んだ Support Queue リストを取得する */
@@ -33,23 +88,253 @@ export async function getSupportQueueByCompanyUid(
   companyUid: string,
   limit = 100,
 ): Promise<AppSupportCase[]> {
-  if (!TABLE_IDS.support_queue) return [];
-  const raw = await nocoFetch<RawSupportCase>(TABLE_IDS.support_queue, {
-    where: `(company_uid,eq,${companyUid})`,
-    sort: '-created_at',
+  const tableId = TABLE_IDS.log_intercom;
+  if (!tableId) throw new Error(
+    'NOCODB_LOG_INTERCOM_TABLE_ID が未設定です' +
+    ` | source_table=log_intercom | filter=(massage_type,eq,support)~and(company_uid,eq,${companyUid})`,
+  );
+  const raw = await nocoFetch<RawSupportCase>(tableId, {
+    where: `(massage_type,eq,support)~and(company_uid,eq,${companyUid})`,
+    sort: '-CreatedAt',
     limit: String(limit),
   });
   return raw.map(toAppSupportCase);
 }
 
-/** case_id で 1 件取得する */
+/** case_id で 1 件取得する（massage_type フィルタなし — case_id は一意）*/
 export async function getSupportCaseById(caseId: string): Promise<AppSupportCase | null> {
-  if (!TABLE_IDS.support_queue) return null;
-  const raw = await nocoFetch<RawSupportCase>(TABLE_IDS.support_queue, {
+  const tableId = TABLE_IDS.log_intercom;
+  if (!tableId) throw new Error(
+    'NOCODB_LOG_INTERCOM_TABLE_ID が未設定です' +
+    ` | source_table=log_intercom | filter=(case_id,eq,${caseId})`,
+  );
+  const raw = await nocoFetch<RawSupportCase>(tableId, {
     where: `(case_id,eq,${caseId})`,
     limit: '1',
   });
   return raw.length > 0 ? toAppSupportCase(raw[0]) : null;
+}
+
+/**
+ * Detail ページ用: log_intercom から case_id で 1 件取得し CaseDetail を返す。
+ * fromLogIntercomRecordForDetail を使うため originalMessage が含まれる。
+ */
+export async function getSupportCaseDetailById(caseId: string): Promise<CaseDetail | null> {
+  const tableId = TABLE_IDS.log_intercom;
+  if (!tableId) throw new Error(
+    'NOCODB_LOG_INTERCOM_TABLE_ID が未設定です' +
+    ` | source_table=log_intercom | filter=(case_id,eq,${caseId})`,
+  );
+
+  // 1. case_id で検索（多くのレコードはこちらでヒット）
+  const byCase = await nocoFetch<RawSupportCase>(tableId, {
+    where: `(case_id,eq,${caseId})`,
+    limit: '1',
+  }).catch(() => [] as RawSupportCase[]);
+  if (byCase.length > 0) return fromLogIntercomRecordForDetail(byCase[0]);
+
+  // 2. case_id が null で queue が String(raw.Id) をキーとして使っている場合の fallback
+  //    caseId が数値文字列なら NocoDB 内部 Id フィールドで再検索する
+  if (/^\d+$/.test(caseId)) {
+    const byId = await nocoFetch<RawSupportCase>(tableId, {
+      where: `(Id,eq,${caseId})`,
+      limit: '1',
+    }).catch(() => [] as RawSupportCase[]);
+    if (byId.length > 0) return fromLogIntercomRecordForDetail(byId[0]);
+  }
+
+  return null;
+}
+
+/**
+ * Detail ページ用: cse_tickets から ticket_id で 1 件取得し CaseDetail を返す。
+ * getSupportCaseDetailById がヒットしない場合の fallback として使用。
+ */
+export async function getCseTicketDetailById(ticketId: string): Promise<CaseDetail | null> {
+  if (!TABLE_IDS.cse_tickets) return null;
+  const raw = await nocoFetch<RawCseTicket>(TABLE_IDS.cse_tickets, {
+    where: `(ticket_id,eq,${ticketId})`,
+    limit: '1',
+  }).catch(() => [] as RawCseTicket[]);
+  return raw.length > 0 ? fromCseTicketRecordForDetail(raw[0]) : null;
+}
+
+// ── batch 用: source table 直読み（log_intercom / cse_tickets）──────────────
+//
+// batch/rebuild API から呼ぶ専用関数。view fallback なし。
+//
+// 方針:
+//   - log_intercom source table を直接読み、massage_type をコード側で明示フィルタ
+//   - cse_tickets source table を直接読む（フィルタなし）
+//   - NOCODB_LOG_INTERCOM_TABLE_ID / NOCODB_CSE_TICKETS_TABLE_ID が未設定なら即エラー
+//   - UI read は view ベースの既存関数（getSupportQueueList 等）を使い続ける
+//
+// フィルタ対応表:
+//   massage_type = 'support'  → log_intercom の support_queue 相当
+//   massage_type = 'inquiry'  → log_intercom の inquiry_queue 相当
+//   cse_tickets（フィルタなし）→ cseticket_queue 相当
+
+/** batch 用メタ情報（dry_run レスポンス + エラー診断に使用）*/
+export interface BatchSourceMeta {
+  source_table:                 string;        // source table 名（log_intercom / cse_tickets）
+  base_filter:                  string | null; // コード側で明示するフィルタ条件
+  read_from:                    'source_table' | 'case_ids_lookup';
+  attempted_env:                string;        // 使われた env キー名
+  attempted_id:                 string;        // NocoDB へ渡した テーブル ID
+  attempted_endpoint:           string;        // 呼び出し予定の NocoDB エンドポイント
+  fetched_before_filter:        number;        // source table の全件数（フィルタなし、-1=取得不可）
+  fetched_after_base_filter:    number;        // base_filter 適用後の件数（-1=N/A）
+  fetched_after_request_filter: number;        // company_uid 等リクエストフィルタ後の最終件数
+}
+
+/**
+ * Batch 用: log_intercom source table から massage_type で直接フィルタして取得。
+ * view fallback なし。NOCODB_LOG_INTERCOM_TABLE_ID が未設定なら即エラー。
+ *
+ * massage_type = 'support' → support_queue view 相当
+ * massage_type = 'inquiry' → inquiry_queue view 相当（将来の inquiry batch 用）
+ */
+export async function getSupportCasesForBatch(opts: {
+  massageType: 'support' | 'inquiry';
+  limit:       number;
+  companyUid?: string;
+}): Promise<{ records: AppSupportCase[]; meta: BatchSourceMeta }> {
+  const tableId   = TABLE_IDS.log_intercom;
+  const baseUrl   = process.env.NOCODB_BASE_URL ?? 'https://odtable.ptmind.ai';
+  const baseFilter = `(massage_type,eq,${opts.massageType})`;
+  const attemptedEndpoint = tableId
+    ? `${baseUrl}/api/v2/tables/${tableId}/records`
+    : '(NOCODB_LOG_INTERCOM_TABLE_ID 未設定)';
+
+  // source table 未設定 → view fallback なし、即エラー
+  if (!tableId) {
+    throw new Error(
+      'NOCODB_LOG_INTERCOM_TABLE_ID が未設定です。' +
+      'Vercel の Environment Variables に追加してください。' +
+      ' batch/rebuild は log_intercom source table 直読みに統一されています（view fallback なし）。' +
+      ` | env=NOCODB_LOG_INTERCOM_TABLE_ID, endpoint=${attemptedEndpoint}`,
+    );
+  }
+
+  // 1. source table 全件数（フィルタなし）
+  const fetchedBeforeFilter = await nocoCount(tableId).catch(() => -1);
+
+  // 2. base_filter（massage_type）のみの件数
+  const fetchedAfterBaseFilter = await nocoCount(tableId, { where: baseFilter }).catch(() => -1);
+
+  // 3. リクエストフィルタ込みで取得
+  let where = baseFilter;
+  if (opts.companyUid) {
+    where = `${where}~and(company_uid,eq,${opts.companyUid})`;
+  }
+  const fetchParams: Record<string, string> = {
+    sort:  '-CreatedAt',
+    limit: String(opts.limit),
+    where,
+  };
+
+  let raw: RawSupportCase[];
+  try {
+    raw = await nocoFetch<RawSupportCase>(tableId, fetchParams);
+  } catch (err) {
+    const base = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `${base} | env=NOCODB_LOG_INTERCOM_TABLE_ID, id=${tableId}, endpoint=${attemptedEndpoint}`,
+    );
+  }
+
+  const records = raw.map(toAppSupportCase);
+  return {
+    records,
+    meta: {
+      source_table:                 'log_intercom',
+      base_filter:                  baseFilter,
+      read_from:                    'source_table',
+      attempted_env:                'NOCODB_LOG_INTERCOM_TABLE_ID',
+      attempted_id:                 tableId,
+      attempted_endpoint:           attemptedEndpoint,
+      fetched_before_filter:        fetchedBeforeFilter,
+      fetched_after_base_filter:    fetchedAfterBaseFilter,
+      fetched_after_request_filter: records.length,
+    },
+  };
+}
+
+/**
+ * Batch 用: log_intercom から case_id で1件取得（case_ids 指定時の個別 lookup 用）。
+ * view fallback なし。NOCODB_LOG_INTERCOM_TABLE_ID が未設定なら即エラー。
+ */
+export async function getLogIntercomCaseById(caseId: string): Promise<AppSupportCase | null> {
+  const tableId = TABLE_IDS.log_intercom;
+  if (!tableId) {
+    throw new Error(
+      'NOCODB_LOG_INTERCOM_TABLE_ID が未設定です。' +
+      ' case_ids lookup も log_intercom source table から直接読みます（view fallback なし）。',
+    );
+  }
+  const raw = await nocoFetch<RawSupportCase>(tableId, {
+    where: `(case_id,eq,${caseId})`,
+    limit: '1',
+  });
+  return raw.length > 0 ? toAppSupportCase(raw[0]) : null;
+}
+
+/**
+ * Batch 用: cse_tickets source table から取得。
+ * view fallback なし。NOCODB_CSE_TICKETS_TABLE_ID が未設定なら即エラー。
+ *
+ * cseticket_queue はフィルタなし view のため、source 直読みと結果は同じ。
+ */
+export async function getCseTicketsForBatch(opts: {
+  limit:       number;
+  companyUid?: string;
+}): Promise<{ records: AppCseTicket[]; meta: BatchSourceMeta }> {
+  const tableId   = TABLE_IDS.cse_tickets;
+  const baseUrl   = process.env.NOCODB_BASE_URL ?? 'https://odtable.ptmind.ai';
+  const attemptedEndpoint = tableId
+    ? `${baseUrl}/api/v2/tables/${tableId}/records`
+    : '(NOCODB_CSE_TICKETS_TABLE_ID 未設定)';
+
+  if (!tableId) {
+    throw new Error(
+      'NOCODB_CSE_TICKETS_TABLE_ID が未設定です。' +
+      'Vercel の Environment Variables に追加してください。' +
+      ` | env=NOCODB_CSE_TICKETS_TABLE_ID, endpoint=${attemptedEndpoint}`,
+    );
+  }
+
+  // 1. 全件数（フィルタなし）
+  const fetchedBeforeFilter = await nocoCount(tableId).catch(() => -1);
+
+  // 2. cse_tickets はフィルタなしなので base_filter = null, after_base = before
+  const fetchParams: Record<string, string> = { sort: '-CreatedAt', limit: String(opts.limit) };
+  if (opts.companyUid) fetchParams.where = `(company_uid,eq,${opts.companyUid})`;
+
+  let raw: RawCseTicket[];
+  try {
+    raw = await nocoFetch<RawCseTicket>(tableId, fetchParams);
+  } catch (err) {
+    const base = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `${base} | env=NOCODB_CSE_TICKETS_TABLE_ID, id=${tableId}, endpoint=${attemptedEndpoint}`,
+    );
+  }
+
+  const records = raw.map(toAppCseTicket);
+  return {
+    records,
+    meta: {
+      source_table:                 'cse_tickets',
+      base_filter:                  null,
+      read_from:                    'source_table',
+      attempted_env:                'NOCODB_CSE_TICKETS_TABLE_ID',
+      attempted_id:                 tableId,
+      attempted_endpoint:           attemptedEndpoint,
+      fetched_before_filter:        fetchedBeforeFilter,
+      fetched_after_base_filter:    fetchedBeforeFilter,  // フィルタなしなので同じ
+      fetched_after_request_filter: records.length,
+    },
+  };
 }
 
 // ── support_alerts (derived) ─────────────────────────────────────────────────
@@ -58,7 +343,7 @@ export async function getSupportCaseById(caseId: string): Promise<AppSupportCase
 export async function getSupportAlerts(limit = 50): Promise<AppSupportAlert[]> {
   if (!TABLE_IDS.support_alerts) return [];
   const raw = await nocoFetch<RawSupportAlert>(TABLE_IDS.support_alerts, {
-    sort: '-created_at',
+    sort: '-CreatedAt',
     limit: String(limit),
   });
   return raw.map(toAppSupportAlert);
@@ -84,7 +369,10 @@ export async function getSupportCaseAIStateBySource(
   return raw.length > 0 ? toAppSupportCaseAIState(raw[0]) : null;
 }
 
-// ── cseticket_queue ──────────────────────────────────────────────────────────
+// ── cseticket_queue（cse_tickets source table 直読み）───────────────────────
+//
+// cseticket_queue view はフィルタなし view のため、source table 直読みと結果は同じ。
+// NOCODB_CSE_TICKETS_TABLE_ID が未設定なら即エラー（mock fallback なし）。
 
 /**
  * CSE Ticket Queue を company または case でフィルタして取得する。
@@ -95,21 +383,27 @@ export async function getCseTicketQueueByCompanyOrCase(opts: {
   caseId?: string;
   limit?: number;
 }): Promise<AppCseTicket[]> {
-  if (!TABLE_IDS.cseticket_queue) return [];
+  const tableId = TABLE_IDS.cse_tickets;
+  if (!tableId) throw new Error(
+    'NOCODB_CSE_TICKETS_TABLE_ID が未設定です | source_table=cse_tickets',
+  );
   const where = opts.companyUid
     ? `(company_uid,eq,${opts.companyUid})`
     : opts.caseId
     ? `(linked_case_id,eq,${opts.caseId})`
     : undefined;
-  const raw = await nocoFetch<RawCseTicket>(TABLE_IDS.cseticket_queue, {
+  const raw = await nocoFetch<RawCseTicket>(tableId, {
     ...(where ? { where } : {}),
-    sort: '-created_at',
+    sort: '-CreatedAt',
     limit: String(opts.limit ?? 50),
   });
   return raw.map(toAppCseTicket);
 }
 
-// ── inquiry_queue ────────────────────────────────────────────────────────────
+// ── inquiry_queue（log_intercom source table 直読み）─────────────────────────
+//
+// massage_type = 'inquiry' をコード側でフィルタ。
+// NOCODB_LOG_INTERCOM_TABLE_ID が未設定なら即エラー（mock fallback なし）。
 
 /**
  * Inquiry Queue を company または case でフィルタして取得する。
@@ -119,15 +413,19 @@ export async function getInquiryQueueByCompanyOrCase(opts: {
   caseId?: string;
   limit?: number;
 }): Promise<AppInquiry[]> {
-  if (!TABLE_IDS.inquiry_queue) return [];
-  const where = opts.companyUid
-    ? `(company_uid,eq,${opts.companyUid})`
-    : opts.caseId
-    ? `(linked_case_id,eq,${opts.caseId})`
-    : undefined;
-  const raw = await nocoFetch<RawInquiry>(TABLE_IDS.inquiry_queue, {
-    ...(where ? { where } : {}),
-    sort: '-created_at',
+  const tableId = TABLE_IDS.log_intercom;
+  if (!tableId) throw new Error(
+    'NOCODB_LOG_INTERCOM_TABLE_ID が未設定です | source_table=log_intercom | filter=(massage_type,eq,inquiry)',
+  );
+  let where = '(massage_type,eq,inquiry)';
+  if (opts.companyUid) {
+    where = `${where}~and(company_uid,eq,${opts.companyUid})`;
+  } else if (opts.caseId) {
+    where = `${where}~and(linked_case_id,eq,${opts.caseId})`;
+  }
+  const raw = await nocoFetch<RawInquiry>(tableId, {
+    where,
+    sort: '-CreatedAt',
     limit: String(opts.limit ?? 50),
   });
   return raw.map(toAppInquiry);
