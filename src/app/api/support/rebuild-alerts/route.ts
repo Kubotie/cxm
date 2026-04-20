@@ -54,12 +54,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkBatchAuth } from '@/lib/batch/auth';
 import { writeBatchRunLog, sanitizeRequestParams } from '@/lib/batch/logger';
 import {
-  getSupportQueueList,
-  getSupportQueueByCompanyUid,
-  getSupportCaseById,
+  getLogIntercomCaseById,
   getCseTicketQueueByCompanyOrCase,
   getSupportCaseAIStateBySource,
+  getSupportCasesForBatch,
 } from '@/lib/nocodb/support';
+import type { BatchSourceMeta } from '@/lib/nocodb/support';
+import { TABLE_IDS } from '@/lib/nocodb/client';
 import { buildSourceRef, isSourceQueueName } from '@/lib/support/source-ref';
 import { getOpenAIClient, getOpenAIModel } from '@/lib/openai/client';
 import {
@@ -139,8 +140,8 @@ async function processCase(
 
     // ── NocoDB への保存 ─────────────────────────────────────────────────────
     const writePayload: SupportAlertWritePayload = {
-      source_id:         ref.sourceRecordId,
-      source_table:      ref.sourceQueue,
+      source_record_id:  ref.sourceRecordId,
+      source_queue:      ref.sourceQueue,
       alert_type:        result.alert_type,
       priority:          result.priority,
       status:            result.status,
@@ -181,17 +182,40 @@ async function processCase(
 async function resolveTargetCases(
   body: RequestBody,
   limit: number,
-): Promise<AppSupportCase[]> {
+  sourceQueue: string,
+): Promise<{ cases: AppSupportCase[]; meta: BatchSourceMeta }> {
+  // case_ids 指定時: log_intercom source table から直接 lookup
   if (body.case_ids && body.case_ids.length > 0) {
     const fetched = await Promise.all(
-      body.case_ids.slice(0, limit).map(id => getSupportCaseById(id).catch(() => null)),
+      body.case_ids.slice(0, limit).map(id => getLogIntercomCaseById(id).catch(() => null)),
     );
-    return fetched.filter((c): c is AppSupportCase => c !== null);
+    const cases = fetched.filter((c): c is AppSupportCase => c !== null);
+    const tableId = TABLE_IDS.log_intercom;
+    const baseUrl = process.env.NOCODB_BASE_URL ?? 'https://odtable.ptmind.ai';
+    const meta: BatchSourceMeta = {
+      source_table:                 'log_intercom',
+      base_filter:                  null,
+      read_from:                    'case_ids_lookup',
+      attempted_env:                'NOCODB_LOG_INTERCOM_TABLE_ID',
+      attempted_id:                 tableId || '(未設定)',
+      attempted_endpoint:           tableId
+                                      ? `${baseUrl}/api/v2/tables/${tableId}/records`
+                                      : '(NOCODB_LOG_INTERCOM_TABLE_ID 未設定)',
+      fetched_before_filter:        -1,
+      fetched_after_base_filter:    -1,
+      fetched_after_request_filter: cases.length,
+    };
+    return { cases, meta };
   }
-  if (body.company_uid) {
-    return getSupportQueueByCompanyUid(body.company_uid, limit);
-  }
-  return getSupportQueueList(limit);
+
+  // support_queue / inquiry_queue: log_intercom 直読み（未設定時は view フォールバック）
+  const massageType = sourceQueue === 'inquiry_queue' ? 'inquiry' : 'support';
+  const { records, meta } = await getSupportCasesForBatch({
+    massageType,
+    limit,
+    companyUid: body.company_uid,
+  });
+  return { cases: records, meta };
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -211,12 +235,32 @@ export async function POST(req: NextRequest) {
 
   // ── 対象ケース取得 ─────────────────────────────────────────────────────────
   let targetCases: AppSupportCase[];
+  let sourceMeta: BatchSourceMeta;
   try {
-    targetCases = await resolveTargetCases(body, limit);
+    const resolved = await resolveTargetCases(body, limit, sourceQueue);
+    targetCases = resolved.cases;
+    sourceMeta  = resolved.meta;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[rebuild-alerts] 対象ケース取得失敗:', err);
-    return NextResponse.json({ error: `ケース取得エラー: ${msg}` }, { status: 500 });
+
+    // NocoDB ID の解決経路を診断
+    const tableId        = TABLE_IDS.log_intercom;
+    const baseUrl        = process.env.NOCODB_BASE_URL ?? 'https://odtable.ptmind.ai';
+    const attemptedEnv   = 'NOCODB_LOG_INTERCOM_TABLE_ID';
+    const attemptedId    = tableId || '(未設定)';
+    const attemptedEndpoint = tableId
+      ? `${baseUrl}/api/v2/tables/${tableId}/records`
+      : '(NOCODB_LOG_INTERCOM_TABLE_ID 未設定)';
+
+    return NextResponse.json({
+      error:              `ケース取得エラー: ${msg}`,
+      read_from:          body.case_ids?.length ? 'case_ids_lookup' : 'source_table',
+      attempted_source:   'log_intercom',
+      attempted_env:      attemptedEnv,
+      attempted_id:       attemptedId,
+      attempted_endpoint: attemptedEndpoint,
+    }, { status: 500 });
   }
 
   // ── dry_run: write せず対象だけ返す ──────────────────────────────────────
@@ -240,6 +284,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       dry_run:         true,
       source_queue:    sourceQueue,
+      ...sourceMeta,
       limit,
       total_targeted:  targetCases.length,
       target_case_ids: targetCases.map(c => c.id),

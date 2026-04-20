@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Building, Inbox, BookOpen, Settings, CheckSquare, Edit3, Shield, ChevronLeft, ChevronRight, FolderKanban, Send, Users, Calendar, Headphones, GitBranch } from "lucide-react";
+import { LayoutDashboard, Building, Inbox, BookOpen, Settings, CheckSquare, Edit3, Shield, ChevronLeft, ChevronRight, FolderKanban, Send, Users, Calendar, Headphones, GitBranch, Activity, Zap, ClipboardList } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
@@ -72,6 +72,21 @@ const navItems = [
     title: "Audit",
     icon: Shield,
     href: "/governance",
+  },
+  {
+    title: "Mut.Logs",
+    icon: Activity,
+    href: "/ops/company-mutation-logs",
+  },
+  {
+    title: "SF Ops",
+    icon: Zap,
+    href: "/ops/salesforce",
+  },
+  {
+    title: "SF DataPrep",
+    icon: ClipboardList,
+    href: "/ops/sf-data-prep",
   },
   {
     title: "Settings",

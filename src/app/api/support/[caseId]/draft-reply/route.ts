@@ -91,8 +91,8 @@ export async function POST(
 
     if (body.save) {
       const writePayload: SupportCaseAIStateWritePayload = {
-        source_id:         ref.sourceRecordId,
-        source_table:      ref.sourceQueue,
+        source_record_id:  ref.sourceRecordId,
+        source_queue:      ref.sourceQueue,
         draft_reply:       result.draft_reply,
         reply_tone:        result.reply_tone,
         reply_key_points:  JSON.stringify(result.key_points),

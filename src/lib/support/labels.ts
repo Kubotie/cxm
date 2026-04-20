@@ -5,13 +5,13 @@
 // ── Routing Status ────────────────────────────────────────────────────────────
 
 export const ROUTING_STATUS_LABEL: Record<string, string> = {
-  unassigned:           '未アサイン',
-  triaged:              '振り分け済',
-  assigned:             'アサイン済',
-  'in progress':        '対応中',
-  'waiting on customer':'顧客待ち',
-  'waiting on CSE':     'CSE待ち',
-  resolved_like:        '区切り済み',
+  unassigned:           'unassigned',
+  triaged:              'triaged',
+  assigned:             'assigned',
+  'in progress':        'in progress',
+  'waiting on customer':'waiting on customer',
+  'waiting on CSE':     'waiting on CSE',
+  resolved_like:        'resolved',
 };
 
 /** Badge の className（variant="outline" と組み合わせて使う） */

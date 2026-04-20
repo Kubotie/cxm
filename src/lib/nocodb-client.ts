@@ -12,6 +12,8 @@ export type {
   AppSupportCase, AppSupportAlert, AppSupportCaseAIState,
   AppCseTicket, AppInquiry,
 };
+import type { QueueItem, CaseDetail } from "@/lib/support/queue-adapter";
+export type { QueueItem, CaseDetail };
 
 export async function fetchAllCompanies(limit = 50): Promise<AppCompany[]> {
   const res = await fetch(`/api/nocodb/companies?limit=${limit}`);
@@ -52,12 +54,26 @@ export async function fetchPeople(companyUid: string): Promise<AppPerson[]> {
   return res.json();
 }
 
-export async function fetchSupportCases(limit = 100): Promise<AppSupportCase[]> {
+export async function fetchSupportCases(limit = 100): Promise<QueueItem[]> {
   const res = await fetch(`/api/nocodb/support-queue?limit=${limit}`);
   if (!res.ok) throw new Error(`support-queue fetch failed: ${res.status}`);
   const data = await res.json();
   if (!Array.isArray(data)) return [];
   return data;
+}
+
+/** Detail ページ用: caseId で 1 件取得（CaseDetail を返す）。*/
+export async function fetchCaseDetail(caseId: string): Promise<CaseDetail | null> {
+  const res = await fetch(`/api/nocodb/support-queue?caseId=${encodeURIComponent(caseId)}`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (!data || Array.isArray(data)) return null;
+  return data as CaseDetail;
+}
+
+/** @deprecated fetchCaseDetail を使用してください */
+export async function fetchSupportCase(caseId: string): Promise<AppSupportCase | null> {
+  return fetchCaseDetail(caseId) as unknown as Promise<AppSupportCase | null>;
 }
 
 export async function fetchSupportAlerts(limit = 50): Promise<AppSupportAlert[]> {

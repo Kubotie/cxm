@@ -30,10 +30,12 @@ export interface AiBaseRequestBody {
  * サーバー側で NocoDB から取得できた場合はそちらが優先される。
  */
 export interface CaseContext {
+  // ── Case identity ──────────────────────────────────────────────────────────
   title?: string;
   caseType?: string;
-  source?: string;
-  company?: string;
+  source?: string;       // sourceType from ViewModel
+  company?: string;      // companyName from ViewModel
+  project?: string;
   severity?: string;
   routingStatus?: string;
   assignedTeam?: string;
@@ -41,6 +43,14 @@ export interface CaseContext {
   linkedCSETicket?: string;
   originalMessage?: string;
   triageNote?: string;
+  // ── Lifecycle context (enriched from ViewModel) ────────────────────────────
+  lifecycleStatus?: string;
+  homeReasons?: string[];  // label list of matching reason tags
+  // ── Mutation state ────────────────────────────────────────────────────────
+  actionStatus?: string;
+  actionOwner?: string;
+  cseTicketStatus?: string;
+  isDismissed?: boolean;
 }
 
 /** /summary へのリクエストボディ */

@@ -1,10 +1,10 @@
-// ─── POST /api/company/[companyUid]/summary/save ───────────────────────────
-// すでに生成済みの Company Summary 結果を NocoDB に保存する（再生成しない）。
-// OpenAI は呼ばない。
+// ─── POST /api/company/[companyUid]/summary/save ────────────────────────────
+// すでに生成済みの Company Summary 結果を NocoDB に保存する（AI 呼び出しなし）。
+// 再生成 + 保存は POST /regenerate を使うこと。
 //
 // ── リクエスト ──────────────────────────────────────────────────────────────
 // {
-//   summary:                 string,
+//   summary:                 string,       // AI 生成テキスト
 //   overall_health:          string,
 //   key_risks:               RiskItem[],
 //   key_opportunities:       OpportunityItem[],
@@ -14,18 +14,18 @@
 //   evidence_count:          number,
 //   alert_count:             number,
 //   people_count:            number,
+//   summary_type?:           string,       // default: "default"
+//   ai_version?:             string,       // default: "company-summary-v1"
 // }
 //
 // ── レスポンス ──────────────────────────────────────────────────────────────
-// {
-//   saved:       boolean,
-//   created:     boolean,
-//   save_error?: string,
-// }
+// { saved: boolean, created: boolean, save_error?: string }
 
 import { NextRequest, NextResponse } from 'next/server';
 import { saveCompanySummaryState } from '@/lib/nocodb/company-summary-write';
 import type { RiskItem, OpportunityItem } from '@/lib/prompts/company-evidence-summary';
+
+const DEFAULT_AI_VERSION = 'company-summary-v1';
 
 interface RequestBody {
   summary:                 string;
@@ -38,6 +38,8 @@ interface RequestBody {
   evidence_count:          number;
   alert_count:             number;
   people_count:            number;
+  summary_type?:           string;
+  ai_version?:             string;
 }
 
 export async function POST(
@@ -61,21 +63,22 @@ export async function POST(
 
   const saveResult = await saveCompanySummaryState({
     company_uid:             companyUid,
-    summary:                 body.summary,
+    summary_type:            body.summary_type ?? 'default',
+    ai_summary:              body.summary,
     overall_health:          body.overall_health,
     key_risks:               JSON.stringify(body.key_risks),
     key_opportunities:       JSON.stringify(body.key_opportunities),
     recommended_next_action: body.recommended_next_action,
-    generated_by:            body.model,
-    generated_at:            body.generated_at,
+    model:                   body.model,
+    ai_version:              body.ai_version ?? DEFAULT_AI_VERSION,
     last_ai_updated_at:      now,
     evidence_count:          body.evidence_count,
     alert_count:             body.alert_count,
     people_count:            body.people_count,
   }).catch(err => ({
-    ok: false  as const,
-    skipped: false as const,
-    error: err instanceof Error ? err.message : String(err),
+    ok:      false  as const,
+    skipped: false  as const,
+    error:   err instanceof Error ? err.message : String(err),
   }));
 
   if (saveResult.ok) {

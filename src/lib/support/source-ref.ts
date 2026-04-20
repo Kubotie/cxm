@@ -46,10 +46,10 @@ export interface SourceRef {
  * SourceRef → NocoDB v2 の where 句文字列。
  * support_case_ai_state / support_alerts の派生テーブルを引くときに使う。
  *
- * 例: "(source_id,eq,case_001)~and(source_table,eq,support_queue)"
+ * 例: "(source_record_id,eq,case_001)~and(source_queue,eq,support_queue)"
  */
 export function sourceRefToWhere(ref: SourceRef): string {
-  return `(source_id,eq,${ref.sourceRecordId})~and(source_table,eq,${ref.sourceQueue})`;
+  return `(source_record_id,eq,${ref.sourceRecordId})~and(source_queue,eq,${ref.sourceQueue})`;
 }
 
 /**

@@ -51,10 +51,11 @@ export async function saveSupportCaseAIState(
   });
 
   if (!searchRes.ok) {
+    const body = await searchRes.text().catch(() => '(body read failed)');
     return {
       ok: false,
       skipped: false,
-      error: `NocoDB lookup ${searchRes.status}: ${searchRes.statusText}`,
+      error: `NocoDB lookup ${searchRes.status}: ${searchRes.statusText} | table=${tableId} | where=${where} | body=${body}`,
     };
   }
 
@@ -99,10 +100,10 @@ export async function saveSupportAlert(
     return { ok: false, skipped: false, error: 'NOCODB_SUPPORT_ALERTS_TABLE_ID が未設定です' };
   }
 
-  // 1. 既存レコードを検索（source_id + source_table + alert_type の複合キー）
+  // 1. 既存レコードを検索（source_record_id + source_queue + alert_type の複合キー）
   const where = [
-    `(source_id,eq,${payload.source_id})`,
-    `(source_table,eq,${payload.source_table})`,
+    `(source_record_id,eq,${payload.source_record_id})`,
+    `(source_queue,eq,${payload.source_queue})`,
     `(alert_type,eq,${payload.alert_type})`,
   ].join('~and');
 
@@ -116,10 +117,11 @@ export async function saveSupportAlert(
   });
 
   if (!searchRes.ok) {
+    const body = await searchRes.text().catch(() => '(body read failed)');
     return {
       ok: false,
       skipped: false,
-      error: `NocoDB lookup ${searchRes.status}: ${searchRes.statusText}`,
+      error: `NocoDB lookup ${searchRes.status}: ${searchRes.statusText} | table=${tableId} | where=${where} | body=${body}`,
     };
   }
 
@@ -138,11 +140,15 @@ export async function saveSupportAlert(
       };
     }
 
-    await nocoUpdate<RawSupportAlert>(tableId, existing.Id, payload);
+    await nocoUpdate<RawSupportAlert>(tableId, existing.Id, { ...payload, ai_generated: true });
     return { ok: true, created: false };
   }
 
-  // 3. 既存なし → create
-  await nocoCreate<RawSupportAlert>(tableId, payload);
+  // 3. 既存なし → create（support_alert_id を UUID で自動採番、ai_generated を付与）
+  await nocoCreate<RawSupportAlert>(tableId, {
+    ...payload,
+    support_alert_id: crypto.randomUUID(),
+    ai_generated: true,
+  });
   return { ok: true, created: true };
 }

@@ -92,8 +92,8 @@ export async function POST(
 
     if (body.save) {
       const writePayload: SupportAlertWritePayload = {
-        source_id:       ref.sourceRecordId,
-        source_table:    ref.sourceQueue,
+        source_record_id: ref.sourceRecordId,
+        source_queue:     ref.sourceQueue,
         alert_type:      result.alert_type,
         priority:        result.priority,
         status:          result.status,

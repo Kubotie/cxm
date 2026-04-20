@@ -13,6 +13,8 @@ export interface RawCompany {
   open_alert_count?: number | null;
   open_action_count?: number | null;
   is_csm_managed?: boolean | null; // true のみ実データあり
+  /** Salesforce Account ID（SF Contact sync / SF Task sync で使用） */
+  sf_account_id?: string | null;
   [key: string]: unknown;
 }
 
@@ -73,6 +75,9 @@ export interface AppCompany {
   unprocessedMinutes: number;
   priority: 'urgent' | 'high' | 'normal';
   reason: string;
+  updatedAt: string | null; // NocoDB UpdatedAt システムカラム (source_updated_at に使用)
+  /** Salesforce Account ID（SF Contact/Task sync で使用。未設定時は null） */
+  sfAccountId: string | null;
 }
 
 export interface AppAlert {
@@ -116,6 +121,8 @@ export interface AppLogEntry extends AppEvidence {
 }
 
 export interface AppPerson {
+  /** NocoDB row Id（company_people テーブルの PATCH 用。未保存 or SF-only の場合は undefined） */
+  rowId?: number;
   id: string;
   name: string;
   role: string;
@@ -138,6 +145,41 @@ export interface AppPerson {
   relationshipHypothesis?: string;
   missingFields?: string[];
   scope?: string;
+  // ── 永続化 / SF 連携フィールド ─────────────────────────────────────────────
+  /** データの出所。'salesforce' = SF 同期, 'cxm' = CXM のみ, 'unknown' = 未判定 */
+  source?: 'salesforce' | 'cxm' | 'unknown';
+  /** Salesforce Contact ID（連携後に設定）  */
+  sfId?: string | null;
+  /** SF 同期状態 */
+  syncStatus?: 'not_synced' | 'pending' | 'synced' | 'sync_error' | null;
+  /** SF 最終同期日時（ISO 8601）*/
+  sfLastSyncedAt?: string | null;
+  /** 上長の person_id（org chart 階層構築用） */
+  managerId?: string | null;
+  // ── Org chart 拡張フィールド（company_people テーブルに追加予定）───────────────
+  /**
+   * 明示的なレイヤー指定。設定されていれば inferOrgLayer() の推定より優先される。
+   * 値: 'executive' | 'department_head' | 'manager' | 'operator' | 'unclassified'
+   */
+  layerRole?: string | null;
+  /** 経営層フラグ。true なら layerRole='executive' として扱う */
+  isExecutive?: boolean | null;
+  /** 部署長フラグ。true なら layerRole='department_head' として扱う */
+  isDepartmentHead?: boolean | null;
+  /**
+   * 直属の上長 person_id。manager_id より精度が高い場合に使用。
+   * 解決優先度: reportsToPersonId > managerId
+   */
+  reportsToPersonId?: string | null;
+  /**
+   * 横断的に協働している person_id のリスト（CSM が設定する関係性）。
+   * NocoDB には JSON 配列文字列として保存。toAppPerson で string[] に変換済み。
+   */
+  worksWithPersonIds?: string[] | null;
+  /** 表示グループ（任意の分類ラベル。部署とは別に CSM が付与） */
+  displayGroup?: string | null;
+  /** CSM 主観メモ（その人へのアプローチ方針など） */
+  stakeholderNote?: string | null;
 }
 
 // ─── ヘルパー ────────────────────────────────────────────────────────────────
@@ -225,6 +267,8 @@ export function toAppCompany(raw: RawCompany): AppCompany {
     unprocessedMinutes: 0,
     priority,
     reason: '—',
+    updatedAt:    raw.UpdatedAt ? String(raw.UpdatedAt).slice(0, 16).replace('T', ' ') : null,
+    sfAccountId:  raw.sf_account_id ? String(raw.sf_account_id) : null,
   };
 }
 
@@ -335,7 +379,7 @@ export interface AppCseTicket {
 export function toAppCseTicket(raw: RawCseTicket): AppCseTicket {
   return {
     id: raw.ticket_id ? s(raw.ticket_id) : String(raw.Id),
-    title: s(raw.title, '(タイトルなし)'),
+    title: s(raw.display_title) || s(raw.title) || '(タイトルなし)',
     status: s(raw.status, 'open'),
     priority: s(raw.priority, 'medium'),
     companyUid: s(raw.company_uid, ''),
@@ -579,6 +623,12 @@ export function toAppSupportCaseAIState(raw: RawSupportCaseAIState): AppSupportC
 }
 
 // ─── Support Queue ──────────────────────────────────────────────────────────
+// source of truth: log_intercom テーブル（Intercom からの同期ログ）
+//   title        → log_intercom に存在しない。display_title（AI生成）→ body 冒頭で代替。
+//   sent_at      → 存在しない。sent_at_jst を使用。
+//   company_name → 存在しない。account_name を使用。
+//   source       → 存在しない。'Intercom' 固定。
+//   original_message → 存在しない。body を使用。
 
 export interface RawSupportCase {
   Id: number;
@@ -603,12 +653,17 @@ export interface RawSupportCase {
   project_name?: string | null;
   project_id?: string | null;
   owner_name?: string | null;
-  assigned_team?: string | null;     // "CSM" | "Support" | "CSE"
+  assigned_team?: string | null;     // "CSM" | "Support" | "CSE"（旧フィールド名）
+  team_name?: string | null;         // "CSM" | "Support" | "CSE"（新フィールド名）
   routing_status?: string | null;    // "unassigned" | "triaged" | "assigned" | "in progress" | "waiting on customer" | "waiting on CSE"
+  source_status?: string | null;     // Intercom / 外部ソース側のステータス
   severity?: string | null;          // "high" | "medium" | "low"
   linked_cse_ticket?: string | null;
   related_content_count?: number | null;
   triage_note?: string | null;
+  open_duration_minutes?: number | null;  // オープン経過時間（分）
+  open_duration?: string | null;          // 旧フィールド（文字列）
+  waiting_duration?: string | null;
   // ── 将来追加予定 / 旧フィールド（現在 log_intercom には存在しない）─────────
   title?: string | null;             // 存在しない（resolveTitle で AI/body から導出）
   original_message?: string | null;  // 存在しない（body を使用）
@@ -616,9 +671,6 @@ export interface RawSupportCase {
   source?: string | null;            // 存在しない（'Intercom' に固定）
   created_at?: string | null;        // 存在しない（sent_at_jst を使用）
   first_response_time?: string | null; // 存在しない（first_response_at を使用）
-  source_status?: string | null;     // 存在しない
-  open_duration?: string | null;
-  waiting_duration?: string | null;
   [key: string]: unknown;
 }
 
@@ -713,7 +765,7 @@ export function cseTicketToAppSupportCase(raw: RawCseTicket): AppSupportCase {
   const statusKey = s(raw.status, 'open').toLowerCase();
   return {
     id: raw.ticket_id ? s(raw.ticket_id) : String(raw.Id),
-    title: deriveTitle(raw.title, raw.description),
+    title: deriveTitle(raw.display_title ?? raw.title, raw.description),
     caseType: raw.linked_case_id ? 'CSE Ticket Linked' : 'CSE Ticket',
     source: 'CSE Ticket',
     company: s(raw.company_name, s(raw.company_uid, '—')),
@@ -746,7 +798,8 @@ export function toAppSupportCase(raw: RawSupportCase): AppSupportCase {
     || s(raw.company_uid, '—');
   return {
     id: raw.case_id ? s(raw.case_id) : String(raw.Id),
-    title: deriveTitle(raw.title, bodyText),
+    // display_title = AI生成タイトル（存在すれば優先）, title は log_intercom に存在しない
+    title: deriveTitle(raw.display_title ?? raw.title, bodyText),
     caseType: deriveCaseType(raw),
     // source: log_intercom に source カラムは存在しない → 固定値 'Intercom'
     source: s(raw.source) || 'Intercom',
@@ -842,66 +895,433 @@ export function toAppUnifiedLogSignalState(
 }
 
 // ── company_summary_state (derived) ───────────────────────────────────────────
-// 1企業につき1レコード。company_uid が主キー。
+// upsert キー: company_uid + summary_type（複合）
+// summary_type のデフォルト値は "default"（将来の複数 summary 対応のための拡張点）
 // 配列フィールドは NocoDB の flat テーブル制約上 JSON 文字列として保存する。
 
 /** NocoDB から取得する生レコード */
 export interface RawCompanySummaryState {
   Id:                       number;
+  // ── upsert キー ──
   company_uid?:             string;
-  summary?:                 string;
-  overall_health?:          string;
+  summary_type?:            string;       // "default" | 将来: "renewal" | "onboarding" など
+  // ── AI 生成コンテンツ ──
+  ai_summary?:              string;
+  overall_health?:          string;       // healthy | at_risk | critical | expanding
   /** RiskItem[] を JSON 文字列化 */
   key_risks?:               string;
   /** OpportunityItem[] を JSON 文字列化 */
   key_opportunities?:       string;
   recommended_next_action?: string;
-  generated_by?:            string;
-  generated_at?:            string;
-  last_ai_updated_at?:      string;
+  // ── バージョン管理 ──
+  model?:                   string;       // 例: "gpt-4o-2024-08-06"
+  ai_version?:              string;       // 例: "company-summary-v1"
+  // ── 時刻管理 ──
+  source_updated_at?:       string | null; // 会社レコードの updated_at（freshness 基準）
+  last_ai_updated_at?:      string | null;
+  // ── 統計 ──
   evidence_count?:          number;
   alert_count?:             number;
   people_count?:            number;
-  human_review_status?:     string | null; // null | "draft" | "approved" | "locked" | "finalized"
+  // ── Human Review ──
+  human_review_status?:     string | null; // pending | reviewed | corrected | approved
+  reviewed_by?:             string | null;
+  reviewed_at?:             string | null;
+  [key: string]: unknown;
 }
 
 /** アプリケーション層で使う型（配列は parse 済み） */
 export interface AppCompanySummaryState {
-  id:                    string;
+  rowId:                 number;
   companyUid:            string;
-  summary:               string;
+  summaryType:           string;
+  aiSummary:             string;
   overallHealth:         string;
   keyRisks:              unknown[];
   keyOpportunities:      unknown[];
   recommendedNextAction: string;
-  generatedBy:           string;
-  generatedAt:           string;
-  lastAiUpdatedAt:       string;
+  model:                 string;
+  aiVersion:             string | null;
+  sourceUpdatedAt:       string | null;
+  lastAiUpdatedAt:       string | null;
   evidenceCount:         number;
   alertCount:            number;
   peopleCount:           number;
-  humanReviewStatus:     string | null;
+  humanReviewStatus:     string | null; // pending | reviewed | corrected | approved
+  reviewedBy:            string | null;
+  reviewedAt:            string | null;
 }
 
 export function toAppCompanySummaryState(
   raw: RawCompanySummaryState,
 ): AppCompanySummaryState {
   return {
-    id:                    String(raw.Id),
+    rowId:                 raw.Id,
     companyUid:            raw.company_uid ?? '',
-    summary:               raw.summary ?? '',
+    summaryType:           raw.summary_type ?? 'default',
+    aiSummary:             raw.ai_summary ?? '',
     overallHealth:         raw.overall_health ?? '',
     keyRisks:              safeParseJsonArray(raw.key_risks),
     keyOpportunities:      safeParseJsonArray(raw.key_opportunities),
     recommendedNextAction: raw.recommended_next_action ?? '',
-    generatedBy:           raw.generated_by ?? '',
-    generatedAt:           raw.generated_at ?? '',
-    lastAiUpdatedAt:       raw.last_ai_updated_at ?? '',
+    model:                 raw.model ?? '',
+    aiVersion:             raw.ai_version ?? null,
+    sourceUpdatedAt:       raw.source_updated_at ?? null,
+    lastAiUpdatedAt:       raw.last_ai_updated_at ?? null,
     evidenceCount:         raw.evidence_count ?? 0,
     alertCount:            raw.alert_count ?? 0,
     peopleCount:           raw.people_count ?? 0,
-    humanReviewStatus:     raw.human_review_status ? String(raw.human_review_status) : null,
+    humanReviewStatus:     raw.human_review_status ?? null,
+    reviewedBy:            raw.reviewed_by ?? null,
+    reviewedAt:            raw.reviewed_at ?? null,
   };
+}
+
+// ── CSM_customer_phase ────────────────────────────────────────────────────────
+// source of truth: csm_customer_phase テーブル（M-Phase 管理）
+//   実カラム: M-Phase（raw['M-Phase']）, sf_cs（cs owner）, stat_date（更新日時）
+//   ※ phase_updated_at / cs_owner / m_phase はコード側の旧フィールド名。実テーブルには存在しない。
+//   sort は stat_date（phase_updated_at は存在しない → NocoDB が 0件返す）
+// CSM 担当がいる企業の M-Phase 管理テーブル。
+// 1企業につき 1 レコードを想定（複数バージョンがある場合は latest を使う）。
+
+export interface RawCsmPhase {
+  Id:                  number;
+  company_uid?:        string | null;
+  m_phase?:            string | null;  // フェーズ値 例: "Onboarding" | "Adoption" | "Renewal" | "Churn Risk"
+  phase_label?:        string | null;  // 表示用ラベル（m_phase の日本語訳など）
+  phase_updated_at?:   string | null;  // フェーズ更新日時
+  cs_owner?:           string | null;  // CSM 担当者名
+  health_score?:       number | null;  // 担当者入力の健全性スコア（0-100）
+  target_renewal_date?: string | null; // 更新予定日
+  note?:               string | null;  // 担当メモ
+  [key: string]: unknown;
+}
+
+export interface AppCsmPhase {
+  companyUid:         string;
+  mPhase:             string | null;
+  phaseLabel:         string | null;
+  phaseUpdatedAt:     string | null;  // "YYYY-MM-DD" or "YYYY-MM-DD HH:mm"
+  csOwner:            string | null;
+  healthScore:        number | null;
+  targetRenewalDate:  string | null;
+  note:               string | null;
+}
+
+export function toAppCsmPhase(raw: RawCsmPhase): AppCsmPhase {
+  // 実テーブルのカラム名: "M-Phase", "sf_cs", "stat_date" — ドット記法不可のため index アクセス
+  const mPhase = (raw['M-Phase'] ?? raw.m_phase ?? null) as string | null;
+  const csOwner = (raw.sf_cs ?? raw.cs_owner ?? null) as string | null;
+  const updatedAt = (raw.stat_date ?? raw.phase_updated_at ?? null) as string | null;
+  return {
+    companyUid:        raw.company_uid ?? '',
+    mPhase,
+    phaseLabel:        (raw.phase_label as string | null) ?? mPhase,
+    phaseUpdatedAt:    updatedAt ? String(updatedAt).slice(0, 10) : null,
+    csOwner,
+    healthScore:       raw.health_score != null ? Number(raw.health_score) : null,
+    targetRenewalDate: raw.target_renewal_date
+                         ? String(raw.target_renewal_date).slice(0, 10)
+                         : null,
+    note:              raw.note ?? null,
+  };
+}
+
+// ── CRM_customer_phase ────────────────────────────────────────────────────────
+// source of truth: crm_customer_phase テーブル（A-Phase 管理）
+//   実カラム: A-Phase（raw['A-Phase']）, CSM（crm owner）, stat_date（更新日時）
+//   ※ phase_updated_at / crm_owner / a_phase はコード側の旧フィールド名。実テーブルには存在しない。
+//   sort は stat_date（phase_updated_at は存在しない → NocoDB が 0件返す）
+// CRM 起点の A-Phase 管理テーブル。
+// CSM 担当がいない企業のフォールバック表示に使用。
+
+export interface RawCrmPhase {
+  Id:                  number;
+  company_uid?:        string | null;
+  a_phase?:            string | null;  // A-Phase 値 例: "Prospect" | "Onboarding" | "Active" | "Renewal"
+  phase_label?:        string | null;
+  phase_updated_at?:   string | null;
+  crm_owner?:          string | null;  // CRM 担当者名
+  arr?:                number | null;  // 年間契約額（ARR）
+  contract_start_date?: string | null;
+  contract_end_date?:  string | null;
+  note?:               string | null;
+  [key: string]: unknown;
+}
+
+export interface AppCrmPhase {
+  companyUid:        string;
+  aPhase:            string | null;
+  phaseLabel:        string | null;
+  phaseUpdatedAt:    string | null;
+  crmOwner:          string | null;
+  arr:               number | null;
+  contractStartDate: string | null;
+  contractEndDate:   string | null;
+  note:              string | null;
+}
+
+export function toAppCrmPhase(raw: RawCrmPhase): AppCrmPhase {
+  // 実テーブルのカラム名: "A-Phase", "CSM" (CRM owner), "stat_date"
+  const aPhase = (raw['A-Phase'] ?? raw.a_phase ?? null) as string | null;
+  const crmOwner = (raw['CSM'] ?? raw.crm_owner ?? null) as string | null;
+  const updatedAt = (raw.stat_date ?? raw.phase_updated_at ?? null) as string | null;
+  return {
+    companyUid:        raw.company_uid ?? '',
+    aPhase,
+    phaseLabel:        (raw.phase_label as string | null) ?? aPhase,
+    phaseUpdatedAt:    updatedAt ? String(updatedAt).slice(0, 10) : null,
+    crmOwner,
+    arr:               raw.arr != null ? Number(raw.arr) : null,
+    contractStartDate: raw.contract_start_date
+                         ? String(raw.contract_start_date).slice(0, 10)
+                         : null,
+    contractEndDate:   raw.contract_end_date
+                         ? String(raw.contract_end_date).slice(0, 10)
+                         : null,
+    note:              raw.note ?? null,
+  };
+}
+
+// ── project_info ──────────────────────────────────────────────────────────────
+// 1企業配下の複数プロジェクトを管理するテーブル。
+//
+// ⚠️ 実テーブル (mse3eosn7551z82) の注意点:
+//   - company_uid カラムが存在しない。代わりに master_company_sf_id (= sf_account_id) でリンク
+//   - status カラムなし。l30_active / habituation_status / paid_type で導出
+//   - last_updated_at カラムなし。latest_order_end_date / project_create_time を使用
+//   - project_id, project_name は存在
+
+export interface RawProjectInfo {
+  Id:              number;
+  company_uid?:    string | null;           // 存在しない（互換用フィールド）
+  project_id?:     string | null;           // 実テーブル: project_id ✓
+  project_name?:   string | null;           // 実テーブル: project_name ✓
+  // ── 実テーブルの実カラム ──────────────────────────────────────────────────
+  master_company_sf_id?: string | null;     // SF Account ID（company_uid の代替 FK）
+  habituation_status?:   string | null;     // "True" / "False"
+  l30_active?:           number | null;     // 過去30日アクティブイベント数
+  paid_type?:            string | null;     // "PTI-PAID" / "PTX-PAID" / "FREE"
+  project_create_time?:  string | null;     // プロジェクト作成日時
+  latest_order_end_date?: string | null;    // 最新契約終了日
+  // ── 互換用（将来テーブルが正規化された場合のフォールバック）────────────────
+  status?:         string | null;
+  start_date?:     string | null;
+  last_updated_at?: string | null;
+  description?:    string | null;
+  use_case?:       string | null;
+  health?:         string | null;
+  [key: string]: unknown;
+}
+
+export interface AppProjectInfo {
+  id:            string;  // project_id or NocoDB Id
+  companyUid:    string;
+  sfAccountId:   string | null;  // master_company_sf_id（join キー）
+  name:          string;
+  status:        'active' | 'stalled' | 'unused' | 'inactive';
+  startDate:     string | null;
+  lastUpdatedAt: string | null;
+  description:   string;
+  useCase:       string | null;
+  health:        'high' | 'medium' | 'low' | null;
+  paidType:      string | null;  // "PTI-PAID" / "PTX-PAID" / "FREE"
+}
+
+/**
+ * @param raw         NocoDB から取得した生レコード
+ * @param companyUid  呼び出し元で確定している company_uid（raw に存在しないため上書き注入）
+ */
+export function toAppProjectInfo(raw: RawProjectInfo, companyUid?: string): AppProjectInfo {
+  // ── status 導出: 実テーブルには status カラムなし ────────────────────────
+  // 優先順位: 既存 status フィールド → l30_active / habituation_status / paid_type から推定
+  let status: AppProjectInfo['status'] = 'inactive';
+  if (raw.status) {
+    const s = String(raw.status).toLowerCase();
+    status = s === 'active' ? 'active' : s === 'stalled' ? 'stalled' : s === 'never_activated' ? 'unused' : 'inactive';
+  } else {
+    const l30 = raw.l30_active != null ? Number(raw.l30_active) : 0;
+    const hab  = String(raw.habituation_status ?? '').toLowerCase() === 'true';
+    const paid = String(raw.paid_type ?? '').toUpperCase();
+    if (l30 > 0 || hab) {
+      status = 'active';
+    } else if (paid === 'FREE') {
+      status = 'unused';
+    } else {
+      status = 'inactive';
+    }
+  }
+
+  const rawHealth = String(raw.health ?? '').toLowerCase();
+  const health: AppProjectInfo['health'] =
+    rawHealth === 'high'   ? 'high'
+    : rawHealth === 'medium' ? 'medium'
+    : rawHealth === 'low'    ? 'low'
+    : null;
+
+  const lastUpdatedRaw = raw.last_updated_at ?? raw.latest_order_end_date ?? null;
+  const startDateRaw   = raw.start_date ?? raw.project_create_time ?? null;
+
+  return {
+    id:            raw.project_id ? String(raw.project_id) : String(raw.Id),
+    companyUid:    companyUid ?? raw.company_uid ?? '',
+    sfAccountId:   (raw.master_company_sf_id as string | null | undefined) ?? null,
+    name:          raw.project_name ? String(raw.project_name) : '(名前なし)',
+    status,
+    startDate:     startDateRaw ? String(startDateRaw).slice(0, 10) : null,
+    lastUpdatedAt: lastUpdatedRaw ? String(lastUpdatedRaw).slice(0, 10) : null,
+    description:   raw.description ? String(raw.description) : '',
+    useCase:       raw.use_case ? String(raw.use_case) : null,
+    health,
+    paidType:      (raw.paid_type as string | null | undefined) ?? null,
+  };
+}
+
+// ── log_chatwork ──────────────────────────────────────────────────────────────
+// Chatwork のコミュニケーションログ。company_uid でフィルタして取得する。
+
+export interface RawLogChatwork {
+  Id:           number;
+  company_uid?: string | null;
+  message_id?:  string | null;
+  sent_at?:     string | null;
+  sender_name?: string | null;
+  room_name?:   string | null;   // Chatwork ルーム名
+  body?:        string | null;   // メッセージ本文
+  is_outbound?: boolean | null;  // CSM 側からの送信か
+  [key: string]: unknown;
+}
+
+export interface AppLogChatwork {
+  id:          string;
+  companyUid:  string;
+  sentAt:      string | null;
+  senderName:  string | null;
+  roomName:    string | null;
+  body:        string;
+  isOutbound:  boolean;
+}
+
+export function toAppLogChatwork(raw: RawLogChatwork): AppLogChatwork {
+  // 実テーブルのカラム名: sent_at_jst, account_name, channel_id
+  const sentAtRaw = (raw.sent_at_jst ?? raw.sent_at ?? null) as string | null;
+  const senderName = (raw.account_name ?? raw.sender_name ?? null) as string | null;
+  const roomName = (raw.channel_id ?? raw.room_name ?? null) as string | null;
+  return {
+    id:          raw.message_id ? String(raw.message_id) : String(raw.Id),
+    companyUid:  raw.company_uid ?? '',
+    sentAt:      sentAtRaw ? String(sentAtRaw).slice(0, 16).replace('T', ' ') : null,
+    senderName,
+    roomName,
+    body:        raw.body ? String(raw.body) : '',
+    isOutbound:  Boolean(raw.is_outbound),
+  };
+}
+
+// ── log_slack ─────────────────────────────────────────────────────────────────
+// Slack のコミュニケーションログ。
+
+export interface RawLogSlack {
+  Id:           number;
+  company_uid?: string | null;
+  message_id?:  string | null;   // Slack ts
+  sent_at?:     string | null;
+  user_name?:   string | null;
+  channel?:     string | null;
+  text?:        string | null;   // メッセージ本文
+  thread_ts?:   string | null;   // スレッド親 ts
+  is_outbound?: boolean | null;
+  [key: string]: unknown;
+}
+
+export interface AppLogSlack {
+  id:          string;
+  companyUid:  string;
+  sentAt:      string | null;
+  userName:    string | null;
+  channel:     string | null;
+  text:        string;
+  threadTs:    string | null;
+  isOutbound:  boolean;
+}
+
+export function toAppLogSlack(raw: RawLogSlack): AppLogSlack {
+  // 実テーブルのカラム名: sent_at_jst, account_name, channel_id, body
+  const sentAtRaw = (raw.sent_at_jst ?? raw.sent_at ?? null) as string | null;
+  const userName = (raw.account_name ?? raw.user_name ?? null) as string | null;
+  const channel = (raw.channel_id ?? raw.channel ?? null) as string | null;
+  const text = (raw.body ?? raw.text ?? '') as string;
+  return {
+    id:          raw.message_id ? String(raw.message_id) : String(raw.Id),
+    companyUid:  raw.company_uid ?? '',
+    sentAt:      sentAtRaw ? String(sentAtRaw).slice(0, 16).replace('T', ' ') : null,
+    userName,
+    channel,
+    text:        text ? String(text) : '',
+    threadTs:    raw.thread_ts ?? null,
+    isOutbound:  Boolean(raw.is_outbound),
+  };
+}
+
+// ── log_notion_minutes ────────────────────────────────────────────────────────
+// Notion 議事録ログ。meeting_date でソートして最新を表示する。
+
+export interface RawLogNotionMinutes {
+  Id:            number;
+  company_uid?:  string | null;
+  page_id?:      string | null;
+  title?:        string | null;
+  meeting_date?: string | null;
+  participants?: string | null;  // カンマ区切り or JSON 配列文字列
+  body?:         string | null;  // 議事録本文
+  action_items?: string | null;  // アクション項目（JSON 配列文字列）
+  created_at?:   string | null;
+  [key: string]: unknown;
+}
+
+export interface AppLogNotionMinutes {
+  id:           string;
+  companyUid:   string;
+  title:        string;
+  meetingDate:  string | null;
+  participants: string[];
+  body:         string;
+  actionItems:  string[];
+  createdAt:    string | null;
+}
+
+export function toAppLogNotionMinutes(raw: RawLogNotionMinutes): AppLogNotionMinutes {
+  // 実テーブルのカラム名: page_name (title), creat_at_jst (meeting_date/created_at)
+  const title = (raw.page_name ?? raw.title ?? null) as string | null;
+  const dateRaw = (raw.creat_at_jst ?? raw.meeting_date ?? raw.created_at ?? null) as string | null;
+  return {
+    id:           raw.page_id ? String(raw.page_id) : String(raw.Id),
+    companyUid:   raw.company_uid ?? '',
+    title:        title ? String(title) : '(タイトルなし)',
+    meetingDate:  dateRaw ? String(dateRaw).slice(0, 10) : null,
+    participants: parseParticipants(raw.participants),
+    body:         raw.body ? String(raw.body) : '',
+    actionItems:  parseStringJsonArray(raw.action_items),
+    createdAt:    dateRaw ? String(dateRaw).slice(0, 16).replace('T', ' ') : null,
+  };
+}
+
+function parseParticipants(v: unknown): string[] {
+  if (!v) return [];
+  const str = String(v).trim();
+  // JSON 配列形式 ["A","B"] か カンマ区切り "A,B" かを判定
+  if (str.startsWith('[')) {
+    try { const arr = JSON.parse(str); return Array.isArray(arr) ? arr.map(String) : []; }
+    catch { return []; }
+  }
+  return str.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function parseStringJsonArray(v: unknown): string[] {
+  if (!v) return [];
+  try { const arr = JSON.parse(String(v)); return Array.isArray(arr) ? arr.map(String) : []; }
+  catch { return []; }
 }
 
 export function toAppPerson(raw: RawPerson, companyUid: string): AppPerson {
@@ -925,5 +1345,217 @@ export function toAppPerson(raw: RawPerson, companyUid: string): AppPerson {
     linkedActions: 0,
     linkedContentJobs: 0,
     missingFields: [],
+  };
+}
+
+// ─── Company Action ──────────────────────────────────────────────────────────
+
+export interface RawCompanyAction {
+  Id: number;
+  action_id?: string | null;
+  company_uid?: string | null;
+  title?: string | null;
+  /** NocoDB カラム名は description（アプリ内では body として扱う）*/
+  description?: string | null;
+  owner?: string | null;
+  due_date?: string | null;
+  /** open / in_progress / done / cancelled */
+  status?: string | null;
+  /** manual / risk_signal / opportunity_signal / support_case / people_risk */
+  created_from?: string | null;
+  source_ref?: string | null;
+  person_ref?: string | null;
+  /** not_synced / synced / sync_error */
+  sf_todo_status?: string | null;
+  sf_todo_id?: string | null;
+  /** SF Task 最終同期日時（ISO 8601） */
+  sf_last_synced_at?: string | null;
+  created_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface AppCompanyAction {
+  /** NocoDB row Id（PATCH 時に使用） */
+  rowId: number;
+  /** アプリ生成 UUID */
+  id: string;
+  companyUid: string;
+  title: string;
+  body: string;
+  owner: string;
+  dueDate: string | null;
+  status: 'open' | 'in_progress' | 'done' | 'cancelled';
+  createdFrom: 'manual' | 'risk_signal' | 'opportunity_signal' | 'support_case' | 'people_risk';
+  sourceRef: string | null;
+  personRef: string | null;
+  sfTodoStatus: 'not_synced' | 'synced' | 'sync_error' | null;
+  sfTodoId: string | null;
+  /** SF Task 最終同期日時（ISO 8601） */
+  sfLastSyncedAt: string | null;
+  createdAt: string;
+}
+
+const ACTION_STATUS_VALUES = new Set(['open', 'in_progress', 'done', 'cancelled']);
+const ACTION_CREATED_FROM_VALUES = new Set([
+  'manual', 'risk_signal', 'opportunity_signal', 'support_case', 'people_risk',
+]);
+const SF_TODO_STATUS_VALUES = new Set(['not_synced', 'synced', 'sync_error']);
+
+export function toAppCompanyAction(raw: RawCompanyAction): AppCompanyAction {
+  const rawStatus = s(raw.status, 'open');
+  const status = ACTION_STATUS_VALUES.has(rawStatus)
+    ? rawStatus as AppCompanyAction['status']
+    : 'open';
+
+  const rawCreatedFrom = s(raw.created_from, 'manual');
+  const createdFrom = ACTION_CREATED_FROM_VALUES.has(rawCreatedFrom)
+    ? rawCreatedFrom as AppCompanyAction['createdFrom']
+    : 'manual';
+
+  const rawSfTodoStatus = raw.sf_todo_status ? s(raw.sf_todo_status) : null;
+  const sfTodoStatus = rawSfTodoStatus && SF_TODO_STATUS_VALUES.has(rawSfTodoStatus)
+    ? rawSfTodoStatus as AppCompanyAction['sfTodoStatus']
+    : null;
+
+  return {
+    rowId:       raw.Id,
+    id:          s(raw.action_id, String(raw.Id)),
+    companyUid:  s(raw.company_uid, ''),
+    title:       s(raw.title, '(タイトルなし)'),
+    body:        s(raw.description, ''),
+    owner:       s(raw.owner, ''),
+    dueDate:     raw.due_date ? String(raw.due_date).slice(0, 10) : null,
+    status,
+    createdFrom,
+    sourceRef:   raw.source_ref   ? s(raw.source_ref)   : null,
+    personRef:   raw.person_ref   ? s(raw.person_ref)   : null,
+    sfTodoStatus,
+    sfTodoId:        raw.sf_todo_id        ? s(raw.sf_todo_id)        : null,
+    sfLastSyncedAt:  raw.sf_last_synced_at ? s(raw.sf_last_synced_at) : null,
+    createdAt:   raw.created_at
+      ? String(raw.created_at).slice(0, 19).replace('T', ' ')
+      : (raw.CreatedAt ? String(raw.CreatedAt).slice(0, 19).replace('T', ' ') : new Date().toISOString()),
+  };
+}
+
+// ─── Company People（CXM マネージド連絡先）─────────────────────────────────────
+//
+// 既存の people テーブル（TABLE_IDS.people）は Salesforce 同期データで読み取り専用。
+// company_people テーブルは CSM が CXM 上で追加・編集する連絡先を永続化する。
+// 表示時は両テーブルをマージして allContacts を構成する。
+
+export interface RawCompanyPerson {
+  Id: number;
+  /** アプリ生成 UUID */
+  person_id?: string | null;
+  company_uid?: string | null;
+  name?: string | null;
+  /** Champion / Economic Buyer / User など CXM 上の役割ラベル */
+  role?: string | null;
+  /** 実際の職名（例: プロダクトマネージャー） */
+  title?: string | null;
+  department?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  /** high / medium / low / unknown */
+  decision_influence?: string | null;
+  /** active / contacted / not contacted / inactive / unknown */
+  contact_status?: string | null;
+  /** confirmed / proposed / unresolved */
+  status?: string | null;
+  /** YYYY-MM-DD */
+  last_touchpoint?: string | null;
+  /** 上長の person_id（org chart 階層構築用） */
+  manager_id?: string | null;
+  // ── Org chart 拡張カラム（追加予定） ─────────────────────────────────────────
+  layer_role?:            string | null;
+  is_executive?:          boolean | null;
+  is_department_head?:    boolean | null;
+  reports_to_person_id?:  string | null;
+  works_with_person_ids?: string | null;  // JSON 配列文字列
+  display_group?:         string | null;
+  stakeholder_note?:      string | null;
+  /** CSM担当名 */
+  owner?: string | null;
+  /** salesforce / cxm / unknown */
+  source?: string | null;
+  /** Salesforce Contact ID */
+  sf_id?: string | null;
+  /** not_synced / pending / synced / sync_error */
+  sync_status?: string | null;
+  sf_last_synced_at?: string | null;
+  created_at?: string | null;
+  [key: string]: unknown;
+}
+
+const DECISION_INFLUENCE_VALUES = new Set(['high', 'medium', 'low', 'unknown']);
+const CONTACT_STATUS_VALUES = new Set(['active', 'contacted', 'not contacted', 'inactive', 'unknown']);
+const PERSON_STATUS_VALUES   = new Set(['confirmed', 'proposed', 'unresolved']);
+const PERSON_SOURCE_VALUES   = new Set(['salesforce', 'cxm', 'unknown']);
+const SYNC_STATUS_VALUES     = new Set(['not_synced', 'pending', 'synced', 'sync_error']);
+
+export function toAppPersonFromCompanyPeople(raw: RawCompanyPerson): AppPerson {
+  const rawInfluence = s(raw.decision_influence, 'unknown');
+  const decisionInfluence = DECISION_INFLUENCE_VALUES.has(rawInfluence)
+    ? rawInfluence as AppPerson['decisionInfluence']
+    : 'unknown';
+
+  const rawContactStatus = s(raw.contact_status, 'unknown');
+  const contactStatus = CONTACT_STATUS_VALUES.has(rawContactStatus)
+    ? rawContactStatus as AppPerson['contactStatus']
+    : 'unknown';
+
+  const rawStatus = s(raw.status, 'proposed');
+  const status = PERSON_STATUS_VALUES.has(rawStatus)
+    ? rawStatus as AppPerson['status']
+    : 'proposed';
+
+  const rawSource = raw.source ? s(raw.source) : 'cxm';
+  const source = PERSON_SOURCE_VALUES.has(rawSource)
+    ? rawSource as NonNullable<AppPerson['source']>
+    : 'cxm';
+
+  const rawSyncStatus = raw.sync_status ? s(raw.sync_status) : null;
+  const syncStatus = rawSyncStatus && SYNC_STATUS_VALUES.has(rawSyncStatus)
+    ? rawSyncStatus as NonNullable<AppPerson['syncStatus']>
+    : null;
+
+  return {
+    rowId:             raw.Id,
+    id:                s(raw.person_id, String(raw.Id)),
+    name:              s(raw.name, '(名前なし)'),
+    role:              s(raw.role, ''),
+    title:             raw.title    ? s(raw.title)      : undefined,
+    department:        raw.department ? s(raw.department) : undefined,
+    roleType:          s(raw.role, ''),
+    decisionInfluence,
+    contactStatus,
+    company:           s(raw.company_uid, ''),
+    email:             raw.email  ? s(raw.email)  : undefined,
+    phone:             raw.phone  ? s(raw.phone)  : undefined,
+    status,
+    evidenceCount:     0,
+    lastTouchpoint:    raw.last_touchpoint ? String(raw.last_touchpoint).slice(0, 10) : null,
+    linkedProjects:    [],
+    owner:             raw.owner  ? s(raw.owner)  : undefined,
+    source,
+    sfId:              raw.sf_id           ? s(raw.sf_id)           : null,
+    syncStatus,
+    sfLastSyncedAt:    raw.sf_last_synced_at
+      ? String(raw.sf_last_synced_at).slice(0, 19).replace('T', ' ')
+      : null,
+    managerId:         raw.manager_id ? s(raw.manager_id) : null,
+    // ── 拡張フィールド（カラム未追加時は null/undefined のまま）──────────────
+    layerRole:         raw.layer_role           ? s(raw.layer_role)           : null,
+    isExecutive:       raw.is_executive         ?? null,
+    isDepartmentHead:  raw.is_department_head   ?? null,
+    reportsToPersonId: raw.reports_to_person_id ? s(raw.reports_to_person_id) : null,
+    worksWithPersonIds: (() => {
+      if (!raw.works_with_person_ids) return null;
+      try { return JSON.parse(String(raw.works_with_person_ids)) as string[]; }
+      catch { return null; }
+    })(),
+    displayGroup:      raw.display_group      ? s(raw.display_group)      : null,
+    stakeholderNote:   raw.stakeholder_note   ? s(raw.stakeholder_note)   : null,
   };
 }

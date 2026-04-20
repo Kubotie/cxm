@@ -13,6 +13,7 @@ import {
   RawSupportAlert,   AppSupportAlert,         toAppSupportAlert,
   RawSupportCaseAIState, AppSupportCaseAIState, toAppSupportCaseAIState,
 } from './types';
+import { fetchCanonicalNameMap } from './companies';
 import { sourceRefToWhere, buildSourceRef } from '../support/source-ref';
 export { sourceRefToWhere, buildSourceRef }; // 呼び出し元が support.ts 経由で使えるよう re-export
 import {
@@ -44,25 +45,67 @@ export async function getUnifiedQueueList(limit = 100): Promise<QueueItem[]> {
     );
   }
 
+  // 一覧掲載条件: source.display_title が非空のレコードのみ
+  // - NocoDB: (display_title,notblank) で DB レベルフィルタ（空・null 除外）
+  // - pre-adapter: 型チェック + trim() で空白のみ文字列・null・undefined を確実に除外
+  // - adapter の fromLogIntercomRecord / fromCseTicketRecord は display_title を直接使うため
+  //   fallback（body 抜粋・aiState.displayTitle 等）は一覧では発生しない
+  const hasDisplayTitle = (r: { display_title?: string | null }) =>
+    typeof r.display_title === 'string' && r.display_title.trim() !== '';
+
   const [logItems, cseItems] = await Promise.all([
     logId
       ? nocoFetch<RawSupportCase>(logId, {
+          where: '(display_title,notblank)',
           sort: '-CreatedAt',
           limit: String(limit),
-        }).then(rows => rows.map(r => fromLogIntercomRecord(r)))
+        }).then(rows => {
+          const filtered = rows.filter(hasDisplayTitle);
+          console.log(`[getUnifiedQueueList] log_intercom raw=${rows.length} after-hasDisplayTitle=${filtered.length}`);
+          const items = filtered.map(r => fromLogIntercomRecord(r)).filter((x): x is QueueItem => x !== null);
+          console.log(`[getUnifiedQueueList] log_intercom after-adapter=${items.length}`);
+          return items;
+        })
       : Promise.resolve([] as QueueItem[]),
     cseId
       ? nocoFetch<RawCseTicket>(cseId, {
+          where: '(display_title,notblank)',
           sort: '-CreatedAt',
           limit: String(Math.min(limit, 50)),
-        }).then(rows => rows.map(r => fromCseTicketRecord(r))).catch(() => [] as QueueItem[])
+        }).then(rows => {
+          const filtered = rows.filter(hasDisplayTitle);
+          console.log(`[getUnifiedQueueList] cse_tickets raw=${rows.length} after-hasDisplayTitle=${filtered.length}`);
+          const items = filtered.map(r => fromCseTicketRecord(r)).filter((x): x is QueueItem => x !== null);
+          console.log(`[getUnifiedQueueList] cse_tickets after-adapter=${items.length}`);
+          return items;
+        }).catch((err) => {
+          console.error('[getUnifiedQueueList] cse_tickets error:', err);
+          return [] as QueueItem[];
+        })
       : Promise.resolve([] as QueueItem[]),
   ]);
 
-  const merged = [...logItems, ...cseItems];
+  const withTitle = [...logItems, ...cseItems];
+
   // createdAt は "YYYY-MM-DD HH:MM" 形式なので辞書順 desc ソートが機能する
-  merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  return merged.slice(0, limit);
+  withTitle.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const sliced = withTitle.slice(0, limit);
+
+  // ── companyName を canonical_name で上書き ──────────────────────────────────
+  // company_uid が取得できている場合、companies テーブルの canonical_name を優先する。
+  // account_name（Intercom）は会社の正式名称と異なることがあるため。
+  // エラー / TABLE_ID 未設定時は既存の companyName（account_name 等）を保持。
+  const uids = [...new Set(sliced.map(i => i.companyUid).filter(Boolean))];
+  if (uids.length > 0) {
+    const canonicalMap = await fetchCanonicalNameMap(uids).catch(() => new Map<string, string>());
+    if (canonicalMap.size > 0) {
+      return sliced.map(item => {
+        const canonical = item.companyUid ? canonicalMap.get(item.companyUid) : undefined;
+        return canonical ? { ...item, companyName: canonical } : item;
+      });
+    }
+  }
+  return sliced;
 }
 
 /** Support Queue の一覧を取得する（後方互換。内部で getUnifiedQueueList を使用）*/
@@ -101,6 +144,17 @@ export async function getSupportQueueByCompanyUid(
   return raw.map(toAppSupportCase);
 }
 
+/**
+ * CaseDetail の companyName を companies テーブルの canonical_name で上書きする。
+ * companyUid が空 / TABLE_ID 未設定 / API エラー時は元の companyName を保持。
+ */
+async function enrichDetailCompanyName(detail: CaseDetail | null): Promise<CaseDetail | null> {
+  if (!detail || !detail.companyUid) return detail;
+  const map = await fetchCanonicalNameMap([detail.companyUid]).catch(() => new Map<string, string>());
+  const canonical = map.get(detail.companyUid);
+  return canonical ? { ...detail, companyName: canonical } : detail;
+}
+
 /** case_id で 1 件取得する（massage_type フィルタなし — case_id は一意）*/
 export async function getSupportCaseById(caseId: string): Promise<AppSupportCase | null> {
   const tableId = TABLE_IDS.log_intercom;
@@ -131,7 +185,7 @@ export async function getSupportCaseDetailById(caseId: string): Promise<CaseDeta
     where: `(case_id,eq,${caseId})`,
     limit: '1',
   }).catch(() => [] as RawSupportCase[]);
-  if (byCase.length > 0) return fromLogIntercomRecordForDetail(byCase[0]);
+  if (byCase.length > 0) return enrichDetailCompanyName(fromLogIntercomRecordForDetail(byCase[0]));
 
   // 2. case_id が null で queue が String(raw.Id) をキーとして使っている場合の fallback
   //    caseId が数値文字列なら NocoDB 内部 Id フィールドで再検索する
@@ -140,7 +194,7 @@ export async function getSupportCaseDetailById(caseId: string): Promise<CaseDeta
       where: `(Id,eq,${caseId})`,
       limit: '1',
     }).catch(() => [] as RawSupportCase[]);
-    if (byId.length > 0) return fromLogIntercomRecordForDetail(byId[0]);
+    if (byId.length > 0) return enrichDetailCompanyName(fromLogIntercomRecordForDetail(byId[0]));
   }
 
   return null;
@@ -152,11 +206,25 @@ export async function getSupportCaseDetailById(caseId: string): Promise<CaseDeta
  */
 export async function getCseTicketDetailById(ticketId: string): Promise<CaseDetail | null> {
   if (!TABLE_IDS.cse_tickets) return null;
-  const raw = await nocoFetch<RawCseTicket>(TABLE_IDS.cse_tickets, {
+
+  // 1. ticket_id で検索（ticket_id が設定されているレコードはこちらでヒット）
+  const byTicket = await nocoFetch<RawCseTicket>(TABLE_IDS.cse_tickets, {
     where: `(ticket_id,eq,${ticketId})`,
     limit: '1',
   }).catch(() => [] as RawCseTicket[]);
-  return raw.length > 0 ? fromCseTicketRecordForDetail(raw[0]) : null;
+  if (byTicket.length > 0) return enrichDetailCompanyName(fromCseTicketRecordForDetail(byTicket[0]));
+
+  // 2. ticket_id が null で queue が String(raw.Id) をキーとして使っている場合の fallback
+  //    ticketId が数値文字列なら NocoDB 内部 Id フィールドで再検索する
+  if (/^\d+$/.test(ticketId)) {
+    const byId = await nocoFetch<RawCseTicket>(TABLE_IDS.cse_tickets, {
+      where: `(Id,eq,${ticketId})`,
+      limit: '1',
+    }).catch(() => [] as RawCseTicket[]);
+    if (byId.length > 0) return enrichDetailCompanyName(fromCseTicketRecordForDetail(byId[0]));
+  }
+
+  return null;
 }
 
 // ── batch 用: source table 直読み（log_intercom / cse_tickets）──────────────

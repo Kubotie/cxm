@@ -13,16 +13,44 @@ export const TABLE_IDS = {
   alerts:                  process.env.NOCODB_ALERTS_TABLE_ID                  ?? 'mwhmdw4co9vb18i',
   evidence:                process.env.NOCODB_EVIDENCE_TABLE_ID                ?? 'mj3li55fwaoxf8h',
   people:                  process.env.NOCODB_PEOPLE_TABLE_ID                  ?? 'mirv9mk98899bfj',
-  // ── Support: source tables ────────────────────────────────────────────────
-  support_queue:           process.env.NOCODB_SUPPORT_QUEUE_TABLE_ID           ?? '',
-  cseticket_queue:         process.env.NOCODB_CSETICKET_QUEUE_TABLE_ID         ?? '',
-  inquiry_queue:           process.env.NOCODB_INQUIRY_QUEUE_TABLE_ID           ?? '',
+  // ── Support: source tables（実データの source of truth）─────────────────
+  //   未設定の場合は対応 view にフォールバックする
+  log_intercom:            process.env.NOCODB_LOG_INTERCOM_TABLE_ID            ?? '',
+  cse_tickets:             process.env.NOCODB_CSE_TICKETS_TABLE_ID             ?? '',
+  // ── Support: operational views（廃止済み — UI read も source table 直読みに統一）──
+  //   support_queue / inquiry_queue は log_intercom + massage_type フィルタで代替。
+  //   cseticket_queue は cse_tickets 直読みで代替。
+  //   これらの env は読まれなくなったが、既存 Vercel 設定との互換性のため残す。
+  support_queue:           '',
+  inquiry_queue:           '',
+  cseticket_queue:         '',
   // ── Support: derived tables ───────────────────────────────────────────────
   support_alerts:              process.env.NOCODB_SUPPORT_ALERTS_TABLE_ID              ?? '',
   support_case_ai_state:       process.env.NOCODB_SUPPORT_CASE_AI_STATE_TABLE_ID       ?? '',
+  support_case_state:          process.env.NOCODB_SUPPORT_CASE_STATE_TABLE_ID          ?? '',
   // ── Company: derived tables ───────────────────────────────────────────────
   unified_log_signal_state:    process.env.NOCODB_UNIFIED_LOG_SIGNAL_STATE_TABLE_ID    ?? '',
   company_summary_state:       process.env.NOCODB_COMPANY_SUMMARY_STATE_TABLE_ID       ?? '',
+  company_actions:             process.env.NOCODB_COMPANY_ACTIONS_TABLE_ID             ?? '',
+  // CXM マネージド連絡先（CSM が追加・編集。既存の people テーブルとは別テーブル）
+  company_people:              process.env.NOCODB_COMPANY_PEOPLE_TABLE_ID              ?? '',
+  // ── Company: phase management ─────────────────────────────────────────────
+  // CSM担当がいる企業: csm_customer_phase.m_phase を主表示
+  // CSM担当がいない企業: crm_customer_phase.a_phase を主表示
+  csm_customer_phase:          process.env.NOCODB_CSM_CUSTOMER_PHASE_TABLE_ID          ?? '',
+  crm_customer_phase:          process.env.NOCODB_CRM_CUSTOMER_PHASE_TABLE_ID          ?? '',
+  // ── Company: project info ─────────────────────────────────────────────────
+  project_info:                process.env.NOCODB_PROJECT_INFO_TABLE_ID                ?? '',
+  // ── Communication logs (company_uid FK) ──────────────────────────────────
+  // chatwork / slack / notion-minutes を communication signal の入力として使用
+  log_chatwork:                process.env.NOCODB_LOG_CHATWORK_TABLE_ID                ?? '',
+  log_slack:                   process.env.NOCODB_LOG_SLACK_TABLE_ID                   ?? '',
+  log_notion_minutes:          process.env.NOCODB_LOG_NOTION_MINUTES_TABLE_ID          ?? '',
+  // ── Ops: 監査ログ ──────────────────────────────────────────────────────────
+  // 未設定の場合は writeBatchRunLog が console.log fallback になる
+  audit_logs:                  process.env.NOCODB_AUDIT_LOGS_TABLE_ID                  ?? '',
+  // UI/API からの Company 配下エンティティ変更ログ（batch run とは別テーブル）
+  company_mutation_logs:       process.env.NOCODB_COMPANY_MUTATION_LOGS_TABLE_ID       ?? '',
 };
 
 export interface NocoDBResponse<T> {
@@ -34,6 +62,23 @@ export interface NocoDBResponse<T> {
     isFirstPage: boolean;
     isLastPage: boolean;
   };
+}
+
+/**
+ * NocoDB v2 クエリ文字列を構築する。
+ * NocoDB のフィルタ構文 ( ) , ~ は raw のまま使う必要があるため、
+ * URLSearchParams（percent-encode する）は使わず手動でクエリ文字列を構築する。
+ * %28 / %29 / %2C 等にエンコードされると NocoDB がフィルタを無視して全件返す。
+ */
+function buildNocoQuery(params: Record<string, string>): string {
+  const parts: string[] = [];
+  // limit がなければデフォルト 200
+  if (!params.limit) parts.push('limit=200');
+  for (const [k, v] of Object.entries(params)) {
+    // NocoDB フィルタ/ソート構文（where / sort / fields など）は raw のまま付与
+    parts.push(`${k}=${v}`);
+  }
+  return parts.length > 0 ? `?${parts.join('&')}` : '';
 }
 
 /**
@@ -51,12 +96,9 @@ export async function nocoFetch<T>(
     );
   }
 
-  const url = new URL(`${BASE_URL}/api/v2/tables/${tableId}/records`);
+  const urlString = `${BASE_URL}/api/v2/tables/${tableId}/records${buildNocoQuery(params)}`;
 
-  if (!params.limit) url.searchParams.set('limit', '200');
-  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-
-  const res = await fetch(url.toString(), {
+  const res = await fetch(urlString, {
     headers: {
       'xc-token': API_TOKEN,
     },
@@ -65,9 +107,74 @@ export async function nocoFetch<T>(
   });
 
   if (!res.ok) {
-    throw new Error(`NocoDB ${res.status}: ${res.statusText} [${tableId}]`);
+    const body = await res.text().catch(() => '(body read failed)');
+    const tokenHint = API_TOKEN ? `token=${API_TOKEN.slice(0, 6)}...` : 'token=(empty)';
+    throw new Error(`NocoDB ${res.status}: ${res.statusText} [${tableId}] | ${tokenHint} | body=${body}`);
   }
 
   const json: NocoDBResponse<T> = await res.json();
   return json.list ?? [];
+}
+
+/**
+ * 複数の company_uid を指定してレコードを一括取得する。
+ * NocoDB の `in` オペレータ: (company_uid,in,uid1,uid2,uid3)
+ * 返り値は Map<company_uid, T[]> 形式で company_uid → レコード配列の逆引きができる。
+ *
+ * @param tableId    対象テーブルID
+ * @param uids       取得対象の company_uid 配列（空配列時は空 Map を返す）
+ * @param extraParams 追加クエリパラメータ（sort/fields 等）
+ *
+ * ── 将来拡張メモ ─────────────────────────────────────────────────────────────
+ *   date range filter: extraParams に `where` を部分結合できるようにすれば
+ *     `(company_uid,in,...) ~and (sent_at,gte,2026-01-01)` 等が可能。
+ *   limit per uid: 現在は uids.length × 100 の固定上限。
+ *     UID 数が多い場合は extraParams.limit を上書きして調整できる。
+ *   fields projection: extraParams に `fields=col1,col2` を渡すことで
+ *     必要なカラムだけ取得してレスポンスを軽量化できる（NocoDB v2 対応済み）。
+ *   sort: extraParams.sort で最新1件取得などに利用可能（例: sort='-sent_at'）。
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function nocoFetchByUids<T extends { company_uid?: string | null }>(
+  tableId: string,
+  uids: string[],
+  extraParams: Omit<Record<string, string>, 'where'> = {},
+): Promise<Map<string, T[]>> {
+  if (!tableId || uids.length === 0) return new Map();
+  const where = `(company_uid,in,${uids.join(',')})`;
+  // 件数上限: uids × 想定最大件数（project は 50/社程度、log 系は 100/社）
+  const limit = String(Math.min(uids.length * 100, 1000));
+  const rows = await nocoFetch<T>(tableId, { where, limit, ...extraParams });
+  const result = new Map<string, T[]>();
+  for (const uid of uids) result.set(uid, []);
+  for (const row of rows) {
+    const uid = row.company_uid ?? '';
+    if (!uid) continue;
+    const arr = result.get(uid) ?? [];
+    arr.push(row);
+    result.set(uid, arr);
+  }
+  return result;
+}
+
+/**
+ * NocoDB v2 REST API でレコード総数のみを取得する。
+ * nocoFetch の pageInfo.totalRows を読むための最小コスト版（limit=1 で1件だけ取得）。
+ * テーブル未設定 / エラー時は -1 を返す。
+ */
+export async function nocoCount(
+  tableId: string,
+  params: Record<string, string> = {},
+): Promise<number> {
+  if (!tableId || !API_TOKEN) return -1;
+  // buildNocoQuery と同様に raw クエリ文字列を使用
+  const query = buildNocoQuery({ ...params, limit: '1' });
+  const urlString = `${BASE_URL}/api/v2/tables/${tableId}/records${query}`;
+  const res = await fetch(urlString, {
+    headers: { 'xc-token': API_TOKEN },
+    cache: 'no-store',
+  });
+  if (!res.ok) return -1;
+  const json: NocoDBResponse<unknown> = await res.json();
+  return json.pageInfo?.totalRows ?? -1;
 }

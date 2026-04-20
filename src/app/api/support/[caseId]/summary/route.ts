@@ -76,15 +76,16 @@ export async function POST(
 
     if (body.save) {
       const writePayload: SupportCaseAIStateWritePayload = {
-        source_id: ref.sourceRecordId,
-        source_table: ref.sourceQueue,
-        summary: result.ai_summary,
-        urgency: result.severity,
-        next_steps: JSON.stringify(result.suggested_next_steps),
-        customer_intent: result.customer_intent,
-        product_area: result.product_area,
+        source_record_id: ref.sourceRecordId,
+        source_queue:     ref.sourceQueue,
+        display_title:    result.display_title,
+        summary:          result.ai_summary,
+        urgency:          result.severity,
+        next_steps:       JSON.stringify(result.suggested_next_steps),
+        customer_intent:  result.customer_intent,
+        product_area:     result.product_area,
         urgency_reasoning: result.urgency_reasoning,
-        generated_by: completion.model,
+        generated_by:     completion.model,
       };
 
       const saveResult = await saveSupportCaseAIState(ref, writePayload);

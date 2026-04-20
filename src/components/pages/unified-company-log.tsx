@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
-import { fetchCompanyByUid, fetchLogEntries } from "@/lib/nocodb-client";
+import { fetchCompanyByUid } from "@/lib/nocodb-client";
 import type { AppCompany, AppLogEntry } from "@/lib/nocodb-client";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { GlobalHeader } from "@/components/layout/global-header";
@@ -65,23 +65,9 @@ type LogStatus = "unprocessed" | "extracted" | "reviewed" | "linked" | "unresolv
 type LogSourceType = "slack" | "email" | "meeting_minutes" | "support_ticket" | "product_usage" | "crm_note" | "ai_extracted" | "chatwork" | "intercom";
 type ViewMode = "timeline" | "list";
 
-// モックデータ
-const companyData = {
-  id: "comp-123",
-  name: "株式会社テクノロジーイノベーション",
-  relatedProjects: ["新規導入プロジェクト", "拡張検討案件"],
-  phaseLabel: "5.Growth",
-  phaseSource: "CRM Sync",
-  accountOwner: "佐藤 太郎",
-  lastTouchpoint: "2026-03-11 14:30",
-  openAlerts: 2,
-  openActions: 5,
-  unresolvedEvidenceCount: 3,
-  healthScore: 72,
-  healthTrend: "down",
-};
-
-const mockLogs = [
+/* eslint-disable @typescript-eslint/no-unused-vars */
+// Mock data removed — using real API (/api/companies/[uid]/log)
+const _REMOVED_MOCKS = [
   {
     id: "log-1",
     timestamp: "2026-03-11 14:30",
@@ -335,23 +321,32 @@ export function UnifiedCompanyLog() {
       .then(c => { if (c) setApiCompany(c); })
       .catch(e => {
         console.warn('[UnifiedLog] company fetch failed:', e);
-        setLoadError('会社情報の取得に失敗しました（mock表示中）');
+        setLoadError('会社情報の取得に失敗しました');
       });
 
-    fetchLogEntries(companyId)
-      .then(setApiLogs)
+    fetch(`/api/companies/${companyId}/log`)
+      .then(r => r.json())
+      .then((data: { evidenceEntries: AppLogEntry[] }) => {
+        setApiLogs(data.evidenceEntries ?? []);
+      })
       .catch(e => {
-        console.warn('[UnifiedLog] logs fetch failed:', e);
+        console.warn('[UnifiedLog] log fetch failed:', e);
       });
   }, [companyId]);
 
-  // API データがあればそちら、なければ mock にフォールバック
-  const displayCompany = apiCompany
-    ? { ...companyData, name: apiCompany.name, phaseLabel: apiCompany.phaseLabel,
-        accountOwner: apiCompany.owner, lastTouchpoint: apiCompany.lastContact,
-        openAlerts: apiCompany.openAlerts, openActions: apiCompany.openActions }
-    : companyData;
-  const logs = apiLogs ?? mockLogs;
+  const displayCompany = {
+    id:           companyId,
+    name:         apiCompany?.name        ?? companyId,
+    phaseLabel:   apiCompany?.phaseLabel  ?? '—',
+    healthTrend:  'stable' as const,
+    healthScore:  0,
+    accountOwner: apiCompany?.owner       ?? '—',
+    lastTouchpoint: apiCompany?.lastContact ?? '—',
+    relatedProjects: [] as string[],
+    openAlerts:   apiCompany?.openAlerts  ?? 0,
+    openActions:  apiCompany?.openActions ?? 0,
+  };
+  const logs = apiLogs ?? [];
 
   const [viewMode, setViewMode] = useState<ViewMode>("timeline");
   const [selectedLog, setSelectedLog] = useState<string | null>(null);
@@ -360,6 +355,8 @@ export function UnifiedCompanyLog() {
   const [filterSourceType, setFilterSourceType] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
   const [savedView, setSavedView] = useState("all");
+  const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
+  const [dateRange, setDateRange] = useState<7 | 30 | 90 | 0>(0); // 0 = all
   
   // Panel states for different CTAs
   const [showOriginalPanel, setShowOriginalPanel] = useState(false);
@@ -414,27 +411,39 @@ export function UnifiedCompanyLog() {
     return acc;
   }, {} as Record<string, (typeof logs)[number][]>);
 
-  const filteredLogs = logs.filter(log => {
-    if (searchQuery && !log.title.toLowerCase().includes(searchQuery.toLowerCase()) && !log.summary.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    if (filterSourceType !== "all" && log.sourceType !== filterSourceType) return false;
-    if (filterStatus !== "all" && log.status !== filterStatus) return false;
-    
-    // Saved views
-    if (savedView === "unprocessed" && log.status !== "unprocessed") return false;
-    if (savedView === "review_needed" && log.status !== "extracted" && log.status !== "unprocessed") return false;
-    if (savedView === "external" && !log.hasOriginalLink) return false;
-    if (savedView === "support" && log.sourceType !== "support_ticket" && log.sourceType !== "intercom") return false;
-    if (savedView === "csm" && log.ownerRole !== "CSM") return false;
-    
-    return true;
-  });
+  const dateRangeCutoff = dateRange > 0
+    ? new Date(Date.now() - dateRange * 86_400_000)
+    : null;
+
+  const filteredLogs = logs
+    .filter(log => {
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        if (!log.title.toLowerCase().includes(q) && !log.summary.toLowerCase().includes(q)) return false;
+      }
+      if (filterSourceType !== "all" && log.sourceType !== filterSourceType) return false;
+      if (filterStatus !== "all" && log.status !== filterStatus) return false;
+      if (dateRangeCutoff && log.date && new Date(log.date) < dateRangeCutoff) return false;
+      // Saved views
+      if (savedView === "unprocessed" && log.status !== "unprocessed") return false;
+      if (savedView === "review_needed" && log.status !== "proposal_generated" && log.status !== "unprocessed") return false;
+      if (savedView === "external" && !log.hasOriginalLink) return false;
+      if (savedView === "support" && log.sourceType !== "support" && log.sourceType !== "ticket") return false;
+      if (savedView === "csm" && log.ownerRole !== "CSM") return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const ta = a.date ?? '';
+      const tb = b.date ?? '';
+      return sortOrder === 'desc' ? tb.localeCompare(ta) : ta.localeCompare(tb);
+    });
 
   const handleLogClick = (id: string) => {
     setSelectedLog(id);
     setIsDrawerOpen(true);
   };
 
-  const unresolvedCount = logs.filter(log => log.status === "unresolved" || log.resolverResult === "unresolved").length;
+  const unresolvedCount = logs.filter(log => log.resolverResult === "unresolved").length;
   const unprocessedCount = logs.filter(log => log.status === "unprocessed").length;
 
   return (
@@ -457,12 +466,7 @@ export function UnifiedCompanyLog() {
                 <div className="flex items-center gap-3 mb-1">
                   <h1 className="text-lg font-semibold text-slate-900">{displayCompany.name}</h1>
                   <Badge className="bg-blue-500 text-xs">{displayCompany.phaseLabel}</Badge>
-                  {displayCompany.healthTrend === "down" && (
-                    <div className="flex items-center gap-1 text-orange-700">
-                      <TrendingDown className="w-4 h-4" />
-                      <span className="text-xs font-medium">Health Score {displayCompany.healthScore}</span>
-                    </div>
-                  )}
+                  {/* healthTrend display removed — mock-only data */}
                 </div>
                 <div className="flex items-center gap-4 text-xs text-slate-600">
                   <span>Owner: {displayCompany.accountOwner}</span>
@@ -619,6 +623,35 @@ export function UnifiedCompanyLog() {
                     <SelectItem value="unresolved">未解決</SelectItem>
                   </SelectContent>
                 </Select>
+
+                {/* Date range */}
+                <Select value={String(dateRange)} onValueChange={v => setDateRange(Number(v) as 7 | 30 | 90 | 0)}>
+                  <SelectTrigger className="h-7 text-xs">
+                    <SelectValue placeholder="期間" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">全期間</SelectItem>
+                    <SelectItem value="7">直近7日</SelectItem>
+                    <SelectItem value="30">直近30日</SelectItem>
+                    <SelectItem value="90">直近90日</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Sort order */}
+                <div className="flex border rounded overflow-hidden text-[10px]">
+                  <button
+                    className={`flex-1 py-1 transition-colors ${sortOrder === 'desc' ? 'bg-slate-700 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                    onClick={() => setSortOrder('desc')}
+                  >
+                    新しい順
+                  </button>
+                  <button
+                    className={`flex-1 py-1 transition-colors ${sortOrder === 'asc' ? 'bg-slate-700 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                    onClick={() => setSortOrder('asc')}
+                  >
+                    古い順
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -713,7 +746,7 @@ export function UnifiedCompanyLog() {
               </div>
             </div>
 
-            <ScrollArea className="flex-1">
+            <ScrollArea className="flex-1 min-h-0">
               <div className="p-4">
                 {viewMode === "timeline" ? (
                   <div className="space-y-6">
@@ -844,10 +877,10 @@ export function UnifiedCompanyLog() {
 
       {/* Right: Detail Panel */}
       <Sheet open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
-        <SheetContent className="w-[600px] sm:max-w-[600px] p-0">
+        <SheetContent className="w-[600px] sm:max-w-[600px] p-0 flex flex-col overflow-hidden">
           {selectedLogData && (
             <>
-              <SheetHeader className="p-4 border-b">
+              <SheetHeader className="p-4 border-b flex-shrink-0">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <SheetTitle className="text-base">{selectedLogData.title}</SheetTitle>
@@ -858,7 +891,7 @@ export function UnifiedCompanyLog() {
                 </div>
               </SheetHeader>
 
-              <ScrollArea className="h-[calc(100vh-80px)]">
+              <ScrollArea className="flex-1 min-h-0">
                 <div className="p-4 space-y-4">
                   {/* Badges */}
                   <div className="flex flex-wrap gap-2">
@@ -1034,8 +1067,8 @@ export function UnifiedCompanyLog() {
                       {(selectedLogData.messageType === 'inquiry' || 
                         selectedLogData.messageType === 'support_request' || 
                         selectedLogData.messageType === 'feature_request' ||
-                        selectedLogData.sourceType === 'support_ticket' ||
-                        selectedLogData.sourceType === 'intercom') && (
+                        selectedLogData.sourceType === 'support' ||
+                        selectedLogData.sourceType === 'ticket') && (
                         <Link href={`/outbound/compose?fromLog=${selectedLogData.id}&evidence=${selectedLogData.id}&sourceContext=unified_log&linkedCompany=${displayCompany.id}&linkedProject=${selectedLogData.linkedProject || ''}&summary=${encodeURIComponent(selectedLogData.summary)}`}>
                           <Button 
                             variant="default" 
@@ -1128,8 +1161,8 @@ export function UnifiedCompanyLog() {
 
       {/* AI Signal Extraction Sheet */}
       <Sheet open={showSignalSheet} onOpenChange={setShowSignalSheet}>
-        <SheetContent className="w-[560px] sm:max-w-[560px]">
-          <SheetHeader>
+        <SheetContent className="w-[560px] sm:max-w-[560px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-violet-600" />
               AI Signal Extraction
@@ -1139,8 +1172,8 @@ export function UnifiedCompanyLog() {
             </SheetDescription>
           </SheetHeader>
 
-          <ScrollArea className="h-[calc(100vh-160px)] mt-4">
-            <div className="space-y-4 px-1 pr-4">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
+            <div className="space-y-4 px-4 pb-4">
 
               {/* ─ Loading ─ */}
               {(signalLoading || signalSaving) && (

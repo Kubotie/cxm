@@ -84,8 +84,8 @@ export function PeopleOrgChartModals({
     <>
       {/* Evidence Sheet */}
       <Sheet open={showEvidenceSheet} onOpenChange={setShowEvidenceSheet}>
-        <SheetContent className="w-[700px] sm:max-w-[700px]">
-          <SheetHeader>
+        <SheetContent className="w-[700px] sm:max-w-[700px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle>Evidence 確認 - {selectedPerson?.name}</SheetTitle>
             <SheetDescription>
               この人物に関連するEvidenceを確認します
@@ -97,7 +97,7 @@ export function PeopleOrgChartModals({
               <TabsTrigger value="timeline" className="text-xs">タイムライン</TabsTrigger>
             </TabsList>
             <TabsContent value="list" className="mt-4">
-              <ScrollArea className="h-[calc(100vh-250px)]">
+              <ScrollArea className="flex-1 min-h-0">
                 <div className="space-y-3 px-4">
                   <div className="bg-slate-50 border rounded p-3">
                     <div className="flex items-start justify-between mb-2">
@@ -141,7 +141,7 @@ export function PeopleOrgChartModals({
               </ScrollArea>
             </TabsContent>
             <TabsContent value="timeline" className="mt-4">
-              <ScrollArea className="h-[calc(100vh-250px)]">
+              <ScrollArea className="flex-1 min-h-0">
                 <div className="space-y-3 px-4">
                   <div className="relative pl-6 pb-4 border-l-2 border-slate-200">
                     <div className="absolute left-0 top-0 -translate-x-1/2 w-3 h-3 rounded-full bg-blue-500" />
@@ -167,14 +167,15 @@ export function PeopleOrgChartModals({
 
       {/* Confirm People Dialog */}
       <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
-        <DialogContent className="max-w-md max-h-[calc(100vh-4rem)] flex flex-col">
-          <DialogHeader>
+        <DialogContent className="max-w-md max-h-[calc(100vh-4rem)] flex flex-col overflow-hidden">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>People確定</DialogTitle>
             <DialogDescription>
               このPeopleを確定します。proposed → confirmed に変更されます。
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4 overflow-y-auto">
+          <ScrollArea className="flex-1 min-h-0">
+          <div className="space-y-4 py-4 px-0.5">
             <div className="bg-slate-50 border rounded p-3">
               <h4 className="text-sm font-semibold text-slate-900 mb-2">{selectedPerson?.name}</h4>
               <div className="text-xs text-slate-700 space-y-1">
@@ -202,12 +203,13 @@ export function PeopleOrgChartModals({
               </div>
             )}
           </div>
-          <DialogFooter>
+          </ScrollArea>
+          <DialogFooter className="flex-shrink-0 border-t pt-3">
             <Button variant="outline" onClick={() => setShowConfirmDialog(false)}>
               キャンセル
             </Button>
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               onClick={() => {
                 setShowConfirmDialog(false);
                 setShowEditDrawer(true);
@@ -215,7 +217,7 @@ export function PeopleOrgChartModals({
             >
               編集して確定
             </Button>
-            <Button 
+            <Button
               className="bg-emerald-600 hover:bg-emerald-700"
               onClick={() => setShowConfirmDialog(false)}
             >
@@ -227,14 +229,14 @@ export function PeopleOrgChartModals({
 
       {/* Edit People Drawer */}
       <Sheet open={showEditDrawer} onOpenChange={setShowEditDrawer}>
-        <SheetContent className="w-[600px] sm:max-w-[600px]">
-          <SheetHeader>
+        <SheetContent className="w-[600px] sm:max-w-[600px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle>People情報編集</SheetTitle>
             <SheetDescription>
               {selectedPerson?.name}の情報を編集します
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-200px)] mt-6">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-4 px-4">
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-slate-900">名前</label>
@@ -327,14 +329,15 @@ export function PeopleOrgChartModals({
 
       {/* Merge People Dialog */}
       <Dialog open={showMergeDialog} onOpenChange={setShowMergeDialog}>
-        <DialogContent className="max-w-2xl max-h-[calc(100vh-4rem)] flex flex-col">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[calc(100vh-4rem)] flex flex-col overflow-hidden">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle>People統合</DialogTitle>
             <DialogDescription>
               重複している可能性があるPeopleを統合します
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4 overflow-y-auto">
+          <ScrollArea className="flex-1 min-h-0">
+          <div className="space-y-4 py-4 px-0.5">
             <div className="grid grid-cols-2 gap-4">
               <div className="border rounded p-3 bg-slate-50">
                 <p className="text-xs font-semibold text-slate-700 mb-2">統合元</p>
@@ -370,11 +373,12 @@ export function PeopleOrgChartModals({
               <Input defaultValue="山田 太郎" className="text-sm" />
             </div>
           </div>
-          <DialogFooter>
+          </ScrollArea>
+          <DialogFooter className="flex-shrink-0 border-t pt-3">
             <Button variant="outline" onClick={() => setShowMergeDialog(false)}>
               キャンセル
             </Button>
-            <Button 
+            <Button
               className="bg-blue-600 hover:bg-blue-700"
               onClick={() => setShowMergeDialog(false)}
             >
@@ -386,14 +390,14 @@ export function PeopleOrgChartModals({
 
       {/* Project Link Sheet */}
       <Sheet open={showProjectLinkSheet} onOpenChange={setShowProjectLinkSheet}>
-        <SheetContent className="w-[600px] sm:max-w-[600px]">
-          <SheetHeader>
+        <SheetContent className="w-[600px] sm:max-w-[600px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle>Projectに紐付ける</SheetTitle>
             <SheetDescription>
               {selectedPerson?.name}をProjectに紐付けます
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-200px)] mt-6">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-4 px-4">
               <div className="bg-slate-50 border rounded p-3">
                 <p className="text-xs font-semibold text-slate-700 mb-2">現在の紐付き</p>
@@ -469,14 +473,14 @@ export function PeopleOrgChartModals({
 
       {/* Action Create Drawer */}
       <Sheet open={showActionCreateDrawer} onOpenChange={setShowActionCreateDrawer}>
-        <SheetContent className="w-[600px] sm:max-w-[600px]">
-          <SheetHeader>
+        <SheetContent className="w-[600px] sm:max-w-[600px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle>Action作成</SheetTitle>
             <SheetDescription>
               {selectedPerson?.name}に対するActionを作成します
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-200px)] mt-6">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-4 px-4">
               <div className="bg-blue-50 border border-blue-200 rounded p-3">
                 <p className="text-xs font-semibold text-blue-900 mb-1">📋 対象人物</p>
@@ -572,14 +576,14 @@ export function PeopleOrgChartModals({
 
       {/* Missing Role Sheet */}
       <Sheet open={showMissingRoleSheet} onOpenChange={setShowMissingRoleSheet}>
-        <SheetContent className="w-[600px] sm:max-w-[600px]">
-          <SheetHeader>
+        <SheetContent className="w-[600px] sm:max-w-[600px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle>Missing Role候補追加</SheetTitle>
             <SheetDescription>
               {selectedMissingRole?.label}の候補を確認・追加します
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-200px)] mt-6">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-4 px-4">
               <div className="bg-amber-50 border border-amber-200 rounded p-3">
                 <p className="text-xs font-semibold text-amber-900 mb-1">⚠️ 欠損役割</p>

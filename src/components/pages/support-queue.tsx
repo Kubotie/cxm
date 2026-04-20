@@ -1,8 +1,22 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { fetchSupportCases, fetchSupportAlerts } from "@/lib/nocodb-client";
-import type { AppSupportCase, AppSupportAlert } from "@/lib/nocodb-client";
+import type { QueueItem, AppSupportAlert } from "@/lib/nocodb-client";
+import type { SupportCaseAiViewModel } from "@/lib/support/support-ai-state-view-model";
+import { getAiFreshnessStatus } from "@/lib/support/support-ai-state-policy";
+import type { AiFreshnessStatus } from "@/lib/support/support-ai-state-policy";
+import {
+  CaseTypeBadge,
+  SourceBadge,
+  RoutingBadge,
+  SourceStatusBadge,
+  SeverityBadge,
+  LifecycleStatusBadge,
+} from "@/lib/support/badges";
+import { useCaseState } from "@/lib/support/case-state";
+import { buildCaseViewModel, ACTION_STATUS_LABEL, ACTION_STATUS_COLOR, CSE_STATUS_LABEL, CSE_STATUS_COLOR } from "@/lib/support/view-model";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { GlobalHeader } from "@/components/layout/global-header";
 import { Button } from "@/components/ui/button";
@@ -12,180 +26,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ViewSwitcher } from "@/components/ui/view-switcher";
 import { ViewContextHeader } from "@/components/ui/view-context-header";
-import { Search, ArrowRight, Ticket, Building, Bell, X, AlertTriangle, Filter } from "lucide-react";
-
-// ── Mock data ────────────────────────────────────────────────────────────────
-
-const supportCases = [
-  {
-    id: "inq_1",
-    title: "API連携時のタイムアウトについて",
-    caseType: "Inquiry",
-    source: "Intercom",
-    company: "株式会社テクノロジーイノベーション",
-    companyId: "1",
-    project: "プロジェクトA",
-    projectId: "proj_1",
-    owner: null,
-    assignedTeam: null,
-    routingStatus: "unassigned",
-    sourceStatus: "open",
-    severity: "high",
-    createdAt: "2026-03-17 14:23",
-    firstResponseTime: null,
-    openDuration: "2h 54m",
-    waitingDuration: null,
-    linkedCSETicket: null,
-    relatedContent: 0,
-  },
-  {
-    id: "sup_1",
-    title: "レポート出力時のデータ欠損",
-    caseType: "Support",
-    source: "Slack",
-    company: "グローバルソリューションズ株式会社",
-    companyId: "2",
-    project: "プロジェクトB",
-    projectId: "proj_2",
-    owner: "Support Team",
-    assignedTeam: "Support",
-    routingStatus: "in progress",
-    sourceStatus: null,
-    severity: "medium",
-    createdAt: "2026-03-17 13:45",
-    firstResponseTime: "0h 45m",
-    openDuration: "3h 32m",
-    waitingDuration: null,
-    linkedCSETicket: null,
-    relatedContent: 2,
-  },
-  {
-    id: "cse_1",
-    title: "[CSE-1234] データ同期エラーの調査",
-    caseType: "CSE Ticket Linked",
-    source: "CSE Ticket",
-    company: "クラウドインフラサービス",
-    companyId: "5",
-    project: "プロジェクトC",
-    projectId: "proj_3",
-    owner: "山本 一郎",
-    assignedTeam: "CSE",
-    routingStatus: "waiting on CSE",
-    sourceStatus: "open",
-    severity: "high",
-    createdAt: "2026-03-17 11:20",
-    firstResponseTime: "0h 15m",
-    openDuration: "5h 57m",
-    waitingDuration: "2h 30m",
-    linkedCSETicket: "CSE-1234",
-    relatedContent: 1,
-  },
-  {
-    id: "sup_2",
-    title: "権限設定の確認方法について",
-    caseType: "Support",
-    source: "Intercom",
-    company: "デジタルマーケティング株式会社",
-    companyId: "3",
-    project: "プロジェクトD",
-    projectId: "proj_4",
-    owner: "佐藤 太郎",
-    assignedTeam: "CSM",
-    routingStatus: "assigned",
-    sourceStatus: "open",
-    severity: "low",
-    createdAt: "2026-03-17 10:15",
-    firstResponseTime: "1h 20m",
-    openDuration: "7h 2m",
-    waitingDuration: null,
-    linkedCSETicket: null,
-    relatedContent: 3,
-  },
-  {
-    id: "inq_2",
-    title: "契約更新時の見積もり依頼",
-    caseType: "Inquiry",
-    source: "Chatwork",
-    company: "エンタープライズソフトウェア",
-    companyId: "4",
-    project: null,
-    projectId: null,
-    owner: "山田 花子",
-    assignedTeam: "CSM",
-    routingStatus: "triaged",
-    sourceStatus: null,
-    severity: "medium",
-    createdAt: "2026-03-17 09:45",
-    firstResponseTime: "0h 30m",
-    openDuration: "7h 32m",
-    waitingDuration: null,
-    linkedCSETicket: null,
-    relatedContent: 0,
-  },
-  {
-    id: "sup_3",
-    title: "ユーザー招待メールが届かない",
-    caseType: "Support",
-    source: "Intercom",
-    company: "株式会社テクノロジーイノベーション",
-    companyId: "1",
-    project: "プロジェクトA",
-    projectId: "proj_1",
-    owner: "Support Team",
-    assignedTeam: "Support",
-    routingStatus: "waiting on customer",
-    sourceStatus: "pending",
-    severity: "medium",
-    createdAt: "2026-03-16 16:30",
-    firstResponseTime: "0h 20m",
-    openDuration: "1d 0h 47m",
-    waitingDuration: "18h 20m",
-    linkedCSETicket: null,
-    relatedContent: 1,
-  },
-  {
-    id: "cse_2",
-    title: "[CSE-1256] パフォーマンス劣化の調査",
-    caseType: "CSE Ticket Linked",
-    source: "CSE Ticket",
-    company: "グローバルソリューションズ株式会社",
-    companyId: "2",
-    project: "プロジェクトB",
-    projectId: "proj_2",
-    owner: "田中 次郎",
-    assignedTeam: "CSE",
-    routingStatus: "waiting on CSE",
-    sourceStatus: "in progress",
-    severity: "high",
-    createdAt: "2026-03-15 14:20",
-    firstResponseTime: "0h 10m",
-    openDuration: "2d 2h 57m",
-    waitingDuration: "1d 4h 30m",
-    linkedCSETicket: "CSE-1256",
-    relatedContent: 0,
-  },
-  {
-    id: "sup_4",
-    title: "エクスポート機能の動作確認",
-    caseType: "Support",
-    source: "Slack",
-    company: "クラウドインフラサービス",
-    companyId: "5",
-    project: "プロジェクトC",
-    projectId: "proj_3",
-    owner: "Support Team",
-    assignedTeam: "Support",
-    routingStatus: "resolved_like",
-    sourceStatus: null,
-    severity: "low",
-    createdAt: "2026-03-15 11:00",
-    firstResponseTime: "0h 50m",
-    openDuration: "2d 6h 17m",
-    waitingDuration: null,
-    linkedCSETicket: null,
-    relatedContent: 2,
-  },
-];
+import { Search, ArrowRight, Ticket, Building, Bell, X, AlertTriangle, Filter, ChevronUp, ChevronDown, ChevronsUpDown, Archive, CheckSquare, Square, RefreshCw, Lock } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 // ── 定数 ──────────────────────────────────────────────────────────────────────
 
@@ -230,42 +72,202 @@ function AlertBadge({ alert, caseId }: { alert: AppSupportAlert; caseId: string 
   );
 }
 
-// ── Routing status badge ──────────────────────────────────────────────────────
-
-function RoutingBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    unassigned: "bg-slate-100 text-slate-700",
-    triaged: "bg-blue-50 text-blue-700 border-blue-200",
-    assigned: "bg-purple-50 text-purple-700 border-purple-200",
-    "in progress": "bg-green-50 text-green-700 border-green-200",
-    "waiting on customer": "bg-amber-50 text-amber-700 border-amber-200",
-    "waiting on CSE": "bg-orange-50 text-orange-700 border-orange-200",
-    resolved_like: "bg-green-50 text-green-700 border-green-200",
-  };
-  const labels: Record<string, string> = {
-    unassigned: "未アサイン",
-    triaged: "振り分け済",
-    assigned: "アサイン済",
-    "in progress": "対応中",
-    "waiting on customer": "顧客待ち",
-    "waiting on CSE": "CSE待ち",
-    resolved_like: "区切り済み",
-  };
-  return (
-    <Badge variant="outline" className={`text-xs ${map[status] ?? "bg-slate-100 text-slate-700"}`}>
-      {labels[status] ?? status}
-    </Badge>
-  );
-}
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-type SupportCase = AppSupportCase;
+type SupportCase = QueueItem;
+type SortKey = 'title' | 'companyName' | 'severity' | 'routingStatus' | 'createdAt';
+
+const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const AI_PRIORITY_ORDER: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+
+function SortableHead({ label, sortK, currentKey, currentDir, onSort, className }: {
+  label: string;
+  sortK: SortKey;
+  currentKey: SortKey;
+  currentDir: 'asc' | 'desc';
+  onSort: (k: SortKey) => void;
+  className?: string;
+}) {
+  const active = currentKey === sortK;
+  return (
+    <TableHead className={className}>
+      <button
+        onClick={() => onSort(sortK)}
+        className="flex items-center gap-1 hover:text-slate-900 whitespace-nowrap"
+      >
+        {label}
+        {active
+          ? currentDir === 'asc'
+            ? <ChevronUp className="w-3 h-3" />
+            : <ChevronDown className="w-3 h-3" />
+          : <ChevronsUpDown className="w-3 h-3 text-slate-300" />
+        }
+      </button>
+    </TableHead>
+  );
+}
 type AlertsMap = Record<string, AppSupportAlert>;
 
 export function SupportQueue() {
-  const [apiCases, setApiCases]   = useState<AppSupportCase[] | null>(null);
+  const router = useRouter();
+  const {
+    isDismissed, getCaseRecord,
+    loadCaseStates,
+    persistBulkDismiss,
+    persistBulkAction,
+    persistBulkCseTicket,
+  } = useCaseState();
+
+  // ── Bulk selection ─────────────────────────────────────────────────────────
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  function toggleSelect(id: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll(ids: string[]) {
+    setSelectedIds(new Set(ids));
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  // ── Bulk action form ───────────────────────────────────────────────────────
+  type BulkFormMode = 'dismiss' | 'action' | 'cse' | null;
+  const [bulkFormMode, setBulkFormMode] = useState<BulkFormMode>(null);
+  const [bulkTitle,  setBulkTitle]  = useState('');
+  const [bulkOwner,  setBulkOwner]  = useState('');
+  const [bulkReason, setBulkReason] = useState('');
+
+  function openBulkForm(mode: BulkFormMode) {
+    setBulkFormMode(mode);
+    setBulkTitle(''); setBulkOwner(''); setBulkReason('');
+  }
+
+  function closeBulkForm() { setBulkFormMode(null); }
+
+  // ── Bulk result notification ───────────────────────────────────────────────
+  type BulkNotify = { succeeded: number; failed: number; lockedSkipped?: number } | null;
+  const [bulkNotify, setBulkNotify] = useState<BulkNotify>(null);
+  const [bulkRunning, setBulkRunning] = useState(false);
+
+  // ── Bulk actions (persistent) ──────────────────────────────────────────────
+  async function handleBulkDismiss() {
+    const ids = [...selectedIds];
+    closeBulkForm(); clearSelection();
+    setBulkRunning(true);
+    const result = await persistBulkDismiss(ids, { reason: bulkReason || undefined }).catch(() => ({ succeeded: [], failed: ids.map(id => ({ id, error: 'unknown' })) }));
+    setBulkRunning(false);
+    setBulkNotify({ succeeded: result.succeeded.length, failed: result.failed.length });
+  }
+
+  async function handleBulkCreateAction() {
+    const ids = [...selectedIds];
+    closeBulkForm(); clearSelection();
+    setBulkRunning(true);
+    const result = await persistBulkAction(ids, {
+      title: bulkTitle || undefined,
+      owner: bulkOwner || undefined,
+    }).catch(() => ({ succeeded: [], failed: ids.map(id => ({ id, error: 'unknown' })) }));
+    setBulkRunning(false);
+    setBulkNotify({ succeeded: result.succeeded.length, failed: result.failed.length });
+  }
+
+  async function handleBulkCreateCseTicket() {
+    const ids = [...selectedIds];
+    closeBulkForm(); clearSelection();
+    setBulkRunning(true);
+    const result = await persistBulkCseTicket(ids, {
+      title: bulkTitle || undefined,
+      owner: bulkOwner || undefined,
+    }).catch(() => ({ succeeded: [], failed: ids.map(id => ({ id, error: 'unknown' })) }));
+    setBulkRunning(false);
+    setBulkNotify({ succeeded: result.succeeded.length, failed: result.failed.length });
+  }
+
+  // approved confirm ダイアログ用 state
+  const [showApproveConfirm, setShowApproveConfirm] = useState(false);
+
+  async function executeBulkAiReview(status: 'reviewed' | 'approved') {
+    const ids = [...selectedIds];
+    clearSelection();
+    setShowApproveConfirm(false);
+    setBulkRunning(true);
+    const results = await Promise.allSettled(
+      ids.map(id => {
+        const sc = cases.find(c => c.id === id);
+        const sourceQueue = sc?.sourceTable === 'cse_tickets' ? 'cse_ticket' : 'intercom';
+        return fetch(`/api/support/cases/${id}/ai-review`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ human_review_status: status, source_queue: sourceQueue }),
+        }).then(r => r.ok ? r.json() : Promise.reject(r));
+      })
+    );
+    const succeeded = results.filter(r => r.status === 'fulfilled').length;
+    const failed    = results.filter(r => r.status === 'rejected').length;
+    setBulkRunning(false);
+    setBulkNotify({ succeeded, failed });
+  }
+
+  function handleBulkAiReview(status: 'reviewed' | 'approved') {
+    if (status === 'approved') {
+      // approved は confirm ステップ必須
+      setShowApproveConfirm(true);
+    } else {
+      executeBulkAiReview(status);
+    }
+  }
+
+  async function handleBulkRegenerate() {
+    const ids = [...selectedIds];
+    // Pre-filter: approved (locked) ケースは UI 側で除外してカウント表示
+    const eligibleIds  = ids.filter(id => {
+      const sc   = cases.find(c => c.id === id);
+      const aiKey = `${sc?.sourceTable === 'cse_tickets' ? 'cse_ticket' : 'intercom'}:${id}`;
+      const aiVm  = aiVmMap[aiKey];
+      return aiVm?.humanReviewStatus !== 'approved';
+    });
+    const lockedCount = ids.length - eligibleIds.length;
+
+    clearSelection();
+
+    if (eligibleIds.length === 0) {
+      setBulkNotify({ succeeded: 0, failed: 0, lockedSkipped: lockedCount });
+      return;
+    }
+
+    setBulkRunning(true);
+    try {
+      const res  = await fetch('/api/support/cases/bulk-regenerate', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ case_ids: eligibleIds }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setBulkNotify({
+        succeeded:     data.succeeded     ?? 0,
+        failed:        data.failed        ?? 0,
+        lockedSkipped: (data.locked_skipped ?? 0) + lockedCount,
+      });
+    } catch {
+      setBulkNotify({ succeeded: 0, failed: eligibleIds.length, lockedSkipped: lockedCount });
+    } finally {
+      setBulkRunning(false);
+    }
+  }
+
+  const [apiCases, setApiCases]   = useState<QueueItem[] | null>(null);
   const [alertsMap, setAlertsMap] = useState<AlertsMap>({});
+  // AI state map — keyed by "${source_queue}:${source_record_id}"
+  const [aiVmMap, setAiVmMap]     = useState<Record<string, SupportCaseAiViewModel>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [currentView, setCurrentView]       = useState("all");
   const [searchQuery, setSearchQuery]       = useState("");
@@ -273,11 +275,64 @@ export function SupportQueue() {
   const [sourceFilter, setSourceFilter]     = useState("all");
   const [statusFilter, setStatusFilter]     = useState("all");
   const [severityFilter, setSeverityFilter] = useState("all");
+  const [sortKey, setSortKey] = useState<SortKey>('severity');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [titleWidth,   setTitleWidth]   = useState(300);
+  const [companyWidth, setCompanyWidth] = useState(200);
+  const resizeStartX     = useRef(0);
+  const resizeStartWidth = useRef(0);
+
+  function startTitleResize(e: React.MouseEvent) {
+    e.preventDefault();
+    resizeStartX.current     = e.clientX;
+    resizeStartWidth.current = titleWidth;
+    const onMove = (ev: MouseEvent) => {
+      setTitleWidth(Math.max(120, resizeStartWidth.current + ev.clientX - resizeStartX.current));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function startCompanyResize(e: React.MouseEvent) {
+    e.preventDefault();
+    resizeStartX.current     = e.clientX;
+    resizeStartWidth.current = companyWidth;
+    const onMove = (ev: MouseEvent) => {
+      setCompanyWidth(Math.max(100, resizeStartWidth.current + ev.clientX - resizeStartX.current));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  }
 
   // ── Alert 絞り込みフィルタ ────────────────────────────────────────────────
   const [alertPresenceFilter, setAlertPresenceFilter]   = useState("all");   // all / with / without
   const [alertPriorityFilter, setAlertPriorityFilter]   = useState("all");
   const [alertStatusFilter, setAlertStatusFilter]       = useState("all");
+  // dismissed: "hide"（default）| "only" | "include"
+  const [dismissedFilter, setDismissedFilter] = useState("hide");
+  // escalation: "all" | "only"
+  const [escalationFilter, setEscalationFilter] = useState("all");
+  // AI review status: all / pending / reviewed / corrected / approved / no_ai_state
+  const [aiReviewFilter, setAiReviewFilter] = useState("all");
+  // AI freshness: all / fresh / stale / missing / locked
+  const [aiFreshnessFilter, setAiFreshnessFilter] = useState("all");
 
   function resetAllFilters() {
     setSearchQuery("");
@@ -288,12 +343,17 @@ export function SupportQueue() {
     setAlertPresenceFilter("all");
     setAlertPriorityFilter("all");
     setAlertStatusFilter("all");
+    setDismissedFilter("hide");
+    setEscalationFilter("all");
+    setAiReviewFilter("all");
+    setAiFreshnessFilter("all");
   }
 
   const activeFilterCount = [
     caseTypeFilter, sourceFilter, statusFilter, severityFilter,
     alertPresenceFilter, alertPriorityFilter, alertStatusFilter,
-  ].filter(v => v !== "all").length + (searchQuery ? 1 : 0);
+    escalationFilter, aiReviewFilter, aiFreshnessFilter,
+  ].filter(v => v !== "all").length + (searchQuery ? 1 : 0) + (dismissedFilter !== "hide" ? 1 : 0);
 
   useEffect(() => {
     Promise.all([
@@ -304,7 +364,29 @@ export function SupportQueue() {
       }),
       fetchSupportAlerts(200).catch(() => [] as AppSupportAlert[]),
     ]).then(([cases, alerts]) => {
-      if (cases && cases.length > 0) setApiCases(cases);
+      // cases === null は fetch 失敗（上の catch で null を返す）を意味する。
+      // 空配列 [] はテーブルが空 or フィルタ結果0件 → モックではなく空状態を表示。
+      if (cases !== null) {
+        setApiCases(cases);
+        // 永続化済み case state を一括ロード
+        loadCaseStates(cases.map(c => c.id)).catch(err =>
+          console.warn('[SupportQueue] state load failed:', err),
+        );
+        // AI state を一括ロード（intercom + cse_ticket 両方）
+        Promise.all([
+          fetch('/api/support/ai-states?source_queue=intercom&limit=500').then(r => r.ok ? r.json() : {}),
+          fetch('/api/support/ai-states?source_queue=cse_ticket&limit=500').then(r => r.ok ? r.json() : {}),
+        ]).then(([intercomData, cseData]) => {
+          const merged: Record<string, SupportCaseAiViewModel> = {};
+          for (const [id, vm] of Object.entries(intercomData as Record<string, SupportCaseAiViewModel>)) {
+            merged[`intercom:${id}`] = vm;
+          }
+          for (const [id, vm] of Object.entries(cseData as Record<string, SupportCaseAiViewModel>)) {
+            merged[`cse_ticket:${id}`] = vm;
+          }
+          setAiVmMap(merged);
+        }).catch(err => console.warn('[SupportQueue] AI state load failed:', err));
+      }
       const map: AlertsMap = {};
       for (const a of alerts) {
         if (!a.sourceId) continue;
@@ -315,9 +397,10 @@ export function SupportQueue() {
       }
       setAlertsMap(map);
     });
-  }, []);
+  }, [loadCaseStates]);
 
-  const cases: SupportCase[] = apiCases ?? supportCases;
+  const isLoading = apiCases === null;
+  const cases: SupportCase[] = apiCases ?? [];
 
   const views = [
     { value: "all",       label: "All Cases",   description: "すべての案件",       isDefault: true },
@@ -334,7 +417,7 @@ export function SupportQueue() {
     emptyState: { title: string; description: string; cta: { label: string; action: () => void } | null };
   }> = {
     all: {
-      subtitle: "すべての問い合わせ・サポート・CSE連携案件を横断して確認する",
+      subtitle: "全件を管理する運用画面 — 絞り込み・並び替え・一括操作・Detail への入口",
       filterCases: () => true,
       emptyState: { title: "案件がありません", description: "問い合わせやサポート案件が発生すると、ここに表示されます", cta: null },
     },
@@ -360,7 +443,7 @@ export function SupportQueue() {
     },
     cse: {
       subtitle: "CSE連携案件のみを確認する",
-      filterCases: (c) => c.caseType === "CSE Ticket Linked",
+      filterCases: (c) => c.caseType === "CSE Ticket Linked" || c.caseType === "CSE Ticket",
       emptyState: { title: "CSE連携案件はありません", description: "CSE Ticketと連携した案件が発生すると、ここに表示されます", cta: { label: "All Cases を見る", action: () => setCurrentView("all") } },
     },
   };
@@ -371,17 +454,96 @@ export function SupportQueue() {
   // ── フィルタ適用 ──────────────────────────────────────────────────────────
   let filteredCases = cases.filter(config.filterCases);
 
+  // Dismissed フィルタ（デフォルト: 非表示）
+  if (dismissedFilter === "hide") {
+    filteredCases = filteredCases.filter(c => !isDismissed(c.id));
+  } else if (dismissedFilter === "only") {
+    filteredCases = filteredCases.filter(c => isDismissed(c.id));
+  }
+  // "include" はフィルタなし（全件表示）
+
   if (searchQuery) {
     filteredCases = filteredCases.filter(
       (c) =>
         c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.company.toLowerCase().includes(searchQuery.toLowerCase()),
+        c.companyName.toLowerCase().includes(searchQuery.toLowerCase()),
     );
   }
   if (caseTypeFilter !== "all")  filteredCases = filteredCases.filter((c) => c.caseType === caseTypeFilter);
   if (sourceFilter   !== "all")  filteredCases = filteredCases.filter((c) => c.source === sourceFilter);
-  if (statusFilter   !== "all")  filteredCases = filteredCases.filter((c) => c.routingStatus === statusFilter);
-  if (severityFilter !== "all")  filteredCases = filteredCases.filter((c) => c.severity === severityFilter);
+  // AI-aware フィルタ: severity / routingStatus は AI 値（hasAiState 時）を優先使用
+  if (statusFilter !== "all") {
+    filteredCases = filteredCases.filter(c => {
+      const aiKey = `${c.sourceTable === 'cse_tickets' ? 'cse_ticket' : 'intercom'}:${c.id}`;
+      const aiVm = aiVmMap[aiKey];
+      const rs = aiVm?.hasAiState ? aiVm.routingStatus : c.routingStatus;
+      return rs === statusFilter;
+    });
+  }
+  if (severityFilter !== "all") {
+    filteredCases = filteredCases.filter(c => {
+      const aiKey = `${c.sourceTable === 'cse_tickets' ? 'cse_ticket' : 'intercom'}:${c.id}`;
+      const aiVm = aiVmMap[aiKey];
+      const sev = aiVm?.hasAiState ? aiVm.severity : c.severity;
+      return sev === severityFilter;
+    });
+  }
+  // エスカレーション絞り込み
+  if (escalationFilter === "only") {
+    filteredCases = filteredCases.filter(c => {
+      const aiKey = `${c.sourceTable === 'cse_tickets' ? 'cse_ticket' : 'intercom'}:${c.id}`;
+      return !!aiVmMap[aiKey]?.escalationNeeded;
+    });
+  }
+  // AI Review Status 絞り込み
+  if (aiReviewFilter !== "all") {
+    filteredCases = filteredCases.filter(c => {
+      const aiKey = `${c.sourceTable === 'cse_tickets' ? 'cse_ticket' : 'intercom'}:${c.id}`;
+      const aiVm = aiVmMap[aiKey];
+      if (aiReviewFilter === "no_ai_state") return !aiVm?.hasAiState;
+      return aiVm?.hasAiState && aiVm.humanReviewStatus === aiReviewFilter;
+    });
+  }
+  // AI Freshness 絞り込み
+  if (aiFreshnessFilter !== "all") {
+    filteredCases = filteredCases.filter(c => {
+      const aiKey = `${c.sourceTable === 'cse_tickets' ? 'cse_ticket' : 'intercom'}:${c.id}`;
+      const aiVm  = aiVmMap[aiKey];
+      const state = aiVm?.hasAiState
+        ? { hasAiState: true,  humanReviewStatus: aiVm.humanReviewStatus, lastAiUpdatedAt: aiVm.lastAiUpdatedAt }
+        : { hasAiState: false, humanReviewStatus: 'pending' as const,     lastAiUpdatedAt: null };
+      return getAiFreshnessStatus(state) === (aiFreshnessFilter as AiFreshnessStatus);
+    });
+  }
+
+  filteredCases = [...filteredCases].sort((a, b) => {
+    const aiKeyA = `${a.sourceTable === 'cse_tickets' ? 'cse_ticket' : 'intercom'}:${a.id}`;
+    const aiKeyB = `${b.sourceTable === 'cse_tickets' ? 'cse_ticket' : 'intercom'}:${b.id}`;
+    const aiA = aiVmMap[aiKeyA];
+    const aiB = aiVmMap[aiKeyB];
+    let cmp = 0;
+    switch (sortKey) {
+      case 'title':         cmp = a.title.localeCompare(b.title, 'ja'); break;
+      case 'companyName':   cmp = a.companyName.localeCompare(b.companyName, 'ja'); break;
+      case 'severity': {
+        // AI-aware severity sort（AI値優先）+ escalation を先頭に
+        const escA = aiA?.escalationNeeded ? -1 : 0;
+        const escB = aiB?.escalationNeeded ? -1 : 0;
+        const sevA = aiA?.hasAiState ? aiA.severity : a.severity;
+        const sevB = aiB?.hasAiState ? aiB.severity : b.severity;
+        cmp = (escA - escB) || ((SEVERITY_ORDER[sevA] ?? 9) - (SEVERITY_ORDER[sevB] ?? 9));
+        break;
+      }
+      case 'routingStatus': {
+        const rsA = aiA?.hasAiState ? aiA.routingStatus : a.routingStatus;
+        const rsB = aiB?.hasAiState ? aiB.routingStatus : b.routingStatus;
+        cmp = rsA.localeCompare(rsB);
+        break;
+      }
+      case 'createdAt':     cmp = a.createdAt.localeCompare(b.createdAt); break;
+    }
+    return sortDir === 'asc' ? cmp : -cmp;
+  });
 
   // Alert 絞り込み
   if (alertPresenceFilter === "with")    filteredCases = filteredCases.filter((c) => !!alertsMap[c.id]);
@@ -394,8 +556,9 @@ export function SupportQueue() {
   }
 
   const viewBaseCases = cases.filter(config.filterCases);
+  const dismissedCount = cases.filter(c => isDismissed(c.id)).length;
   const isFiltered = activeFilterCount > 0;
-  const isViewEmpty = viewBaseCases.length === 0;
+  const isViewEmpty = viewBaseCases.filter(c => !isDismissed(c.id)).length === 0 && dismissedFilter === "hide";
 
   return (
     <div className="flex h-screen bg-slate-50">
@@ -410,6 +573,36 @@ export function SupportQueue() {
               <div className="flex items-center gap-3 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
                 <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                 <span className="flex-1">{loadError}</span>
+              </div>
+            )}
+
+            {/* 一括操作 結果バナー */}
+            {bulkRunning && (
+              <div className="flex items-center gap-3 text-sm text-slate-700 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5">
+                <span className="animate-pulse">一括操作を実行中...</span>
+              </div>
+            )}
+            {bulkNotify && !bulkRunning && (
+              <div className={`flex items-center gap-3 text-sm rounded-lg px-4 py-2.5 border ${
+                bulkNotify.failed === 0
+                  ? 'bg-green-50 border-green-200 text-green-800'
+                  : bulkNotify.succeeded === 0
+                    ? 'bg-red-50 border-red-200 text-red-800'
+                    : 'bg-amber-50 border-amber-200 text-amber-800'
+              }`}>
+                {bulkNotify.failed === 0
+                  ? <span className="flex-1">{bulkNotify.succeeded}件の一括操作が完了しました
+                      {(bulkNotify.lockedSkipped ?? 0) > 0 && (
+                        <span className="ml-2 text-xs opacity-70">（承認済みのため {bulkNotify.lockedSkipped}件スキップ）</span>
+                      )}
+                    </span>
+                  : bulkNotify.succeeded === 0
+                    ? <><AlertTriangle className="w-4 h-4 flex-shrink-0" /><span className="flex-1">{bulkNotify.failed}件すべて失敗しました</span></>
+                    : <><AlertTriangle className="w-4 h-4 flex-shrink-0" /><span className="flex-1">{bulkNotify.succeeded}件成功・{bulkNotify.failed}件失敗{(bulkNotify.lockedSkipped ?? 0) > 0 ? `・${bulkNotify.lockedSkipped}件スキップ` : ''}</span></>
+                }
+                <button onClick={() => setBulkNotify(null)} className="ml-2 text-current opacity-60 hover:opacity-100">
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
             )}
 
@@ -460,30 +653,30 @@ export function SupportQueue() {
                   </SelectContent>
                 </Select>
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-44"><SelectValue placeholder="Status" /></SelectTrigger>
+                  <SelectTrigger className="w-44"><SelectValue placeholder="ステータス" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="unassigned">Unassigned</SelectItem>
-                    <SelectItem value="triaged">Triaged</SelectItem>
-                    <SelectItem value="assigned">Assigned</SelectItem>
-                    <SelectItem value="in progress">In Progress</SelectItem>
-                    <SelectItem value="waiting on customer">Waiting on Customer</SelectItem>
-                    <SelectItem value="waiting on CSE">Waiting on CSE</SelectItem>
-                    <SelectItem value="resolved_like">Resolved-like</SelectItem>
+                    <SelectItem value="all">すべてのステータス</SelectItem>
+                    <SelectItem value="unassigned">未アサイン</SelectItem>
+                    <SelectItem value="triaged">振り分け済</SelectItem>
+                    <SelectItem value="assigned">アサイン済</SelectItem>
+                    <SelectItem value="in progress">対応中</SelectItem>
+                    <SelectItem value="waiting on customer">顧客待ち</SelectItem>
+                    <SelectItem value="waiting on CSE">CSE待ち</SelectItem>
+                    <SelectItem value="resolved_like">区切り済み</SelectItem>
                   </SelectContent>
                 </Select>
                 <Select value={severityFilter} onValueChange={setSeverityFilter}>
-                  <SelectTrigger className="w-36"><SelectValue placeholder="Severity" /></SelectTrigger>
+                  <SelectTrigger className="w-36"><SelectValue placeholder="重要度" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Severity</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="all">すべての重要度</SelectItem>
+                    <SelectItem value="high">高</SelectItem>
+                    <SelectItem value="medium">中</SelectItem>
+                    <SelectItem value="low">低</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
-              {/* Row 2: Alert 絞り込み */}
+              {/* Row 2: Alert + AI 絞り込み */}
               <div className="flex items-center gap-3 flex-wrap pt-1 border-t border-slate-100">
                 <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
                   <Bell className="w-3.5 h-3.5" />
@@ -523,6 +716,58 @@ export function SupportQueue() {
                     <SelectItem value="Dismissed">Dismissed</SelectItem>
                   </SelectContent>
                 </Select>
+                {/* AI: Escalation フィルタ */}
+                <Select value={escalationFilter} onValueChange={setEscalationFilter}>
+                  <SelectTrigger className={`w-40 h-8 text-xs ${escalationFilter !== "all" ? "border-orange-400 text-orange-700" : ""}`}>
+                    <AlertTriangle className="w-3 h-3 mr-1 flex-shrink-0" />
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Escalation: すべて</SelectItem>
+                    <SelectItem value="only">Escalation のみ</SelectItem>
+                  </SelectContent>
+                </Select>
+                {/* AI Freshness フィルタ */}
+                <Select value={aiFreshnessFilter} onValueChange={setAiFreshnessFilter}>
+                  <SelectTrigger className={`w-36 h-8 text-xs ${aiFreshnessFilter !== "all" ? "border-teal-400 text-teal-700" : ""}`}>
+                    <SelectValue placeholder="AI Freshness" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Freshness: すべて</SelectItem>
+                    <SelectItem value="fresh">fresh — 最新</SelectItem>
+                    <SelectItem value="stale">stale — 要更新</SelectItem>
+                    <SelectItem value="missing">missing — 未生成</SelectItem>
+                    <SelectItem value="locked">locked — 承認済み</SelectItem>
+                  </SelectContent>
+                </Select>
+                {/* AI Review Status フィルタ */}
+                <Select value={aiReviewFilter} onValueChange={setAiReviewFilter}>
+                  <SelectTrigger className={`w-40 h-8 text-xs ${aiReviewFilter !== "all" ? "border-purple-400 text-purple-700" : ""}`}>
+                    <SelectValue placeholder="AI Review" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">AI Review: すべて</SelectItem>
+                    <SelectItem value="pending">pending — 未確認</SelectItem>
+                    <SelectItem value="reviewed">reviewed — 確認済み</SelectItem>
+                    <SelectItem value="corrected">corrected — 補正済み</SelectItem>
+                    <SelectItem value="approved">approved — 承認済み</SelectItem>
+                    <SelectItem value="no_ai_state">AI なし</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Dismissed フィルタ */}
+                <Select value={dismissedFilter} onValueChange={setDismissedFilter}>
+                  <SelectTrigger className={`w-44 h-8 text-xs ${dismissedFilter !== "hide" ? "border-slate-400 text-slate-700" : ""}`}>
+                    <Archive className="w-3 h-3 mr-1" />
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="hide">Dismissed: 非表示</SelectItem>
+                    <SelectItem value="include">Dismissed: 含む</SelectItem>
+                    <SelectItem value="only">Dismissed のみ {dismissedCount > 0 ? `(${dismissedCount})` : ''}</SelectItem>
+                  </SelectContent>
+                </Select>
+
                 {activeFilterCount > 0 && (
                   <button
                     onClick={resetAllFilters}
@@ -538,8 +783,36 @@ export function SupportQueue() {
               </div>
             </div>
 
-            {/* Table / Empty state */}
-            {isViewEmpty ? (
+            {/* Table / Loading / Empty state */}
+            {isLoading ? (
+              <div className="bg-white border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-slate-50">
+                      {Array.from({ length: 10 }).map((_, i) => (
+                        <TableHead key={i}><Skeleton className="h-4 w-16" /></TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <TableRow key={i}>
+                        <TableCell><Skeleton className="h-4 w-48" /></TableCell>
+                        <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+                        <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+                        <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                        <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                        <TableCell><Skeleton className="h-5 w-14 rounded-full" /></TableCell>
+                        <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+                        <TableCell><Skeleton className="h-5 w-14 rounded-full" /></TableCell>
+                        <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                        <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : isViewEmpty ? (
               /* View 自体に案件がない */
               <div className="flex flex-col items-center justify-center py-16 bg-white border rounded-lg">
                 <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
@@ -584,16 +857,55 @@ export function SupportQueue() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-slate-50">
-                      <TableHead>Case / Ticket Title</TableHead>
+                      <TableHead className="w-8 px-2">
+                        <button
+                          onClick={() => {
+                            if (selectedIds.size === filteredCases.length && filteredCases.length > 0) {
+                              clearSelection();
+                            } else {
+                              selectAll(filteredCases.map(c => c.id));
+                            }
+                          }}
+                          className="flex items-center justify-center text-slate-400 hover:text-slate-600"
+                        >
+                          {selectedIds.size === filteredCases.length && filteredCases.length > 0
+                            ? <CheckSquare className="w-4 h-4" />
+                            : <Square className="w-4 h-4" />
+                          }
+                        </button>
+                      </TableHead>
+                      <TableHead className="relative select-none" style={{ width: titleWidth, minWidth: 120 }}>
+                        <button onClick={() => toggleSort('title')} className="flex items-center gap-1 hover:text-slate-900 whitespace-nowrap pr-3">
+                          Case / Ticket Title
+                          {sortKey === 'title'
+                            ? sortDir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+                            : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
+                        </button>
+                        <div
+                          onMouseDown={startTitleResize}
+                          className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-400 transition-colors"
+                        />
+                      </TableHead>
                       <TableHead>Type</TableHead>
                       <TableHead>Source</TableHead>
-                      <TableHead>Company / Project</TableHead>
+                      <TableHead className="relative select-none" style={{ width: companyWidth, minWidth: 100 }}>
+                        <button onClick={() => toggleSort('companyName')} className="flex items-center gap-1 hover:text-slate-900 whitespace-nowrap pr-3">
+                          Company / Project
+                          {sortKey === 'companyName'
+                            ? sortDir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+                            : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
+                        </button>
+                        <div
+                          onMouseDown={startCompanyResize}
+                          className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-blue-400 transition-colors"
+                        />
+                      </TableHead>
                       <TableHead>Owner</TableHead>
                       <TableHead>Team</TableHead>
-                      <TableHead>Routing Status</TableHead>
+                      <SortableHead label="Routing Status"      sortK="routingStatus" currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
                       <TableHead>Source Status</TableHead>
-                      <TableHead>Severity</TableHead>
-                      <TableHead>Created</TableHead>
+                      <SortableHead label="Severity"            sortK="severity"      currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
+                      <SortableHead label="Created"             sortK="createdAt"     currentKey={sortKey} currentDir={sortDir} onSort={toggleSort} />
                       <TableHead>First Response</TableHead>
                       <TableHead>Open Duration</TableHead>
                       <TableHead>Alert</TableHead>
@@ -603,90 +915,173 @@ export function SupportQueue() {
                   </TableHeader>
                   <TableBody>
                     {filteredCases.map((sc) => {
+                      const vm = buildCaseViewModel(sc, getCaseRecord(sc.id));
                       const alert = alertsMap[sc.id];
+                      const aiSourceQueue = sc.sourceTable === 'cse_tickets' ? 'cse_ticket' : 'intercom';
+                      const aiVm = aiVmMap[`${aiSourceQueue}:${sc.id}`] ?? null;
                       const borderClass = alert ? (ALERT_ROW_BORDER[alert.priority] ?? 'border-l-4 border-l-slate-300') : '';
                       return (
                         <TableRow
                           key={sc.id}
-                          className={`hover:bg-slate-50 ${borderClass} ${alert ? 'bg-slate-50/60' : ''}`}
+                          onClick={() => router.push(`/support/${sc.id}`)}
+                          className={`hover:bg-slate-50 cursor-pointer ${borderClass} ${alert ? 'bg-slate-50/60' : ''} ${vm.isDismissed ? 'opacity-50' : ''} ${selectedIds.has(sc.id) ? 'bg-blue-50/60' : ''}`}
                         >
-                          <TableCell>
-                            <Link href={`/support/${sc.id}`} className="font-medium text-slate-900 hover:text-blue-600 hover:underline">
-                              {sc.title}
+                          {/* Checkbox */}
+                          <TableCell className="w-8 px-2" onClick={e => toggleSelect(sc.id, e)}>
+                            <button className="flex items-center justify-center text-slate-400 hover:text-slate-600">
+                              {selectedIds.has(sc.id)
+                                ? <CheckSquare className="w-4 h-4 text-blue-600" />
+                                : <Square className="w-4 h-4" />
+                              }
+                            </button>
+                          </TableCell>
+
+                          {/* Title */}
+                          <TableCell style={{ maxWidth: titleWidth, width: titleWidth }}>
+                            <Link href={`/support/${sc.id}`} className="font-medium text-slate-900 hover:text-blue-600 hover:underline block truncate" title={vm.title}>
+                              {vm.title === '(タイトルなし)'
+                                ? <span className="text-slate-400 italic">(タイトルなし)</span>
+                                : vm.title
+                              }
                             </Link>
                           </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="text-xs">{sc.caseType}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="text-xs">{sc.source}</Badge>
-                          </TableCell>
-                          <TableCell>
+
+                          {/* Type / Source */}
+                          <TableCell><CaseTypeBadge type={vm.caseType} /></TableCell>
+                          <TableCell><SourceBadge source={vm.sourceType} /></TableCell>
+
+                          {/* Company / Project */}
+                          <TableCell style={{ maxWidth: companyWidth, width: companyWidth }}>
                             <div className="space-y-1">
-                              <Link href={`/companies/${sc.companyId}`} className="text-sm text-slate-700 hover:text-blue-600 hover:underline block">
-                                <Building className="w-3 h-3 inline mr-1" />{sc.company}
-                              </Link>
-                              {sc.project && (
-                                <span className="text-xs text-slate-500 block">{sc.project}</span>
+                              {vm.companyUid ? (
+                                <Link href={`/companies/${vm.companyUid}`} className="text-sm text-slate-700 hover:text-blue-600 hover:underline block truncate" title={vm.companyName}>
+                                  <Building className="w-3 h-3 inline mr-1" />{vm.companyName}
+                                </Link>
+                              ) : (
+                                <span className="text-sm text-slate-500 block truncate" title={vm.companyName}>
+                                  <Building className="w-3 h-3 inline mr-1" />{vm.companyName}
+                                </span>
+                              )}
+                              {vm.projectName && (
+                                <span className="text-xs text-slate-500 block truncate" title={vm.projectName}>{vm.projectName}</span>
                               )}
                             </div>
                           </TableCell>
+
+                          {/* Owner / Team */}
                           <TableCell className="text-sm text-slate-700">
-                            {sc.owner ?? <span className="text-slate-400">-</span>}
+                            {vm.ownerName ?? <span className="text-slate-400 italic text-xs">未アサイン</span>}
                           </TableCell>
                           <TableCell>
-                            {sc.assignedTeam ? (
-                              <Badge variant="outline" className="text-xs">{sc.assignedTeam}</Badge>
-                            ) : (
-                              <span className="text-xs text-slate-400">-</span>
-                            )}
+                            {vm.assignedTeam
+                              ? <Badge variant="outline" className="text-xs">{vm.assignedTeam}</Badge>
+                              : <span className="text-xs text-slate-400">-</span>
+                            }
                           </TableCell>
+
+                          {/* Routing + Lifecycle */}
                           <TableCell>
-                            <RoutingBadge status={sc.routingStatus} />
+                            <div
+                              className="flex flex-col gap-1"
+                              title={vm.isDismissed && vm.dismissedReason ? `対応不要理由: ${vm.dismissedReason}` : undefined}
+                            >
+                              <RoutingBadge status={aiVm?.hasAiState ? aiVm.routingStatus : vm.routingStatus} />
+                              <LifecycleStatusBadge status={vm.lifecycleStatus} />
+                              {aiVm?.escalationNeeded && (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700 border border-orange-200">
+                                  <AlertTriangle className="w-2.5 h-2.5" />Esc
+                                </span>
+                              )}
+                            </div>
                           </TableCell>
-                          <TableCell className="text-xs text-slate-600">
-                            {sc.sourceStatus ?? <span className="text-slate-400">-</span>}
-                          </TableCell>
-                          <TableCell>
-                            {sc.severity === "high"   && <Badge className="bg-red-600 text-white text-xs">High</Badge>}
-                            {sc.severity === "medium" && <Badge className="bg-amber-600 text-white text-xs">Medium</Badge>}
-                            {sc.severity === "low"    && <Badge className="bg-slate-600 text-white text-xs">Low</Badge>}
-                          </TableCell>
-                          <TableCell className="text-xs text-slate-600 whitespace-nowrap">{sc.createdAt}</TableCell>
-                          <TableCell className="text-xs text-slate-600">
-                            {sc.firstResponseTime ?? <span className="text-slate-400">-</span>}
-                          </TableCell>
-                          <TableCell className="text-xs text-slate-600">
-                            {sc.openDuration}
-                            {sc.waitingDuration && (
-                              <div className="text-xs text-amber-600 mt-0.5">待機: {sc.waitingDuration}</div>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {alert ? (
-                              <AlertBadge alert={alert} caseId={sc.id} />
-                            ) : (
-                              <span className="text-xs text-slate-300">—</span>
-                            )}
-                          </TableCell>
+
+                          {/* Source Status */}
+                          <TableCell><SourceStatusBadge status={vm.sourceStatus} /></TableCell>
+
+                          {/* Severity */}
                           <TableCell>
                             <div className="flex flex-col gap-1">
-                              {sc.linkedCSETicket && (
+                              <SeverityBadge severity={aiVm?.hasAiState ? aiVm.severity : vm.severity} />
+                              {aiVm?.hasAiState && (
+                                <span className="text-[10px] text-purple-500 font-medium">AI</span>
+                              )}
+                            </div>
+                          </TableCell>
+
+                          {/* Created */}
+                          <TableCell className="text-xs text-slate-600 whitespace-nowrap">{vm.createdAt}</TableCell>
+
+                          {/* Aging / Open Duration */}
+                          <TableCell className="text-xs text-slate-600">
+                            {vm.openDuration ? (
+                              <div className="space-y-0.5">
+                                <div>{vm.openDuration}</div>
+                                {vm.waitingDuration && (
+                                  <div className="text-amber-600">待機: {vm.waitingDuration}</div>
+                                )}
+                                {vm.isOverdue && vm.agingText && (
+                                  <div className="text-rose-600 font-medium">{vm.agingText} ⚠</div>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-slate-400">-</span>
+                            )}
+                          </TableCell>
+
+                          {/* Alert */}
+                          <TableCell>
+                            {alert
+                              ? <AlertBadge alert={alert} caseId={sc.id} />
+                              : <span className="text-xs text-slate-300">—</span>
+                            }
+                          </TableCell>
+
+                          {/* Linked: CSE ticket + action/cse record status */}
+                          <TableCell>
+                            <div className="flex flex-col gap-1">
+                              {vm.linkedCSETicket && (
                                 <Badge variant="outline" className="text-xs bg-amber-50 border-amber-200 text-amber-700">
-                                  <Ticket className="w-3 h-3 mr-1" />{sc.linkedCSETicket}
+                                  <Ticket className="w-3 h-3 mr-1" />{vm.linkedCSETicket}
                                 </Badge>
                               )}
-                              {sc.relatedContent > 0 && (
+                              {vm.hasAction && vm.actionStatus && (
+                                <Badge
+                                  variant="outline"
+                                  className={`text-xs ${ACTION_STATUS_COLOR[vm.actionStatus] ?? 'bg-slate-50 text-slate-600 border-slate-200'}`}
+                                  title={[
+                                    `Action: ${ACTION_STATUS_LABEL[vm.actionStatus] ?? vm.actionStatus}`,
+                                    vm.actionOwner ? `担当: ${vm.actionOwner}` : null,
+                                  ].filter(Boolean).join(' · ')}
+                                >
+                                  ▶ {ACTION_STATUS_LABEL[vm.actionStatus] ?? vm.actionStatus}
+                                </Badge>
+                              )}
+                              {vm.hasCseTicket && vm.cseTicketStatus && (
+                                <Badge
+                                  variant="outline"
+                                  className={`text-xs ${CSE_STATUS_COLOR[vm.cseTicketStatus] ?? 'bg-slate-50 text-slate-600 border-slate-200'}`}
+                                  title={[
+                                    `CSE: ${CSE_STATUS_LABEL[vm.cseTicketStatus] ?? vm.cseTicketStatus}`,
+                                    vm.cseTicketOwner ? `担当: ${vm.cseTicketOwner}` : null,
+                                    vm.cseTicketCreatedAt ? `作成: ${vm.cseTicketCreatedAt.slice(0, 10)}` : null,
+                                  ].filter(Boolean).join(' · ')}
+                                >
+                                  <Ticket className="w-3 h-3 mr-1" />{CSE_STATUS_LABEL[vm.cseTicketStatus] ?? vm.cseTicketStatus}
+                                </Badge>
+                              )}
+                              {vm.relatedContent > 0 && (
                                 <Badge variant="outline" className="text-xs bg-blue-50 border-blue-200 text-blue-700">
-                                  Content: {sc.relatedContent}
+                                  Content: {vm.relatedContent}
                                 </Badge>
                               )}
                             </div>
                           </TableCell>
+
+                          {/* Detail link */}
                           <TableCell>
                             <Link href={`/support/${sc.id}`}>
                               <Button variant="ghost" size="sm" className="h-7 text-xs">
-                                詳細 <ArrowRight className="w-3 h-3 ml-1" />
+                                詳細を見る <ArrowRight className="w-3 h-3 ml-1" />
                               </Button>
                             </Link>
                           </TableCell>
@@ -700,6 +1095,182 @@ export function SupportQueue() {
                   {isFiltered && viewBaseCases.length !== filteredCases.length && (
                     <span className="ml-1 text-slate-400">（{currentViewLabel}: {viewBaseCases.length}件中）</span>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* Bulk action bar — sticky at bottom when items selected */}
+            {selectedIds.size > 0 && (
+              <div className="sticky bottom-4 z-10 space-y-2">
+
+                {/* Approved confirm ダイアログ */}
+                {showApproveConfirm && (
+                  <div className="bg-white border border-amber-200 rounded-xl px-5 py-4 shadow-lg space-y-3">
+                    <div className="flex items-start gap-2">
+                      <Lock className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">
+                          {selectedIds.size}件を「承認済み (approved)」にする
+                        </p>
+                        <ul className="mt-1.5 space-y-1 text-xs text-slate-600 list-none">
+                          <li className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                            approved 後は AI 再生成が不可になります
+                          </li>
+                          <li className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                            AI 値が effective 値として固定採用されます
+                          </li>
+                          <li className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                            変更するには downgrade 操作（reviewed に戻す）が必要です
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <Button size="sm" variant="ghost" className="text-xs text-slate-500" onClick={() => setShowApproveConfirm(false)}>
+                        キャンセル
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="text-xs bg-amber-600 hover:bg-amber-700 text-white"
+                        onClick={() => executeBulkAiReview('approved')}
+                      >
+                        <Lock className="w-3 h-3 mr-1" />確認して承認
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Inline payload form */}
+                {bulkFormMode && (
+                  <div className="bg-white border border-slate-200 rounded-xl px-5 py-4 shadow-lg space-y-3">
+                    <p className="text-sm font-semibold text-slate-800">
+                      {bulkFormMode === 'dismiss'  && `${selectedIds.size}件を「対応不要」にする`}
+                      {bulkFormMode === 'action'   && `${selectedIds.size}件に Action を作成する`}
+                      {bulkFormMode === 'cse'      && `${selectedIds.size}件に CSE Ticket を作成する`}
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {bulkFormMode === 'dismiss' ? (
+                        <input
+                          placeholder="理由（任意）"
+                          value={bulkReason}
+                          onChange={e => setBulkReason(e.target.value)}
+                          className="col-span-2 border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                        />
+                      ) : (
+                        <>
+                          <input
+                            placeholder="タイトル（任意）"
+                            value={bulkTitle}
+                            onChange={e => setBulkTitle(e.target.value)}
+                            className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                          />
+                          <input
+                            placeholder="担当者（任意）"
+                            value={bulkOwner}
+                            onChange={e => setBulkOwner(e.target.value)}
+                            className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                          />
+                        </>
+                      )}
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <Button size="sm" variant="ghost" className="text-xs text-slate-500" onClick={closeBulkForm}>
+                        キャンセル
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="text-xs bg-slate-900 hover:bg-slate-700 text-white"
+                        onClick={
+                          bulkFormMode === 'dismiss' ? handleBulkDismiss :
+                          bulkFormMode === 'action'  ? handleBulkCreateAction :
+                          handleBulkCreateCseTicket
+                        }
+                      >
+                        実行
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Action bar */}
+                <div className="flex items-center gap-3 bg-slate-900 text-white rounded-xl px-5 py-3 shadow-xl">
+                  <span className="text-sm font-medium text-slate-200">
+                    {selectedIds.size}件を選択中
+                  </span>
+                  <div className="flex-1" />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={`text-xs hover:bg-white/10 gap-1.5 ${bulkFormMode === 'dismiss' ? 'bg-white/20 text-white' : 'text-white'}`}
+                    onClick={() => bulkFormMode === 'dismiss' ? closeBulkForm() : openBulkForm('dismiss')}
+                  >
+                    対応不要 (一括)
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={`text-xs hover:bg-white/10 gap-1.5 ${bulkFormMode === 'action' ? 'bg-white/20 text-white' : 'text-white'}`}
+                    onClick={() => bulkFormMode === 'action' ? closeBulkForm() : openBulkForm('action')}
+                  >
+                    Action 作成 (一括)
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={`text-xs hover:bg-white/10 gap-1.5 ${bulkFormMode === 'cse' ? 'bg-white/20 text-white' : 'text-white'}`}
+                    onClick={() => bulkFormMode === 'cse' ? closeBulkForm() : openBulkForm('cse')}
+                  >
+                    CSE Ticket 作成 (一括)
+                  </Button>
+                  {/* AI Review 一括 */}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs hover:bg-white/10 text-white gap-1.5"
+                    onClick={() => handleBulkAiReview('reviewed')}
+                    title="選択中のケースを AI確認済みにする（即実行）"
+                  >
+                    AI確認済み (一括)
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs hover:bg-white/10 text-white gap-1.5"
+                    onClick={() => handleBulkAiReview('approved')}
+                    title="選択中のケースを AI承認済みにする（確認ステップあり）"
+                  >
+                    <Lock className="w-3 h-3" />AI承認 (一括)
+                  </Button>
+                  {/* AI Regenerate 一括 */}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs hover:bg-white/10 text-white gap-1.5"
+                    onClick={handleBulkRegenerate}
+                    title="approved 以外のケースの AI state を再生成する"
+                  >
+                    <RefreshCw className="w-3 h-3" />AI再生成 (一括)
+                  </Button>
+                  {/* Assign: not yet implemented */}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs text-slate-500 cursor-not-allowed gap-1.5"
+                    disabled
+                    title="アサイン一括操作は未実装"
+                  >
+                    アサイン (一括)
+                  </Button>
+                  <button
+                    onClick={() => { closeBulkForm(); clearSelection(); }}
+                    className="ml-2 text-slate-400 hover:text-white"
+                    title="選択をクリア"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             )}

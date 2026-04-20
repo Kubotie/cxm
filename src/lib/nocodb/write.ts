@@ -50,7 +50,8 @@ export async function nocoCreate<T>(
   });
 
   if (!res.ok) {
-    throw new Error(`NocoDB create ${res.status}: ${res.statusText} [${tableId}]`);
+    const errBody = await res.text().catch(() => '(body read failed)');
+    throw new Error(`NocoDB create ${res.status}: ${res.statusText} [${tableId}] — ${errBody}`);
   }
   return res.json() as Promise<T>;
 }
@@ -75,7 +76,8 @@ export async function nocoUpdate<T>(
   });
 
   if (!res.ok) {
-    throw new Error(`NocoDB update ${res.status}: ${res.statusText} [${tableId}]`);
+    const errBody = await res.text().catch(() => '(body read failed)');
+    throw new Error(`NocoDB update ${res.status}: ${res.statusText} [${tableId}] — ${errBody}`);
   }
   return res.json() as Promise<T>;
 }

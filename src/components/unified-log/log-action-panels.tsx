@@ -104,14 +104,14 @@ export function LogActionPanels({
     <>
       {/* Original Source Panel */}
       <Sheet open={showOriginalPanel} onOpenChange={setShowOriginalPanel}>
-        <SheetContent className="w-[500px] sm:max-w-[500px]">
-          <SheetHeader>
+        <SheetContent className="w-[500px] sm:max-w-[500px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle className="text-base">原文プレビュー</SheetTitle>
             <SheetDescription className="text-xs">
               Source metadata and original content
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-100px)] mt-4">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-4 px-4 pb-4">
               {selectedLogData && (
                 <>
@@ -153,14 +153,14 @@ export function LogActionPanels({
 
       {/* AI Extraction Panel */}
       <Sheet open={showAIExtractionPanel} onOpenChange={setShowAIExtractionPanel}>
-        <SheetContent className="w-[600px] sm:max-w-[600px]">
-          <SheetHeader>
+        <SheetContent className="w-[600px] sm:max-w-[600px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle className="text-base">AI抽出結果</SheetTitle>
             <SheetDescription className="text-xs">
               Extract structured data from evidence
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-100px)] mt-4">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-4 px-4 pb-4">
               {selectedLogData && (
                 <>
@@ -246,14 +246,14 @@ export function LogActionPanels({
 
       {/* Review Panel */}
       <Sheet open={showReviewPanel} onOpenChange={setShowReviewPanel}>
-        <SheetContent className="w-[650px] sm:max-w-[650px]">
-          <SheetHeader>
+        <SheetContent className="w-[650px] sm:max-w-[650px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle className="text-base">Evidence レビュー</SheetTitle>
             <SheetDescription className="text-xs">
               Review and approve extracted data
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-100px)] mt-4">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-4 px-4 pb-4">
               {selectedLogData && (
                 <>
@@ -339,14 +339,14 @@ export function LogActionPanels({
 
       {/* People Link Panel */}
       <Sheet open={showPeopleLinkPanel} onOpenChange={setShowPeopleLinkPanel}>
-        <SheetContent className="w-[550px] sm:max-w-[550px]">
-          <SheetHeader>
+        <SheetContent className="w-[550px] sm:max-w-[550px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle className="text-base">Peopleに紐付ける</SheetTitle>
             <SheetDescription className="text-xs">
               Link evidence to relevant people
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-100px)] mt-4">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-4 px-4 pb-4">
               <div>
                 <div className="relative mb-3">
@@ -406,14 +406,14 @@ export function LogActionPanels({
 
       {/* Project Link Panel */}
       <Sheet open={showProjectLinkPanel} onOpenChange={setShowProjectLinkPanel}>
-        <SheetContent className="w-[550px] sm:max-w-[550px]">
-          <SheetHeader>
+        <SheetContent className="w-[550px] sm:max-w-[550px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle className="text-base">Projectに紐付ける</SheetTitle>
             <SheetDescription className="text-xs">
               Link evidence to relevant projects
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-100px)] mt-4">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-4 px-4 pb-4">
               <div>
                 <h4 className="text-sm font-semibold text-slate-900 mb-2">既存Project候補</h4>
@@ -473,14 +473,14 @@ export function LogActionPanels({
 
       {/* Action Create Panel */}
       <Sheet open={showActionCreatePanel} onOpenChange={setShowActionCreatePanel}>
-        <SheetContent className="w-[600px] sm:max-w-[600px]">
-          <SheetHeader>
+        <SheetContent className="w-[600px] sm:max-w-[600px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle className="text-base">Action作成</SheetTitle>
             <SheetDescription className="text-xs">
               Create action based on evidence
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-100px)] mt-4">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-4 px-4 pb-4">
               {selectedLogData && (
                 <>
@@ -553,14 +553,14 @@ export function LogActionPanels({
 
       {/* Related Alerts Panel */}
       <Sheet open={showRelatedAlertsPanel} onOpenChange={setShowRelatedAlertsPanel}>
-        <SheetContent className="w-[600px] sm:max-w-[600px]">
-          <SheetHeader>
+        <SheetContent className="w-[600px] sm:max-w-[600px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle className="text-base">関連Alert</SheetTitle>
             <SheetDescription className="text-xs">
               Alerts related to this evidence
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-100px)] mt-4">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-3 px-4 pb-4">
               {[
                 { id: "alert-1", title: "決裁者連続欠席パターン検出", severity: "high", status: "open", relatedEvidence: 3 },
@@ -593,14 +593,14 @@ export function LogActionPanels({
 
       {/* Related Actions Panel */}
       <Sheet open={showRelatedActionsPanel} onOpenChange={setShowRelatedActionsPanel}>
-        <SheetContent className="w-[600px] sm:max-w-[600px]">
-          <SheetHeader>
+        <SheetContent className="w-[600px] sm:max-w-[600px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle className="text-base">関連Action</SheetTitle>
             <SheetDescription className="text-xs">
               Actions related to this evidence
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-100px)] mt-4">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-3 px-4 pb-4">
               {[
                 { id: "action-1", title: "CTOと1on1ミーティング設定", owner: "佐藤 太郎", dueDate: "2026-03-15", status: "in_progress" },
@@ -637,14 +637,14 @@ export function LogActionPanels({
 
       {/* Resolver Detail Panel */}
       <Sheet open={showResolverDetailPanel} onOpenChange={setShowResolverDetailPanel}>
-        <SheetContent className="w-[550px] sm:max-w-[550px]">
-          <SheetHeader>
+        <SheetContent className="w-[550px] sm:max-w-[550px] flex flex-col overflow-hidden">
+          <SheetHeader className="flex-shrink-0">
             <SheetTitle className="text-base">Resolver詳細</SheetTitle>
             <SheetDescription className="text-xs">
               Resolver processing details
             </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-100px)] mt-4">
+          <ScrollArea className="flex-1 min-h-0 mt-4">
             <div className="space-y-4 px-4 pb-4">
               {selectedLogData && (
                 <>

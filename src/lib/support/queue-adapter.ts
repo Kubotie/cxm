@@ -46,6 +46,22 @@ function normalizeStatus(raw: string | null | undefined): string | null {
  * "High" → "high"、"MEDIUM" → "medium" 等。
  * Badge は小文字で厳密マッチしているため必須。
  */
+/**
+ * open_duration_minutes（数値）を "1h 30m" / "45m" 等の表示文字列に変換する。
+ * 旧フィールド open_duration（文字列）が存在する場合はそちらを優先する。
+ */
+function formatOpenDuration(
+  minutes: number | null | undefined,
+  legacyStr: string | null | undefined,
+): string {
+  if (legacyStr) return String(legacyStr);
+  if (minutes == null || minutes <= 0) return '';
+  if (minutes < 60) return `${minutes}m`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
 function normalizeSeverity(raw: string | null | undefined): string {
   if (!raw) return 'medium';
   const v = String(raw).toLowerCase().trim();
@@ -60,7 +76,7 @@ export interface QueueItem {
   sourceTable: 'log_intercom' | 'cse_tickets';
 
   // 表示
-  title: string;        // resolveTitle() の結果（source > AI displayTitle > AI summary > 本文 > fallback）
+  title: string;        // 一覧: source.display_title のみ（fallback なし。getUnifiedQueueList の hasDisplayTitle フィルタ通過後は必ず非空）
   bodyExcerpt: string;  // 本文冒頭（空でも可。tooltip や detail 参照用）
 
   // 分類
@@ -179,7 +195,12 @@ function deriveCaseType(raw: RawSupportCase): string {
 export function fromLogIntercomRecord(
   raw: RawSupportCase,
   aiState?: AppSupportCaseAIState | null,
-): QueueItem {
+): QueueItem | null {
+  // 一覧掲載条件: source.display_title が trim 後 non-empty であること
+  // fallback（body 抜粋・aiState・raw title）は一切使わない
+  const displayTitle = raw.display_title?.trim() ?? '';
+  if (!displayTitle) return null;
+
   // routing_status: スペースを _ に変換してから MAP lookup
   const rawStatus = s(raw.routing_status).toLowerCase().replace(/\s+/g, '_');
 
@@ -195,9 +216,7 @@ export function fromLogIntercomRecord(
   return {
     id:               raw.case_id ? s(raw.case_id) : String(raw.Id),
     sourceTable:      'log_intercom',
-    // display_title（同期キャッシュ） → aiState → body 抜粋 の優先順
-    // log_intercom に title カラムは存在しないため sourceTitle=null
-    title:            resolveTitle(raw.display_title, null, body, aiState),
+    title:            displayTitle,
     bodyExcerpt:      excerptFrom(body),
     caseType:         deriveCaseType(raw),
     source:           'Intercom',   // log_intercom に source カラムは存在しない → 固定値
@@ -206,9 +225,9 @@ export function fromLogIntercomRecord(
     projectName:      raw.project_name  ? s(raw.project_name)  : null,
     projectId:        raw.project_id    ? s(raw.project_id)    : null,
     owner:            raw.owner_name    ? s(raw.owner_name)    : null,
-    assignedTeam:     raw.assigned_team ? s(raw.assigned_team) : null,
+    assignedTeam:     (raw.team_name ? s(raw.team_name) : null) ?? (raw.assigned_team ? s(raw.assigned_team) : null),
     routingStatus:    ROUTING_STATUS_MAP[rawStatus] ?? 'unassigned',
-    sourceStatus:     null,         // log_intercom に source_status カラムは存在しない
+    sourceStatus:     normalizeStatus(raw.source_status),
     severity:         normalizeSeverity(raw.severity),
     // 日時: log_intercom は sent_at_jst を使用（created_at は存在しない）
     createdAt:        raw.sent_at_jst
@@ -216,7 +235,7 @@ export function fromLogIntercomRecord(
                         : '—',
     // 初回応答: log_intercom は first_response_at を使用（first_response_time は存在しない）
     firstResponseTime: raw.first_response_at ? s(raw.first_response_at) : null,
-    openDuration:     raw.open_duration ? s(raw.open_duration) : '',
+    openDuration:     formatOpenDuration(raw.open_duration_minutes, raw.open_duration),
     waitingDuration:  raw.waiting_duration ? s(raw.waiting_duration) : null,
     linkedCSETicket:  raw.linked_cse_ticket ? s(raw.linked_cse_ticket) : null,
     relatedContent:   n(raw.related_content_count),
@@ -236,15 +255,19 @@ const CSE_STATUS_TO_ROUTING: Record<string, string> = {
 export function fromCseTicketRecord(
   raw: RawCseTicket,
   aiState?: AppSupportCaseAIState | null,
-): QueueItem {
+): QueueItem | null {
+  // 一覧掲載条件: source.display_title が trim 後 non-empty であること
+  // fallback（description・aiState・raw title）は一切使わない
+  const displayTitle = raw.display_title?.trim() ?? '';
+  if (!displayTitle) return null;
+
   const statusKey = s(raw.status, 'open').toLowerCase().replace(/\s+/g, '_');
   const body = raw.description ? s(raw.description) : undefined;
   const ticketId = raw.ticket_id ? s(raw.ticket_id) : String(raw.Id);
   return {
     id:               ticketId,
     sourceTable:      'cse_tickets',
-    // display_title（同期キャッシュ） → aiState → source.title → body 抜粋 の優先順
-    title:            resolveTitle(raw.display_title, raw.title, body, aiState),
+    title:            displayTitle,
     bodyExcerpt:      excerptFrom(body),
     caseType:         raw.linked_case_id ? 'CSE Ticket Linked' : 'CSE Ticket',
     source:           'CSE Ticket',
@@ -281,16 +304,62 @@ export function fromLogIntercomRecordForDetail(
   raw: RawSupportCase,
   aiState?: AppSupportCaseAIState | null,
 ): CaseDetail {
-  // 詳細本文の優先順:
-  // 1. source.display_message（同期スクリプトが書き込んだ AI 整形済み本文）
-  // 2. aiState.displayMessage（support_case_ai_state — 後方互換）
-  // 3. raw.body（未整形の元本文）
-  const originalMessage =
-    (raw.display_message ? s(raw.display_message) : null)
-    ?? (aiState?.displayMessage ?? null)
-    ?? (raw.body ? s(raw.body) : '');
+  // ── 詳細タイトルの優先順（一覧と異なり fallback あり）────────────────────
+  // 1. source.display_title（AI 生成タイトル）
+  // 2. aiState.displayTitle（後方互換）
+  // 3. body 先頭抜粋
+  // 4. '(タイトルなし)'
+  const detailTitle =
+    raw.display_title?.trim() ||
+    aiState?.displayTitle ||
+    ((): string => {
+      const ex = excerptFrom(raw.body);
+      return ex ? (ex.length > 40 ? ex.slice(0, 38) + '…' : ex) : '';
+    })() ||
+    '(タイトルなし)';
+
+  // ── 詳細本文の優先順 ──────────────────────────────────────────────────────
+  // 1. source.display_message（正本: AI 整形済み本文）
+  // 2. aiState.displayMessage（後方互換）
+  // 3. raw.body（元本文: 整形なし）
+  // 4. ''（全て空の場合は空文字。UI 側で「本文なし」と表示する）
+  const dm = raw.display_message?.trim();
+  const rb = raw.body ? s(raw.body) : '';
+  const originalMessage = dm || aiState?.displayMessage || rb;
+
+  // detail 用ベース: fromLogIntercomRecord は display_title が空なら null を返すため
+  // ForDetail では display_title チェックをスキップして直接ベースを構築する
+  const rawStatus = s(raw.routing_status).toLowerCase().replace(/\s+/g, '_');
+  const body = raw.body ? s(raw.body) : undefined;
+  const companyUid = sanitizeUid(raw.company_uid);
+  const rawAccountName = raw.account_name ? String(raw.account_name).trim() : '';
+  const companyName = rawAccountName || companyUid || '—';
+
   return {
-    ...fromLogIntercomRecord(raw, aiState),
+    id:               raw.case_id ? s(raw.case_id) : String(raw.Id),
+    sourceTable:      'log_intercom' as const,
+    title:            detailTitle,
+    bodyExcerpt:      excerptFrom(body),
+    caseType:         deriveCaseType(raw),
+    source:           'Intercom',
+    companyUid,
+    companyName,
+    projectName:      raw.project_name  ? s(raw.project_name)  : null,
+    projectId:        raw.project_id    ? s(raw.project_id)    : null,
+    owner:            raw.owner_name    ? s(raw.owner_name)    : null,
+    assignedTeam:     (raw.team_name ? s(raw.team_name) : null) ?? (raw.assigned_team ? s(raw.assigned_team) : null),
+    routingStatus:    ROUTING_STATUS_MAP[rawStatus] ?? 'unassigned',
+    sourceStatus:     normalizeStatus(raw.source_status),
+    severity:         normalizeSeverity(raw.severity),
+    createdAt:        raw.sent_at_jst
+                        ? String(raw.sent_at_jst).slice(0, 16).replace('T', ' ')
+                        : '—',
+    firstResponseTime: raw.first_response_at ? s(raw.first_response_at) : null,
+    openDuration:     formatOpenDuration(raw.open_duration_minutes, raw.open_duration),
+    waitingDuration:  raw.waiting_duration ? s(raw.waiting_duration) : null,
+    linkedCSETicket:  raw.linked_cse_ticket ? s(raw.linked_cse_ticket) : null,
+    relatedContent:   n(raw.related_content_count),
+    triageNote:       raw.triage_note ? s(raw.triage_note) : (aiState?.triageNote ?? null),
     originalMessage,
   };
 }
@@ -301,16 +370,59 @@ export function fromCseTicketRecordForDetail(
   raw: RawCseTicket,
   aiState?: AppSupportCaseAIState | null,
 ): CaseDetail {
-  // 詳細本文の優先順:
-  // 1. source.display_message（同期スクリプトが書き込んだ AI 整形済み本文）
-  // 2. aiState.displayMessage（support_case_ai_state — 後方互換）
-  // 3. raw.description（元本文）
-  const originalMessage =
-    (raw.display_message ? s(raw.display_message) : null)
-    ?? (aiState?.displayMessage ?? null)
-    ?? (raw.description ? s(raw.description) : '');
+  // ── 詳細タイトルの優先順（一覧と異なり fallback あり）────────────────────
+  // 1. source.display_title（AI 生成タイトル）
+  // 2. aiState.displayTitle（後方互換）
+  // 3. source.title（cse_tickets の元タイトル）
+  // 4. description 先頭抜粋
+  // 5. '(タイトルなし)'
+  const detailTitle =
+    raw.display_title?.trim() ||
+    aiState?.displayTitle ||
+    (raw.title ? String(raw.title).trim() : '') ||
+    ((): string => {
+      const ex = excerptFrom(raw.description);
+      return ex ? (ex.length > 40 ? ex.slice(0, 38) + '…' : ex) : '';
+    })() ||
+    '(タイトルなし)';
+
+  // ── 詳細本文の優先順 ──────────────────────────────────────────────────────
+  // 1. source.display_message（正本: AI 整形済み本文）
+  // 2. aiState.displayMessage（後方互換）
+  // 3. raw.description（元本文: 整形なし）
+  // 4. ''（全て空の場合は空文字。UI 側で「本文なし」と表示する）
+  const dm = raw.display_message?.trim();
+  const rd = raw.description ? s(raw.description) : '';
+  const originalMessage = dm || aiState?.displayMessage || rd;
+
+  // detail 用ベース: fromCseTicketRecord は display_title が空なら null を返すため
+  // ForDetail では display_title チェックをスキップして直接ベースを構築する
+  const statusKey = s(raw.status, 'open').toLowerCase().replace(/\s+/g, '_');
+  const ticketId = raw.ticket_id ? s(raw.ticket_id) : String(raw.Id);
+
   return {
-    ...fromCseTicketRecord(raw, aiState),
+    id:               ticketId,
+    sourceTable:      'cse_tickets' as const,
+    title:            detailTitle,
+    bodyExcerpt:      excerptFrom(raw.description ? s(raw.description) : undefined),
+    caseType:         raw.linked_case_id ? 'CSE Ticket Linked' : 'CSE Ticket',
+    source:           'CSE Ticket',
+    companyUid:       sanitizeUid(raw.company_uid),
+    companyName:      resolveCompanyName(raw.company_name, raw.company_uid),
+    projectName:      null,
+    projectId:        null,
+    owner:            null,
+    assignedTeam:     'CSE',
+    routingStatus:    CSE_STATUS_TO_ROUTING[statusKey] ?? 'waiting on CSE',
+    sourceStatus:     normalizeStatus(raw.status),
+    severity:         normalizeSeverity(raw.priority),
+    createdAt:        raw.created_at ? String(raw.created_at).slice(0, 16).replace('T', ' ') : '—',
+    firstResponseTime: null,
+    openDuration:     '',
+    waitingDuration:  raw.waiting_hours != null ? `${raw.waiting_hours}h` : null,
+    linkedCSETicket:  ticketId,
+    relatedContent:   0,
+    triageNote:       aiState?.triageNote ?? null,
     originalMessage,
   };
 }

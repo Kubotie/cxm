@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -101,8 +102,8 @@ export function RelationshipEditor({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-[480px] sm:max-w-[480px] overflow-y-auto p-6">
-        <SheetHeader className="mb-6">
+      <SheetContent className="w-[480px] sm:max-w-[480px] flex flex-col overflow-hidden">
+        <SheetHeader className="flex-shrink-0 px-6 pt-6 pb-4 border-b">
           <SheetTitle className="flex items-center gap-2">
             <TypeIcon className={`w-5 h-5 ${selectedType?.color}`} />
             {relationship ? "関係性を編集" : "新しい関係性を追加"}
@@ -112,7 +113,8 @@ export function RelationshipEditor({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="space-y-4">
+        <ScrollArea className="flex-1 min-h-0">
+        <div className="space-y-4 px-6 py-4">
           {/* From Person */}
           <div>
             <Label htmlFor="fromPerson" className="text-xs font-semibold text-slate-700 mb-1.5 block">
@@ -343,9 +345,10 @@ export function RelationshipEditor({
             </div>
           </div>
         </div>
+        </ScrollArea>
 
-        {/* Actions */}
-        <div className="mt-6 flex gap-2">
+        {/* Footer CTA */}
+        <div className="flex-shrink-0 border-t px-6 py-3 flex gap-2">
           <Button onClick={handleSave} className="flex-1" disabled={!formData.fromPersonId || !formData.toPersonId}>
             {relationship ? "更新" : "追加"}
           </Button>

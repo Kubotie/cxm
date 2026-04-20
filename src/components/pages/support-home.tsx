@@ -1,513 +1,152 @@
 "use client";
 import { useState, useEffect } from "react";
-import { fetchSupportAlerts } from "@/lib/nocodb-client";
-import type { AppSupportAlert } from "@/lib/nocodb-client";
+import { fetchSupportCases } from "@/lib/nocodb-client";
+import type { QueueItem } from "@/lib/nocodb-client";
 import Link from "next/link";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { GlobalHeader } from "@/components/layout/global-header";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Building,
-  Filter,
   RefreshCw,
-  X,
-  ChevronDown,
-  Lightbulb,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
-  CheckSquare,
-  Square,
-  Flag,
-  Trash2,
-  AlertCircle,
-  FileText,
-  Play,
-  Send,
   AlertTriangle,
+  ArrowRight,
+  Inbox,
+  X,
+  Undo2,
+  ArrowUpRight,
 } from "lucide-react";
+import {
+  CaseTypeBadge,
+  SourceBadge,
+  RoutingBadge,
+  SeverityBadge,
+} from "@/lib/support/badges";
+import { useCaseState } from "@/lib/support/case-state";
+import { buildCaseViewModels } from "@/lib/support/view-model";
+import type { SupportCaseViewModel } from "@/lib/support/view-model";
+import type { SupportCaseAiViewModel } from "@/lib/support/support-ai-state-view-model";
+import { applyAiDisplayToItem } from "@/lib/support/support-ai-state-merge";
 
-// ── Mock data ────────────────────────────────────────────────────────────────
+// ── Quick filters ─────────────────────────────────────────────────────────────
 
-const ALERTS = [
-  {
-    id: "alert_1",
-    createdAt: "2026-03-17 10:15",
-    alertType: "Opportunity",
-    priority: "High",
-    title: "株式会社テクノロジーイノベーションがプラン上限に到達",
-    summary: "Standard Plan（上限50名）で利用ユーザー数48名。追加メンバー招待の問い合わせあり",
-    company: "株式会社テクノロジーイノベーション",
-    companyId: "1",
-    source: "Intercom",
-    linkedCases: 1,
-    cseTickets: 0,
-    assigned: "Unassigned",
-    owner: null,
-    status: "Untriaged",
-    suggestedAction: "アップグレード提案",
-    evidence: {
-      whyThisMatters: "現在Standard Plan（ユーザー数上限50名）を利用中。利用ユーザー数が48名に達しており、追加メンバーの招待について問い合わせがありました。Enterprise Planへのアップセル好機です。",
-      log: {
-        type: "intercom",
-        timestamp: "2026-03-17 10:15",
-        user: "田中太郎",
-        company: "株式会社テクノロジーイノベーション",
-        content: "新しいメンバーを追加したいのですが、「ユーザー数上限に近づいています」という警告が表示されました。現在の契約プランでユーザー数を増やすことはできますか？",
-        channel: "Intercom",
-      },
-      suggestedActions: [
-        { type: "content", label: "Enterprise Planの機能比較表を送付" },
-        { type: "action", label: "プランアップグレード相談MTGを設定" },
-        { type: "outbound", label: "特別価格の提案を準備" },
-      ],
-    },
-  },
-  {
-    id: "alert_2",
-    createdAt: "2026-03-17 09:45",
-    alertType: "Opportunity",
-    priority: "High",
-    title: "グローバルソリューションズが高度な機能への興味を示している",
-    summary: "Advanced Analytics機能について3回問い合わせ。導入事例を知りたいとのこと",
-    company: "グローバルソリューションズ株式会社",
-    companyId: "2",
-    source: "Intercom",
-    linkedCases: 3,
-    cseTickets: 0,
-    assigned: "CSM",
-    owner: "山田太郎",
-    status: "In Progress",
-    suggestedAction: "機能デモMTG設定",
-    evidence: {
-      whyThisMatters: "現在Basic Planを利用中。Advanced Analytics機能について3回問い合わせがあり、導入企業の事例を知りたいとのこと。利用拡大のチャンスです。",
-      log: {
-        type: "intercom",
-        timestamp: "2026-03-16 15:30",
-        user: "山田花子",
-        company: "グローバルソリューションズ株式会社",
-        content: "Advanced Analytics機能について詳しく教えていただけますでしょうか。導入事例があれば知りたいです。",
-        channel: "Intercom",
-      },
-      suggestedActions: [
-        { type: "content", label: "Advanced Analytics導入事例送付" },
-        { type: "action", label: "機能デモMTGを設定" },
-        { type: "outbound", label: "アップグレード提案を準備" },
-      ],
-    },
-  },
-  {
-    id: "alert_3",
-    createdAt: "2026-03-17 08:30",
-    alertType: "Risk",
-    priority: "High",
-    title: "クラウドインフラサービスのサポート件数が42%急増",
-    summary: "先週比で18件増加。API連携とパフォーマンス関連の問い合わせ集中",
-    company: "クラウドインフラサービス",
-    companyId: "5",
-    source: "System",
-    linkedCases: 18,
-    cseTickets: 2,
-    assigned: "Support",
-    owner: "佐藤花子",
-    status: "In Progress",
-    suggestedAction: "ヘルスチェックMTG設定",
-    evidence: {
-      whyThisMatters: "先週比で18件増加。API連携とパフォーマンス関連の問い合わせが集中しています。顧客満足度低下のリスクがあります。",
-      log: {
-        type: "intercom",
-        timestamp: "2026-03-17 08:15",
-        user: "高橋美咲",
-        company: "クラウドインフラサービス",
-        content: "API連携処理を実行すると、頻繁にタイムアウトエラーが発生します。特に大量データを扱う処理で顕著です。",
-        channel: "Intercom",
-      },
-      suggestedActions: [
-        { type: "action", label: "ヘルスチェックMTGを設定" },
-        { type: "content", label: "API連携トラブルシューティングガイドを送付" },
-        { type: "outbound", label: "状況説明と対応方針を共有" },
-      ],
-    },
-  },
-  {
-    id: "alert_4",
-    createdAt: "2026-03-17 07:15",
-    alertType: "Content Suggestion",
-    priority: "Medium",
-    title: "「API連携トラブルシューティングガイド」Content作成を推奨",
-    summary: "API連携関連の問い合わせが月間45件。詳細ガイドで初回応答時間短縮可能",
-    company: null,
-    companyId: null,
-    source: "System (AI)",
-    linkedCases: 45,
-    cseTickets: 0,
-    assigned: "Unassigned",
-    owner: null,
-    status: "Untriaged",
-    suggestedAction: "Content作成",
-    evidence: {
-      whyThisMatters: "API連携関連の問い合わせが月間45件。詳細ガイドにより初回応答時間を大幅短縮できます",
-      suggestedActions: [{ type: "content", label: "Content作成" }],
-    },
-  },
-  {
-    id: "alert_5",
-    createdAt: "2026-03-16 22:30",
-    alertType: "Waiting on CSE",
-    priority: "High",
-    title: "CSE-1234 データ同期エラーの調査が48時間超過",
-    summary: "クラウドインフラサービスのCSE Ticket待機時間が52h。中間報告が必要",
-    company: "クラウドインフラサービス",
-    companyId: "5",
-    source: "CSE Ticket",
-    linkedCases: 1,
-    cseTickets: 1,
-    assigned: "CSM",
-    owner: "鈴木一郎",
-    status: "In Progress",
-    suggestedAction: "中間報告送付",
-    evidence: {
-      whyThisMatters: "待機時間が長期化すると、顧客からのエスカレーション率が上昇します",
-      suggestedActions: [
-        { type: "outbound", label: "中間報告を送付" },
-        { type: "escalation", label: "CSE進捗確認" },
-      ],
-    },
-  },
-  {
-    id: "alert_6",
-    createdAt: "2026-03-16 18:45",
-    alertType: "Urgent",
-    priority: "Critical",
-    title: "高priority案件が8時間以上未対応",
-    summary: "API連携タイムアウトエラーで本番環境の業務が停止中。至急対応必要",
-    company: "株式会社テクノロジーイノベーション",
-    companyId: "1",
-    source: "Intercom",
-    linkedCases: 1,
-    cseTickets: 0,
-    assigned: "Unassigned",
-    owner: null,
-    status: "Untriaged",
-    suggestedAction: "即座に対応",
-    evidence: {
-      whyThisMatters: "過去の類似案件では、12時間超過すると顧客満足度が著しく低下します",
-      suggestedActions: [
-        { type: "action", label: "CSMにアサイン" },
-        { type: "escalation", label: "緊急対応を開始" },
-      ],
-    },
-  },
-];
+const QUICK_FILTERS = [
+  { value: 'all',            label: 'All' },
+  { value: 'unassigned',     label: 'Unassigned' },
+  { value: 'waiting_on_cse', label: 'Waiting on CSE' },
+  { value: 'high',           label: 'High Severity' },
+] as const;
 
-// ── 定数 ──────────────────────────────────────────────────────────────────────
+type QuickFilter = (typeof QUICK_FILTERS)[number]['value'];
 
-const PRIORITY_ORDER: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3 };
-
-const ALERT_TYPES = ["Urgent", "Risk", "Opportunity", "Content Suggestion", "Waiting on CSE"] as const;
-const PRIORITIES  = ["Critical", "High", "Medium", "Low"] as const;
-const STATUSES    = ["Untriaged", "In Progress", "Resolved", "Dismissed"] as const;
-const SOURCES     = ["Intercom", "Slack", "Chatwork", "CSE Ticket", "System", "System (AI)"] as const;
-
-// ── Helper functions ──────────────────────────────────────────────────────────
-
-function alertTypeBadge(t: string) {
-  const map: Record<string, string> = {
-    Urgent: "bg-red-100 border-red-300 text-red-700",
-    Risk: "bg-orange-100 border-orange-300 text-orange-700",
-    Opportunity: "bg-green-100 border-green-300 text-green-700",
-    "Content Suggestion": "bg-purple-100 border-purple-300 text-purple-700",
-    "Waiting on CSE": "bg-amber-100 border-amber-300 text-amber-700",
-  };
-  return map[t] ?? "bg-slate-100 border-slate-300 text-slate-700";
-}
-
-function priorityBadge(p: string) {
-  const map: Record<string, string> = {
-    Critical: "bg-red-700 text-white",
-    High: "bg-orange-600 text-white",
-    Medium: "bg-amber-500 text-white",
-    Low: "bg-slate-400 text-white",
-  };
-  return map[p] ?? "bg-slate-400 text-white";
-}
-
-function statusBadge(s: string) {
-  const map: Record<string, string> = {
-    Untriaged: "bg-red-50 border-red-300 text-red-700",
-    "In Progress": "bg-blue-50 border-blue-300 text-blue-700",
-    Resolved: "bg-green-50 border-green-300 text-green-700",
-    Dismissed: "bg-slate-50 border-slate-300 text-slate-500",
-  };
-  return map[s] ?? "bg-slate-50 border-slate-300 text-slate-700";
-}
-
-function suggestedActionIcon(type: string) {
-  if (type === "content") return <FileText className="w-3 h-3 mr-1" />;
-  if (type === "action") return <Play className="w-3 h-3 mr-1" />;
-  if (type === "outbound") return <Send className="w-3 h-3 mr-1" />;
-  return <AlertCircle className="w-3 h-3 mr-1" />;
-}
-
-// ── Slide-over panel ─────────────────────────────────────────────────────────
-
-function AlertDetailPanel({
-  alert,
-  onClose,
-}: {
-  alert: LocalAlert | null;
-  onClose: () => void;
-}) {
-  if (!alert) return null;
-  const { evidence } = alert;
-
-  return (
-    <div className="fixed inset-y-0 right-0 w-[480px] bg-white shadow-2xl border-l z-50 flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="p-5 border-b flex items-start justify-between">
-        <div className="flex-1 pr-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Badge className={`text-xs border ${alertTypeBadge(alert.alertType)}`}>{alert.alertType}</Badge>
-            <Badge className={`text-xs ${priorityBadge(alert.priority)}`}>{alert.priority}</Badge>
-          </div>
-          <h2 className="text-base font-semibold text-slate-900">{alert.title}</h2>
-          <p className="text-sm text-slate-500 mt-1">{alert.createdAt}</p>
-        </div>
-        <Button variant="ghost" size="sm" onClick={onClose} className="p-1">
-          <X className="w-5 h-5" />
-        </Button>
-      </div>
-
-      <div className="flex-1 overflow-auto p-5 space-y-5">
-        {/* Why This Matters */}
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-          <div className="flex items-center gap-2 mb-2 text-amber-800 font-semibold text-sm">
-            <Lightbulb className="w-4 h-4" />
-            Why This Matters
-          </div>
-          <p className="text-sm text-amber-900">{evidence.whyThisMatters}</p>
-        </div>
-
-        {/* Log entry */}
-        {"log" in evidence && evidence.log && (
-          <div className="space-y-2">
-            <div className="text-sm font-semibold text-slate-800">Evidence Log</div>
-            <div className="border rounded-lg p-4 bg-slate-50 space-y-2">
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <span className="font-medium text-slate-700">{(evidence.log as { user: string }).user}</span>
-                <span>•</span>
-                <span>{(evidence.log as { timestamp: string }).timestamp}</span>
-                <span>•</span>
-                <span>{(evidence.log as { channel: string }).channel}</span>
-              </div>
-              {alert.companyId && (
-                <Link
-                  href={`/companies/${alert.companyId}`}
-                  className="text-xs text-blue-600 hover:underline flex items-center gap-1"
-                >
-                  <Building className="w-3 h-3" />
-                  {alert.company}
-                </Link>
-              )}
-              <p className="text-sm text-slate-700">{(evidence.log as { content: string }).content}</p>
-            </div>
-          </div>
-        )}
-
-        {/* Suggested Actions */}
-        <div className="space-y-2">
-          <div className="text-sm font-semibold text-slate-800">Suggested Actions</div>
-          <div className="space-y-2">
-            {evidence.suggestedActions.map((act, idx) => (
-              <Button key={idx} variant="outline" size="sm" className="w-full justify-start text-xs">
-                {suggestedActionIcon(act.type)}
-                {act.label}
-              </Button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div className="p-4 border-t flex gap-2 flex-wrap">
-        {alert.companyId && (
-          <Link href={`/companies/${alert.companyId}`} className="flex-1 min-w-[120px]">
-            <Button variant="outline" size="sm" className="w-full">
-              <Building className="w-4 h-4 mr-2" />
-              Company
-            </Button>
-          </Link>
-        )}
-        {alert.sourceId && (
-          <Link href={`/support/${alert.sourceId}`} className="flex-1 min-w-[120px]">
-            <Button variant="outline" size="sm" className="w-full">
-              ケースを確認
-            </Button>
-          </Link>
-        )}
-        <Link href="/support/queue" className="flex-1 min-w-[120px]">
-          <Button size="sm" className="w-full">Queue で確認</Button>
-        </Link>
-      </div>
-    </div>
-  );
-}
-
-// ── API → local shape の変換 ──────────────────────────────────────────────────
-
-type LocalAlert = (typeof ALERTS)[0] & { sourceId?: string | null };
-
-function apiAlertToLocal(a: AppSupportAlert): LocalAlert {
-  const suggestedActions: { type: string; label: string }[] = [];
-  if (a.suggestedAction && a.suggestedAction !== '—') {
-    const actionType =
-      a.alertType === 'Opportunity'        ? 'action'    :
-      a.alertType === 'Content Suggestion' ? 'content'   :
-      a.alertType === 'Waiting on CSE'     ? 'escalation':
-      'action';
-    suggestedActions.push({ type: actionType, label: a.suggestedAction });
+function applyFilter(items: SupportCaseViewModel[], filter: QuickFilter): SupportCaseViewModel[] {
+  switch (filter) {
+    case 'unassigned':     return items.filter(i => i.routingStatus === 'unassigned');
+    case 'waiting_on_cse': return items.filter(i => i.routingStatus === 'waiting on CSE');
+    case 'high':           return items.filter(i => i.severity === 'high');
+    default:               return items;
   }
-
-  return {
-    id: a.id,
-    createdAt: a.createdAt,
-    alertType: a.alertType,
-    priority: a.priority,
-    title: a.title,
-    summary: a.summary,
-    company: a.companyName ?? null,
-    companyId: a.companyUid ?? null,
-    source: a.source,
-    linkedCases: a.linkedCases,
-    cseTickets: a.cseTickets,
-    assigned: a.assignedTo,
-    owner: a.ownerName ?? null,
-    status: a.status,
-    suggestedAction: a.suggestedAction,
-    sourceId: a.sourceId ?? null,
-    evidence: {
-      whyThisMatters: a.whyThisMatters,
-      suggestedActions,
-    },
-  };
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-type SortKey = "createdAt" | "priority" | "alertType" | "status";
-type SortDir = "asc" | "desc";
-
-const QUICK_FILTERS = [
-  { value: "all",         label: "All" },
-  { value: "untriaged",   label: "Untriaged" },
-  { value: "urgent",      label: "Urgent Only" },
-  { value: "risk",        label: "Risk Only" },
-  { value: "opportunity", label: "Opportunity Only" },
-];
-
 export function SupportHome() {
-  const [apiAlerts, setApiAlerts]     = useState<LocalAlert[] | null>(null);
+  const [apiCases, setApiCases]       = useState<QueueItem[] | null>(null);
   const [loadError, setLoadError]     = useState<string | null>(null);
   const [refreshing, setRefreshing]   = useState(false);
-  const [quickFilter, setQuickFilter] = useState("all");
-  const [sortKey, setSortKey]         = useState<SortKey>("priority");
-  const [sortDir, setSortDir]         = useState<SortDir>("asc");
-  const [selected, setSelected]       = useState<Set<string>>(new Set());
-  const [detailAlert, setDetailAlert] = useState<LocalAlert | null>(null);
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
+  // AI state map — keyed by "${source_queue}:${source_record_id}"
+  const [aiVmMap, setAiVmMap]         = useState<Record<string, SupportCaseAiViewModel>>({});
+  // sourceTable lookup for AI state keying
+  const [sourceTableMap, setSourceTableMap] = useState<Record<string, string>>({});
 
-  // ── 詳細フィルタ ──────────────────────────────────────────────────────────
-  const [showFilters,     setShowFilters]     = useState(false);
-  const [filterType,      setFilterType]      = useState("all");
-  const [filterPriority,  setFilterPriority]  = useState("all");
-  const [filterStatus,    setFilterStatus]    = useState("all");
-  const [filterSource,    setFilterSource]    = useState("all");
+  // UI-level undo tracking (which case was just dismissed in this component)
+  const [lastDismissedId, setLastDismissedId] = useState<string | null>(null);
 
-  const activeFilterCount = [filterType, filterPriority, filterStatus, filterSource].filter(v => v !== "all").length;
+  // Global case state
+  const { dismissCase, undismissCase, getCaseRecord, loadCaseStates } = useCaseState();
 
-  function resetFilters() {
-    setQuickFilter("all");
-    setFilterType("all");
-    setFilterPriority("all");
-    setFilterStatus("all");
-    setFilterSource("all");
-  }
-
-  function loadAlerts() {
+  function load() {
     setRefreshing(true);
     setLoadError(null);
-    fetchSupportAlerts(100)
+    fetchSupportCases(200)
       .then(data => {
-        if (data.length > 0) setApiAlerts(data.map(apiAlertToLocal));
+        setApiCases(data);
+        // sourceTable lookup map
+        const stMap: Record<string, string> = {};
+        for (const c of data) stMap[c.id] = c.sourceTable;
+        setSourceTableMap(stMap);
+        // 取得したケースの永続化済み state を一括ロード
+        loadCaseStates(data.map(c => c.id)).catch(err =>
+          console.warn('[SupportHome] state load failed:', err),
+        );
+        // AI state を一括ロード
+        Promise.all([
+          fetch('/api/support/ai-states?source_queue=intercom&limit=500').then(r => r.ok ? r.json() : {}),
+          fetch('/api/support/ai-states?source_queue=cse_ticket&limit=500').then(r => r.ok ? r.json() : {}),
+        ]).then(([intercomData, cseData]) => {
+          const merged: Record<string, SupportCaseAiViewModel> = {};
+          for (const [id, vm] of Object.entries(intercomData as Record<string, SupportCaseAiViewModel>)) {
+            merged[`intercom:${id}`] = vm;
+          }
+          for (const [id, vm] of Object.entries(cseData as Record<string, SupportCaseAiViewModel>)) {
+            merged[`cse_ticket:${id}`] = vm;
+          }
+          setAiVmMap(merged);
+        }).catch(err => console.warn('[SupportHome] AI state load failed:', err));
       })
       .catch(err => {
-        console.warn('[SupportHome] alerts fetch failed, using mock:', err);
-        setLoadError('データ取得に失敗しました（mock表示中）');
+        console.warn('[SupportHome] fetch failed:', err);
+        setLoadError('データ取得に失敗しました');
+        setApiCases([]);
       })
       .finally(() => setRefreshing(false));
   }
 
-  useEffect(() => { loadAlerts(); }, []);
+  useEffect(() => { load(); }, []);
 
-  const alerts = apiAlerts ?? ALERTS;
+  function handleDismiss(id: string) {
+    dismissCase(id, {});
+    setLastDismissedId(id);
+  }
 
-  // ── フィルタ適用 ──────────────────────────────────────────────────────────
-  let filtered = alerts.filter((a) => {
-    // Quick filter
-    if (quickFilter === "untriaged"   && a.status    !== "Untriaged")  return false;
-    if (quickFilter === "urgent"      && a.priority  !== "Critical")   return false;
-    if (quickFilter === "risk"        && a.alertType !== "Risk")       return false;
-    if (quickFilter === "opportunity" && a.alertType !== "Opportunity") return false;
-    // Detail filters
-    if (filterType     !== "all" && a.alertType !== filterType)     return false;
-    if (filterPriority !== "all" && a.priority  !== filterPriority) return false;
-    if (filterStatus   !== "all" && a.status    !== filterStatus)   return false;
-    if (filterSource   !== "all" && a.source    !== filterSource)   return false;
-    return true;
+  function handleUndoDismiss() {
+    if (!lastDismissedId) return;
+    undismissCase(lastDismissedId);
+    setLastDismissedId(null);
+  }
+
+  const isLoading = apiCases === null;
+
+  // Build view models — AI display 値を適用してから buildCaseViewModels に渡す。
+  // applyAiDisplayToItem により severity / routingStatus が AI 値で上書きされ、
+  // isHomeWorthy / getCaseReasons / priorityScore がすべて AI 値を参照する。
+  const adjustedCases = (apiCases ?? []).map(c => {
+    const aq = sourceTableMap[c.id] === 'cse_tickets' ? 'cse_ticket' : 'intercom';
+    return applyAiDisplayToItem(c, aiVmMap[`${aq}:${c.id}`] ?? null);
   });
-
-  // ── ソート: primary = sortKey, secondary = createdAt desc ─────────────────
-  filtered = [...filtered].sort((a, b) => {
-    let cmp = 0;
-    if (sortKey === "createdAt") cmp = a.createdAt.localeCompare(b.createdAt);
-    else if (sortKey === "priority") cmp = (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9);
-    else if (sortKey === "alertType") cmp = a.alertType.localeCompare(b.alertType);
-    else if (sortKey === "status") cmp = a.status.localeCompare(b.status);
-    if (cmp === 0 && sortKey !== "createdAt") {
-      // secondary: 新しい順
-      cmp = b.createdAt.localeCompare(a.createdAt);
-    }
-    return sortDir === "asc" ? cmp : -cmp;
-  });
-
-  function toggleSort(key: SortKey) {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir(key === "priority" ? "asc" : "desc"); }
+  const allVMs = buildCaseViewModels(adjustedCases, getCaseRecord);
+  // isVisibleInHome は AI-adjusted QueueItem から算出済み。
+  // さらにエスカレーション必要案件（AI判定）は Home に引き上げる。
+  const visibleIdSet = new Set(allVMs.filter(vm => vm.isVisibleInHome).map(vm => vm.id));
+  for (const [key, aiVm] of Object.entries(aiVmMap)) {
+    if (!aiVm.hasAiState || !aiVm.escalationNeeded) continue;
+    const sourceRecordId = key.split(':').slice(1).join(':');
+    visibleIdSet.add(sourceRecordId);
   }
+  const priorityItems = allVMs
+    .filter(vm => visibleIdSet.has(vm.id))
+    .sort((a, b) => b.priorityScore - a.priorityScore || b.createdAt.localeCompare(a.createdAt));
 
-  function SortIcon({ k }: { k: SortKey }) {
-    if (sortKey !== k) return <ArrowUpDown className="w-3 h-3 ml-1 inline text-slate-400" />;
-    return sortDir === "asc"
-      ? <ArrowUp className="w-3 h-3 ml-1 inline text-slate-700" />
-      : <ArrowDown className="w-3 h-3 ml-1 inline text-slate-700" />;
-  }
+  const countMap: Record<QuickFilter, number> = {
+    all:            priorityItems.length,
+    unassigned:     priorityItems.filter(i => i.routingStatus === 'unassigned').length,
+    waiting_on_cse: priorityItems.filter(i => i.routingStatus === 'waiting on CSE').length,
+    high:           priorityItems.filter(i => i.severity === 'high').length,
+  };
 
-  function toggleSelect(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
-
-  function selectAll() {
-    if (selected.size === filtered.length) setSelected(new Set());
-    else setSelected(new Set(filtered.map((a: LocalAlert) => a.id)));
-  }
-
-  const allSelected = selected.size > 0 && selected.size === filtered.length;
-  const isFiltered  = quickFilter !== "all" || activeFilterCount > 0;
+  const filtered = applyFilter(priorityItems, quickFilter);
 
   return (
     <div className="flex h-screen bg-slate-50">
@@ -515,20 +154,40 @@ export function SupportHome() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <GlobalHeader currentView="Support" />
         <main className="flex-1 overflow-auto">
-          <div className="max-w-[1800px] mx-auto p-6 space-y-5">
+          <div className="max-w-[1400px] mx-auto p-6 space-y-5">
 
-            {/* 読み込みエラーバナー */}
+            {/* エラーバナー */}
             {loadError && (
               <div className="flex items-center gap-3 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
                 <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                 <span className="flex-1">{loadError}</span>
                 <Button
-                  variant="ghost"
-                  size="sm"
+                  variant="ghost" size="sm"
                   className="h-7 text-xs text-amber-800 hover:bg-amber-100"
-                  onClick={loadAlerts}
+                  onClick={load}
                 >
                   再試行
+                </Button>
+              </div>
+            )}
+
+            {/* Undo バナー — dismiss 直後のみ表示 */}
+            {lastDismissedId && (
+              <div className="flex items-center gap-3 text-sm text-slate-700 bg-slate-100 border border-slate-200 rounded-lg px-4 py-2.5">
+                <span className="flex-1 text-slate-600">案件を Home から除外しました（対応不要）</span>
+                <Button
+                  variant="ghost" size="sm"
+                  className="h-7 text-xs gap-1.5 text-slate-700 hover:text-slate-900"
+                  onClick={handleUndoDismiss}
+                >
+                  <Undo2 className="w-3 h-3" /> 元に戻す
+                </Button>
+                <Button
+                  variant="ghost" size="sm"
+                  className="h-7 w-7 p-0 text-slate-400"
+                  onClick={() => setLastDismissedId(null)}
+                >
+                  <X className="w-3 h-3" />
                 </Button>
               </div>
             )}
@@ -537,294 +196,223 @@ export function SupportHome() {
             <div className="flex items-center justify-between">
               <div>
                 <h1 className="text-xl font-bold text-slate-900">Support Home</h1>
-                <p className="text-sm text-slate-500 mt-0.5">AI検出アラートを確認し、優先度の高い案件にアクションを取る</p>
+                <p className="text-sm text-slate-500 mt-0.5">
+                  未対応・判断待ち・高優先度のケースのみ表示しています。全件は{" "}
+                  <Link href="/support/queue" className="text-blue-600 hover:underline">Queue</Link>{" "}
+                  で確認できます。
+                </p>
               </div>
               <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowFilters(v => !v)}
-                  className={showFilters || activeFilterCount > 0 ? "border-blue-300 text-blue-700 bg-blue-50" : ""}
-                >
-                  <Filter className="w-4 h-4 mr-2" />
-                  Filter
-                  {activeFilterCount > 0 && (
-                    <span className="ml-1.5 bg-blue-600 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
-                      {activeFilterCount}
-                    </span>
-                  )}
-                  <ChevronDown className={`w-4 h-4 ml-1 transition-transform ${showFilters ? "rotate-180" : ""}`} />
-                </Button>
-                <Button variant="outline" size="sm" onClick={loadAlerts} disabled={refreshing}>
+                <Button variant="outline" size="sm" onClick={load} disabled={refreshing}>
                   <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
                   更新
                 </Button>
                 <Link href="/support/queue">
-                  <Button size="sm">Support Queue →</Button>
+                  <Button size="sm">
+                    Support Queue <ArrowRight className="w-4 h-4 ml-2" />
+                  </Button>
                 </Link>
               </div>
             </div>
 
-            {/* 詳細フィルタパネル */}
-            {showFilters && (
-              <div className="bg-white border rounded-lg p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">詳細フィルタ</span>
-                  {activeFilterCount > 0 && (
-                    <button
-                      onClick={resetFilters}
-                      className="text-xs text-blue-600 hover:underline flex items-center gap-1"
-                    >
-                      <X className="w-3 h-3" />
-                      すべてリセット
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <Select value={filterType} onValueChange={setFilterType}>
-                    <SelectTrigger className="w-48 h-8 text-xs">
-                      <SelectValue placeholder="Alert Type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Alert Types</SelectItem>
-                      {ALERT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <Select value={filterPriority} onValueChange={setFilterPriority}>
-                    <SelectTrigger className="w-40 h-8 text-xs">
-                      <SelectValue placeholder="Priority" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Priorities</SelectItem>
-                      {PRIORITIES.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <Select value={filterStatus} onValueChange={setFilterStatus}>
-                    <SelectTrigger className="w-40 h-8 text-xs">
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Statuses</SelectItem>
-                      {STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <Select value={filterSource} onValueChange={setFilterSource}>
-                    <SelectTrigger className="w-44 h-8 text-xs">
-                      <SelectValue placeholder="Source Queue" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Sources</SelectItem>
-                      {SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            )}
-
-            {/* Quick filters */}
+            {/* Quick filter tabs */}
             <div className="flex items-center gap-2">
-              {QUICK_FILTERS.map((f) => (
+              {QUICK_FILTERS.map(f => (
                 <button
                   key={f.value}
                   onClick={() => setQuickFilter(f.value)}
-                  className={`px-3 py-1.5 text-sm rounded-full transition-colors border ${
+                  className={`px-3 py-1.5 text-sm rounded-full transition-colors border flex items-center gap-1.5 ${
                     quickFilter === f.value
-                      ? "bg-slate-900 text-white border-slate-900"
-                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                      ? 'bg-slate-900 text-white border-slate-900'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                   }`}
                 >
                   {f.label}
+                  {!isLoading && (
+                    <span className={`text-xs rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center ${
+                      quickFilter === f.value
+                        ? 'bg-white/20 text-white'
+                        : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      {countMap[f.value]}
+                    </span>
+                  )}
                 </button>
               ))}
-              <span className="text-xs text-slate-400 ml-2">
-                {filtered.length}件
-                {isFiltered && alerts.length !== filtered.length && (
-                  <span className="ml-1 text-slate-300">/ {alerts.length}件中</span>
-                )}
-              </span>
-              {isFiltered && (
-                <button
-                  onClick={resetFilters}
-                  className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-0.5"
-                >
-                  <X className="w-3 h-3" />
-                  リセット
-                </button>
-              )}
             </div>
 
-            {/* Bulk actions */}
-            {selected.size > 0 && (
-              <div className="flex items-center gap-3 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm">
-                <span>{selected.size}件選択中</span>
-                <div className="h-4 w-px bg-slate-600" />
-                <Button variant="ghost" size="sm" className="text-white hover:bg-slate-700 h-7 text-xs">
-                  <Flag className="w-3 h-3 mr-1" />
-                  In Progress に変更
-                </Button>
-                <Button variant="ghost" size="sm" className="text-white hover:bg-slate-700 h-7 text-xs">
-                  <Trash2 className="w-3 h-3 mr-1" />
-                  Dismiss
-                </Button>
-                <button className="ml-auto text-slate-400 hover:text-white" onClick={() => setSelected(new Set())}>
-                  <X className="w-4 h-4" />
-                </button>
+            {/* Content */}
+            {isLoading ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="bg-white border rounded-lg p-4 space-y-3">
+                    <Skeleton className="h-5 w-32 rounded-full" />
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-5 w-full" />
+                    <Skeleton className="h-4 w-3/4" />
+                    <div className="flex gap-2 pt-1">
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                      <Skeleton className="h-5 w-14 rounded-full" />
+                    </div>
+                    <div className="flex gap-2">
+                      <Skeleton className="h-8 flex-1" />
+                      <Skeleton className="h-8 w-8" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 bg-white border rounded-lg">
+                <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
+                  <Inbox className="w-8 h-8 text-slate-300" />
+                </div>
+                <h3 className="text-lg font-semibold text-slate-900 mb-1">
+                  {quickFilter !== 'all' ? 'このフィルタに一致する案件はありません' : '優先判断が必要なケースはありません'}
+                </h3>
+                <p className="text-sm text-slate-500 text-center max-w-sm">
+                  {quickFilter !== 'all'
+                    ? 'フィルタを解除するか、Support Queue で全件を確認してください'
+                    : 'Dismissed・Resolved・CSE済みのケースは Home から除外されています。全件は Queue で確認できます。'
+                  }
+                </p>
+                <div className="flex gap-2 mt-4">
+                  {quickFilter !== 'all' && (
+                    <Button variant="outline" size="sm" onClick={() => setQuickFilter('all')}>
+                      すべて表示
+                    </Button>
+                  )}
+                  <Link href="/support/queue">
+                    <Button variant="outline" size="sm">
+                      Support Queue を開く <ArrowRight className="w-3 h-3 ml-1.5" />
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {filtered.map(vm => {
+                  const aiSourceQueue = sourceTableMap[vm.id] === 'cse_tickets' ? 'cse_ticket' : 'intercom';
+                  const aiVm = aiVmMap[`${aiSourceQueue}:${vm.id}`] ?? null;
+                  return (
+                  <div
+                    key={vm.id}
+                    className="bg-white border rounded-lg p-4 space-y-3 hover:shadow-sm transition-shadow"
+                  >
+                    {/* Reason tag + createdAt */}
+                    <div className="flex items-center justify-between">
+                      {vm.homeReasons[0] ? (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${vm.homeReasons[0].className}`}>
+                          {vm.homeReasons[0].label}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-slate-100 text-slate-600 border-slate-200">
+                          Needs attention
+                        </span>
+                      )}
+                      <span className="text-xs text-slate-400">{vm.createdAt}</span>
+                    </div>
+
+                    {/* Company / Project */}
+                    <div>
+                      {vm.companyUid ? (
+                        <Link
+                          href={`/companies/${vm.companyUid}`}
+                          className="flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                        >
+                          <Building className="w-3 h-3 flex-shrink-0" />
+                          <span className="truncate">{vm.companyName}</span>
+                        </Link>
+                      ) : (
+                        <span className="flex items-center gap-1 text-xs text-slate-500">
+                          <Building className="w-3 h-3 flex-shrink-0" />
+                          <span className="truncate">{vm.companyName}</span>
+                        </span>
+                      )}
+                      {vm.projectName && (
+                        <span className="text-xs text-slate-400 pl-4">{vm.projectName}</span>
+                      )}
+                    </div>
+
+                    {/* Title */}
+                    <Link
+                      href={`/support/${vm.id}`}
+                      className="block font-medium text-slate-900 hover:text-blue-600 leading-snug line-clamp-2"
+                    >
+                      {vm.title}
+                    </Link>
+
+                    {/* Badges — vm.severity / vm.routingStatus は applyAiDisplayToItem 適用済み */}
+                    <div className="flex flex-wrap gap-1.5">
+                      <CaseTypeBadge type={vm.caseType} />
+                      <SourceBadge source={vm.sourceType} />
+                      <RoutingBadge status={vm.routingStatus} />
+                      <SeverityBadge severity={vm.severity} />
+                      {aiVm?.hasAiState && (
+                        <span className="text-[10px] text-purple-500 font-medium self-center">AI</span>
+                      )}
+                      {aiVm?.escalationNeeded && (
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700 border border-orange-200">
+                          <AlertTriangle className="w-2.5 h-2.5" />Esc
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Open duration / aging */}
+                    {vm.openDuration && (
+                      <p className={`text-xs ${vm.isOverdue ? 'text-rose-600 font-medium' : 'text-slate-500'}`}>
+                        Open: {vm.openDuration}
+                        {vm.waitingDuration && ` · 待機: ${vm.waitingDuration}`}
+                        {vm.agingText && ` · ${vm.agingText}`}
+                      </p>
+                    )}
+
+                    {/* CTAs: 判断する（Detail遷移） + 対応不要（Dismiss） */}
+                    <div className="flex gap-2 pt-0.5">
+                      <Link href={`/support/${vm.id}`} className="flex-1">
+                        <Button
+                          variant="outline" size="sm"
+                          className="w-full h-8 text-xs gap-1 border-slate-300 text-slate-700 hover:bg-slate-50"
+                        >
+                          対応する <ArrowUpRight className="w-3 h-3" />
+                        </Button>
+                      </Link>
+                      <Button
+                        variant="ghost" size="sm"
+                        className="h-8 px-3 text-xs text-slate-400 hover:text-slate-600 hover:bg-slate-100 gap-1"
+                        onClick={() => handleDismiss(vm.id)}
+                        title="対応不要としてアーカイブ"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">対応不要</span>
+                      </Button>
+                    </div>
+                  </div>
+                  );
+                })}
               </div>
             )}
 
-            {/* Table */}
-            <div className="bg-white border rounded-lg overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 border-b">
-                  <tr>
-                    <th className="w-10 px-3 py-3 text-left">
-                      <button onClick={selectAll} className="text-slate-400 hover:text-slate-700">
-                        {allSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                      </button>
-                    </th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-600 cursor-pointer" onClick={() => toggleSort("createdAt")}>
-                      Created At <SortIcon k="createdAt" />
-                    </th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-600 cursor-pointer" onClick={() => toggleSort("alertType")}>
-                      Alert Type <SortIcon k="alertType" />
-                    </th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-600 cursor-pointer" onClick={() => toggleSort("priority")}>
-                      Priority <SortIcon k="priority" />
-                    </th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-600">Title / Summary</th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-600">Company</th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-600">Source</th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-600">Cases</th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-600">Assigned</th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-600 cursor-pointer" onClick={() => toggleSort("status")}>
-                      Status <SortIcon k="status" />
-                    </th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-600">Suggested</th>
-                    <th className="px-3 py-3 text-left text-xs font-semibold text-slate-600">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filtered.length === 0 ? (
-                    <tr>
-                      <td colSpan={12} className="py-16 text-center">
-                        <div className="flex flex-col items-center gap-3 text-slate-400">
-                          <Filter className="w-10 h-10 text-slate-200" />
-                          <div>
-                            <p className="font-medium text-slate-600">
-                              {isFiltered ? "条件に一致するアラートがありません" : "アラートがありません"}
-                            </p>
-                            <p className="text-xs mt-1">
-                              {isFiltered
-                                ? "フィルタ条件を変更するか、リセットしてください"
-                                : "AI アラートが生成されると、ここに表示されます"
-                              }
-                            </p>
-                          </div>
-                          {isFiltered && (
-                            <button
-                              onClick={resetFilters}
-                              className="text-xs text-blue-600 hover:underline"
-                            >
-                              フィルタをリセット
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    filtered.map((alert) => (
-                      <tr
-                        key={alert.id}
-                        className={`hover:bg-slate-50 transition-colors ${selected.has(alert.id) ? "bg-blue-50" : ""}`}
-                      >
-                        <td className="px-3 py-3">
-                          <button onClick={() => toggleSelect(alert.id)} className="text-slate-400 hover:text-slate-700">
-                            {selected.has(alert.id) ? <CheckSquare className="w-4 h-4 text-blue-600" /> : <Square className="w-4 h-4" />}
-                          </button>
-                        </td>
-                        <td className="px-3 py-3 text-xs text-slate-500 whitespace-nowrap">{alert.createdAt}</td>
-                        <td className="px-3 py-3">
-                          <Badge className={`text-xs border ${alertTypeBadge(alert.alertType)}`}>{alert.alertType}</Badge>
-                        </td>
-                        <td className="px-3 py-3">
-                          <Badge className={`text-xs ${priorityBadge(alert.priority)}`}>{alert.priority}</Badge>
-                        </td>
-                        <td className="px-3 py-3 max-w-[280px]">
-                          <button
-                            onClick={() => setDetailAlert(alert)}
-                            className="font-medium text-slate-900 hover:text-blue-600 text-left"
-                          >
-                            {alert.title}
-                          </button>
-                          <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{alert.summary}</p>
-                        </td>
-                        <td className="px-3 py-3">
-                          {alert.companyId ? (
-                            <Link
-                              href={`/companies/${alert.companyId}`}
-                              className="flex items-center gap-1 text-xs text-blue-600 hover:underline"
-                            >
-                              <Building className="w-3 h-3 flex-shrink-0" />
-                              <span className="max-w-[120px] truncate">{alert.company}</span>
-                            </Link>
-                          ) : (
-                            <span className="text-xs text-slate-400">—</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-3">
-                          <Badge variant="outline" className="text-xs">{alert.source}</Badge>
-                        </td>
-                        <td className="px-3 py-3 text-xs text-slate-600">{alert.linkedCases}</td>
-                        <td className="px-3 py-3 text-xs text-slate-600">
-                          {alert.owner ?? <span className="text-slate-400">Unassigned</span>}
-                        </td>
-                        <td className="px-3 py-3">
-                          <Badge variant="outline" className={`text-xs border ${statusBadge(alert.status)}`}>
-                            {alert.status}
-                          </Badge>
-                        </td>
-                        <td className="px-3 py-3 max-w-[160px]">
-                          <span className="text-xs text-slate-600">{alert.suggestedAction}</span>
-                        </td>
-                        <td className="px-3 py-3">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 text-xs"
-                            onClick={() => setDetailAlert(alert)}
-                          >
-                            詳細
-                          </Button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              {filtered.length > 0 && (
-                <div className="px-4 py-3 border-t text-sm text-slate-500 text-center">
-                  {filtered.length}件を表示中
-                  {isFiltered && alerts.length !== filtered.length && (
-                    <span className="ml-1 text-slate-400">（全{alerts.length}件中）</span>
-                  )}
-                </div>
-              )}
-            </div>
+            {/* Footer */}
+            {!isLoading && (
+              <div className="text-center text-sm text-slate-500 pb-2">
+                {filtered.length > 0 ? (
+                  <>
+                    {filtered.length}件を表示中
+                    {quickFilter !== 'all' && (
+                      <span className="ml-1 text-slate-400">（全{priorityItems.length}件中）</span>
+                    )}
+                  </>
+                ) : null}
+                <Link href="/support/queue" className="ml-3 text-blue-600 hover:underline text-sm">
+                  全件は Queue で確認 →
+                </Link>
+              </div>
+            )}
 
           </div>
         </main>
       </div>
-
-      {/* Slide-over detail */}
-      {detailAlert && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/20 z-40"
-            onClick={() => setDetailAlert(null)}
-          />
-          <AlertDetailPanel alert={detailAlert} onClose={() => setDetailAlert(null)} />
-        </>
-      )}
     </div>
   );
 }
