@@ -14,7 +14,7 @@
 //   5. regeneratePriority 降順でソートして返す
 
 import { resolveTargetCompanies } from './company-targets';
-import { getCompanySummaryState }  from '@/lib/nocodb/company-summary-read';
+import { getCompanySummaryStatesByUids } from '@/lib/nocodb/company-summary-read';
 import {
   buildCompanySummaryListItemViewModel,
   isUnreviewed,
@@ -71,15 +71,20 @@ export async function resolveCompanySummaryTargets(
 
   if (companies.length === 0) return [];
 
-  // ② summary state を並行取得（失敗した企業は null = missing 扱い）
-  const summaryStates = await Promise.all(
-    companies.map(c => getCompanySummaryState(c.id, summaryType).catch(() => null)),
-  );
+  // ② summary state を一括取得（1リクエストで全社分 — per-company N+1 を回避）
+  const summaryMap = await getCompanySummaryStatesByUids(
+    companies.map(c => c.id),
+    summaryType,
+  ).catch(() => new Map());
 
   // ③ ViewModel 構築
-  const items: CompanySummaryTargetItem[] = companies.map((company, i) => ({
+  const items: CompanySummaryTargetItem[] = companies.map(company => ({
     company,
-    listVM: buildCompanySummaryListItemViewModel(company.id, company.name, summaryStates[i]),
+    listVM: buildCompanySummaryListItemViewModel(
+      company.id,
+      company.name,
+      summaryMap.get(company.id) ?? null,
+    ),
   }));
 
   // ④ freshness_filter で絞り込み（指定なし = 全状態）

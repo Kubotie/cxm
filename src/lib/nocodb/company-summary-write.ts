@@ -8,6 +8,12 @@
 //   - 保護条件: human_review_status === 'approved' の場合は上書きしない
 //   - 新規作成時: human_review_status = 'pending' を設定
 //   - 更新時: human_review_status が null/空の場合は 'pending' を補完（既存値は保持）
+//
+// ⚠️ NocoDB スキーマ要件（400 Bad Request が発生する場合はここを確認）:
+//   - overall_health カラム: Text 型であること。
+//     SingleSelect 型のまま選択肢が未設定だと "Invalid option(s) \"healthy\" provided" エラーになる。
+//     対処: NocoDB 管理画面 → テーブル → overall_health → カラム型を Text に変更。
+//   - human_review_status カラム: Text 型であること（同様の理由）。
 
 import { TABLE_IDS, nocoFetch } from './client';
 import { nocoCreate, nocoUpdate } from './write';
@@ -46,6 +52,8 @@ export interface CompanySummaryStateWritePayload {
   evidence_count:          number;
   alert_count:             number;
   people_count:            number;
+  /** この summary を生成した Summary Policy の policy_id（ない場合は null or 省略） */
+  applied_policy_id?:      string | null;
 }
 
 // ── メイン helper ─────────────────────────────────────────────────────────────

@@ -33,8 +33,10 @@ import {
   COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT,
   COMPANY_EVIDENCE_SUMMARY_JSON_SCHEMA,
   buildCompanyEvidenceSummaryPrompt,
+  buildSummaryPolicySystemPrompt,
 } from '@/lib/prompts/company-evidence-summary';
 import type { CompanyEvidenceSummaryResult } from '@/lib/prompts/company-evidence-summary';
+import { getPolicyById } from '@/lib/nocodb/policy-store';
 
 // ── GET: 保存済み summary を返す ──────────────────────────────────────────────
 
@@ -55,7 +57,7 @@ export async function GET(
 // ── POST: AI 生成のみ（保存しない） ──────────────────────────────────────────
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ companyUid: string }> },
 ) {
   const { companyUid } = await params;
@@ -63,6 +65,12 @@ export async function POST(
   if (!companyUid) {
     return NextResponse.json({ error: 'companyUid が必要です' }, { status: 400 });
   }
+
+  // ── リクエストボディ（省略可） ───────────────────────────────────────────
+  // policy_id: Summary Policy を適用する場合に指定
+  interface RequestBody { policy_id?: string; }
+  const body: RequestBody = await req.json().catch(() => ({}));
+  const policyId = body.policy_id;
 
   // ── OpenAI クライアント初期化 ────────────────────────────────────────────
   let openai: ReturnType<typeof getOpenAIClient>;
@@ -75,12 +83,13 @@ export async function POST(
     return NextResponse.json({ error: msg }, { status: 503 });
   }
 
-  // ── NocoDB からデータ取得（並列） ────────────────────────────────────────
-  const [company, evidence, alerts, people] = await Promise.all([
+  // ── NocoDB からデータ取得（並列）+ Summary Policy 取得 ───────────────────
+  const [company, evidence, alerts, people, policyRecord] = await Promise.all([
     fetchCompanyByUid(companyUid).catch(() => null),
     fetchEvidence(companyUid).catch(() => []),
     fetchAlerts(companyUid).catch(() => []),
     fetchPeople(companyUid).catch(() => []),
+    policyId ? getPolicyById(policyId).catch(() => null) : Promise.resolve(null),
   ]);
 
   if (!company) {
@@ -90,13 +99,17 @@ export async function POST(
     );
   }
 
+  // ── Summary Policy の設定を適用 ─────────────────────────────────────────
+  const summaryPolicy = policyRecord?.summaryPolicy ?? null;
+  const systemPrompt = buildSummaryPolicySystemPrompt(summaryPolicy);
+
   // ── プロンプト構築 & OpenAI 呼び出し ────────────────────────────────────
   const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people);
 
   const comp = await openai.chat.completions.create({
-    model,
+    model:    summaryPolicy?.model ?? model,
     messages: [
-      { role: 'system', content: COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       { role: 'user',   content: userPrompt },
     ],
     response_format: { type: 'json_schema', json_schema: COMPANY_EVIDENCE_SUMMARY_JSON_SCHEMA },
@@ -117,6 +130,8 @@ export async function POST(
     evidence_count: evidence.length,
     alert_count:    alerts.length,
     people_count:   people.length,
+    // Summary Policy が適用された場合はメタを追加
+    ...(summaryPolicy ? { applied_policy_id: policyId, applied_policy_name: policyRecord?.name } : {}),
     ...result,
   });
 }

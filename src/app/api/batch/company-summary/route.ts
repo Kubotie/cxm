@@ -57,11 +57,12 @@ import { fetchAlerts }                   from '@/lib/nocodb/alerts';
 import { fetchPeople }                   from '@/lib/nocodb/people';
 import { getOpenAIClient, getOpenAIModel } from '@/lib/openai/client';
 import {
-  COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT,
   COMPANY_EVIDENCE_SUMMARY_JSON_SCHEMA,
   buildCompanyEvidenceSummaryPrompt,
+  buildSummaryPolicySystemPrompt,
 } from '@/lib/prompts/company-evidence-summary';
 import type { CompanyEvidenceSummaryResult } from '@/lib/prompts/company-evidence-summary';
+import { getPolicyById } from '@/lib/nocodb/policy-store';
 import { saveCompanySummaryState }       from '@/lib/nocodb/company-summary-write';
 import type { SummaryFreshnessStatus }   from '@/lib/company/company-summary-state-policy';
 import type { CompanySummaryTargetItem } from '@/lib/batch/company-summary-targets';
@@ -80,6 +81,8 @@ interface RequestBody {
   company_uids?:     string[];
   dry_run?:          boolean;
   freshness_filter?: string[];
+  /** 適用する Summary Policy の policy_id。指定時はシステムプロンプト・モデルを上書き */
+  policy_id?:        string;
 }
 
 interface CompanyResult {
@@ -88,6 +91,7 @@ interface CompanyResult {
   status:              'ok' | 'failed' | 'skipped';
   freshness_status:    SummaryFreshnessStatus;
   regenerate_priority: number;
+  applied_policy_id?:  string | null;
   skip_reason?:        string;
   error?:              string;
 }
@@ -101,9 +105,10 @@ interface Failure {
 // ── per-company 処理 ──────────────────────────────────────────────────────────
 
 async function processCompany(
-  item:   CompanySummaryTargetItem,
-  openai: ReturnType<typeof getOpenAIClient>,
-  model:  string,
+  item:          CompanySummaryTargetItem,
+  openai:        ReturnType<typeof getOpenAIClient>,
+  model:         string,
+  policyRecord?: Awaited<ReturnType<typeof getPolicyById>>,
 ): Promise<CompanyResult> {
   const { company, listVM } = item;
   const base = {
@@ -131,12 +136,17 @@ async function processCompany(
       fetchPeople(company.id).catch(()  => []),
     ]);
 
+    // Summary Policy を適用（指定なし → ベースプロンプトをそのまま使用）
+    const summaryPolicy  = policyRecord?.summaryPolicy ?? null;
+    const systemPrompt   = buildSummaryPolicySystemPrompt(summaryPolicy);
+    const effectiveModel = summaryPolicy?.model ?? model;
+
     // OpenAI 呼び出し
     const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people);
     const comp = await openai.chat.completions.create({
-      model,
+      model:   effectiveModel,
       messages: [
-        { role: 'system', content: COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user',   content: userPrompt },
       ],
       response_format: { type: 'json_schema', json_schema: COMPANY_EVIDENCE_SUMMARY_JSON_SCHEMA },
@@ -163,15 +173,22 @@ async function processCompany(
       evidence_count:          evidence.length,
       alert_count:             alerts.length,
       people_count:            people.length,
+      applied_policy_id:       policyRecord?.policyId ?? null,
     });
 
+    const appliedPolicyId = policyRecord?.policyId ?? null;
     if (saveResult.ok) {
-      return { ...base, status: 'ok' };
+      return { ...base, status: 'ok', applied_policy_id: appliedPolicyId };
     } else if ('skipped' in saveResult && saveResult.skipped) {
-      return { ...base, status: 'skipped', skip_reason: saveResult.reason };
+      return { ...base, status: 'skipped', skip_reason: saveResult.reason, applied_policy_id: appliedPolicyId };
     } else {
       const err = (saveResult as { ok: false; skipped: false; error: string }).error;
-      return { ...base, status: 'failed', error: `save: ${err}` };
+      // NocoDB SingleSelect カラムに選択肢がない場合の 400 エラーを判別して可読性を上げる
+      const isSchemaError = err.includes('Invalid option');
+      const errorMsg = isSchemaError
+        ? `[NocoDB スキーマ不整合] overall_health 等のカラムが SingleSelect（選択肢なし）になっています。NocoDB 管理画面でカラム型を Text に変更してください。詳細: ${err}`
+        : `save: ${err}`;
+      return { ...base, status: 'failed', error: errorMsg };
     }
   } catch (err) {
     return {
@@ -271,6 +288,15 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // ── Summary Policy 取得（指定時のみ） ────────────────────────────────────
+  let policyRecord: Awaited<ReturnType<typeof getPolicyById>> | undefined;
+  if (body.policy_id) {
+    policyRecord = await getPolicyById(body.policy_id).catch(() => undefined) ?? undefined;
+    if (!policyRecord) {
+      console.warn(`[batch/company-summary] policy_id="${body.policy_id}" が見つかりません。デフォルトプロンプトで続行します。`);
+    }
+  }
+
   // ── OpenAI クライアント初期化 ──────────────────────────────────────────────
   let openai: ReturnType<typeof getOpenAIClient>;
   let model: string;
@@ -287,7 +313,7 @@ export async function POST(req: NextRequest) {
 
   for (const item of targets) {
     console.log(`[batch/company-summary] processing ${item.company.id} (${item.company.name}) [${item.listVM.freshnessStatus}]`);
-    const r = await processCompany(item, openai, model);
+    const r = await processCompany(item, openai, model, policyRecord);
     companyResults.push(r);
     console.log(`[batch/company-summary] ${item.company.id} → ${r.status}`);
   }

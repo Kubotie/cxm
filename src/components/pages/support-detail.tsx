@@ -181,7 +181,8 @@ export function SupportDetail() {
   const [alertError, setAlertError]     = useState<string | null>(null);
 
   // ── New AI state (support_case_ai_state) ─────────────────────────────────
-  const [newAiVm, setNewAiVm] = useState<SupportCaseAiViewModel | null>(null);
+  const [newAiVm, setNewAiVm]         = useState<SupportCaseAiViewModel | null>(null);
+  const [newAiVmLoaded, setNewAiVmLoaded] = useState(false);
 
   // ── Human Review ──────────────────────────────────────────────────────────
   const [reviewSaving, setReviewSaving] = useState(false);
@@ -217,11 +218,19 @@ export function SupportDetail() {
       .then(data => { if (data) setAiState(data); })
       .catch(err => console.warn('[SupportDetail] AI state fetch failed:', err));
     // 新 AI state (support_case_ai_state) を取得
+    // hasAiState=false の VM も保持して「AI 未分析」プレースホルダーを表示するため
+    // hasAiState チェックを外してすべて setNewAiVm に渡す
     const sourceQueue = caseData?.sourceTable === 'cse_tickets' ? 'cse_ticket' : 'intercom';
     fetch(`/api/support/cases/${id}/ai-state?source_queue=${sourceQueue}`)
       .then(r => r.ok ? r.json() : null)
-      .then((vm: SupportCaseAiViewModel | null) => { if (vm?.hasAiState) setNewAiVm(vm); })
-      .catch(err => console.warn('[SupportDetail] new AI state fetch failed:', err));
+      .then((vm: SupportCaseAiViewModel | null) => {
+        if (vm) setNewAiVm(vm);
+        setNewAiVmLoaded(true);
+      })
+      .catch(err => {
+        console.warn('[SupportDetail] new AI state fetch failed:', err);
+        setNewAiVmLoaded(true);
+      });
   }, [id, caseData?.sourceTable]);
 
   const aiSuggestions = aiState
@@ -1257,6 +1266,20 @@ export function SupportDetail() {
                 </Card>
 
                 {/* ── AI Assist Panel (support_case_ai_state) ─────────────── */}
+                {/* newAiVmLoaded=true 後に表示。hasAiState=false → 「AI 未分析」プレースホルダー */}
+                {newAiVmLoaded && newAiVm && !newAiVm.hasAiState && (
+                  <Card className="border-slate-200 bg-slate-50">
+                    <CardContent className="py-3">
+                      <div className="flex items-center gap-2 text-slate-400">
+                        <Zap className="w-3.5 h-3.5" />
+                        <span className="text-sm font-medium text-slate-500">AI 未分析</span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-1">
+                        「Refresh AI」でこのケースの AI 分析を実行できます
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
                 {newAiVm && newAiVm.hasAiState && (
                   <Card className="border-purple-200 bg-purple-50">
                     <CardHeader className="pb-3">

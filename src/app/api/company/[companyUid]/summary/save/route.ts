@@ -40,6 +40,7 @@ interface RequestBody {
   people_count:            number;
   summary_type?:           string;
   ai_version?:             string;
+  applied_policy_id?:      string | null;
 }
 
 export async function POST(
@@ -75,6 +76,7 @@ export async function POST(
     evidence_count:          body.evidence_count,
     alert_count:             body.alert_count,
     people_count:            body.people_count,
+    applied_policy_id:       body.applied_policy_id ?? null,
   }).catch(err => ({
     ok:      false  as const,
     skipped: false  as const,
@@ -82,7 +84,11 @@ export async function POST(
   }));
 
   if (saveResult.ok) {
-    return NextResponse.json({ saved: true, created: saveResult.created });
+    return NextResponse.json({
+      saved:             true,
+      created:           saveResult.created,
+      applied_policy_id: body.applied_policy_id ?? null,
+    });
   } else if ('skipped' in saveResult && saveResult.skipped) {
     return NextResponse.json(
       { saved: false, created: false, save_error: saveResult.reason },

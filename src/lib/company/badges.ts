@@ -103,8 +103,12 @@ export const FRESHNESS_SHORT_LABEL: Record<string, string> = {
 // priority-score.ts がこれを参照する。変更時は priority-score.ts のコメントも更新。
 
 export const PRIORITY_WEIGHT = {
-  health_critical:        40,
-  health_at_risk:         20,
+  // ── Health ────────────────────────────────────────────────────────────────
+  // 2026-04 調整: health 単独での支配を緩和（他指標との得点差を縮める）
+  // 旧: critical=40, at_risk=20 → 健康状態だけで他指標を全部上回っていた
+  // 新: critical=30, at_risk=15 → critical 企業は依然上位だが他指標が効く余地が増える
+  health_critical:        30,
+  health_at_risk:         15,
   summary_missing:        15,
   summary_stale:           8,
   summary_unreviewed:      5,
@@ -118,6 +122,9 @@ export const PRIORITY_WEIGHT = {
   // ── People / Action signals ───────────────────────────────────────────────
   people_no_dm:           12,  // 意思決定者が未登録
   people_stale_dm:        10,  // 意思決定者が 90d+ 未接触
-  action_overdue:         10,  // 期限切れ Action あり
-  action_many_open:        4,  // open action >= 5件
+  // 2026-04 調整: action 系を強化（放置 action の見落とし対策）
+  // 旧: overdue=10, many_open=4 → action は軽視されがちだった
+  // 新: overdue=12（support_critical と同格）, many_open=8（phase 系と同格）
+  action_overdue:         12,  // 期限切れ Action あり
+  action_many_open:        8,  // open action >= 5件
 } as const;

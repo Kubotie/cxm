@@ -90,6 +90,8 @@ export interface AppAlert {
   timestamp: string;
   company?: string;
   companyId?: string;
+  /** "policy:{policyId}" の場合は Policy 由来。alert_id が "pol_" で始まる場合に付与 */
+  source?: string;
 }
 
 export interface AppEvidence {
@@ -197,6 +199,7 @@ export function n(v: unknown, fallback = 0): number {
 // ─── alert type マッピング ───────────────────────────────────────────────────
 // NocoDB の type 値 → アプリの type 値
 const ALERT_TYPE_MAP: Record<string, AppAlert['type']> = {
+  // ── built-in ──────────────────────────────────────────────────────────────
   onboarding_delay:    'risk',
   health_drop:         'risk',
   missing_exec_sponsor:'risk',
@@ -204,6 +207,13 @@ const ALERT_TYPE_MAP: Record<string, AppAlert['type']> = {
   qbr_missing:         'risk',
   license_opportunity: 'opportunity',
   expansion:           'opportunity',
+  // ── policy-derived（category_tag 値）─────────────────────────────────────
+  churn_risk:          'risk',
+  communication:       'risk',
+  support_critical:    'risk',
+  queue_surge:         'risk',
+  people_risk:         'risk',
+  policy_alert:        'risk',   // フォールバック
 };
 
 export function toAlertType(raw: string | null | undefined): AppAlert['type'] {
@@ -273,6 +283,12 @@ export function toAppCompany(raw: RawCompany): AppCompany {
 }
 
 export function toAppAlert(raw: RawAlert): AppAlert {
+  const alertId = String(raw.alert_id ?? '');
+  // alert_id が "pol_" で始まる場合は policy 由来。"pol_{id}:{uid}" → "policy:{id}" を復元
+  const source = alertId.startsWith('pol_')
+    ? `policy:${alertId.split(':')[0]}`
+    : undefined;
+
   return {
     id: String(raw.Id),
     type: toAlertType(raw.type as string),
@@ -287,6 +303,7 @@ export function toAppAlert(raw: RawAlert): AppAlert {
       : '—',
     company: s(raw.company_uid),
     companyId: s(raw.company_uid),
+    ...(source ? { source } : {}),
   };
 }
 
@@ -927,6 +944,9 @@ export interface RawCompanySummaryState {
   human_review_status?:     string | null; // pending | reviewed | corrected | approved
   reviewed_by?:             string | null;
   reviewed_at?:             string | null;
+  // ── Policy 連携 ──
+  /** この summary を生成した Summary Policy の policy_id（ない場合は null） */
+  applied_policy_id?:       string | null;
   [key: string]: unknown;
 }
 
@@ -950,6 +970,8 @@ export interface AppCompanySummaryState {
   humanReviewStatus:     string | null; // pending | reviewed | corrected | approved
   reviewedBy:            string | null;
   reviewedAt:            string | null;
+  /** この summary を生成した Summary Policy の policy_id（ない場合は null） */
+  appliedPolicyId:       string | null;
 }
 
 export function toAppCompanySummaryState(
@@ -974,6 +996,7 @@ export function toAppCompanySummaryState(
     humanReviewStatus:     raw.human_review_status ?? null,
     reviewedBy:            raw.reviewed_by ?? null,
     reviewedAt:            raw.reviewed_at ?? null,
+    appliedPolicyId:       raw.applied_policy_id ?? null,
   };
 }
 

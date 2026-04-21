@@ -50,6 +50,7 @@ import { fetchProjectsByCompany }      from '@/lib/nocodb/project-info';
 import { fetchAllCommunicationLogs }   from '@/lib/nocodb/communication-logs';
 import { fetchSupportAggregateForCompany } from '@/lib/nocodb/support-by-company';
 import { fetchEvidence, sortEvidenceForDisplay } from '@/lib/nocodb/evidence';
+import { fetchAlerts }                from '@/lib/nocodb/alerts';
 import { fetchPeople }                 from '@/lib/nocodb/people';
 
 // ── VM builders ───────────────────────────────────────────────────────────────
@@ -98,6 +99,7 @@ export async function GET(
     support,
     evidence,
     people,
+    alerts,
   ] = await Promise.all([
     getCompanySummaryState(companyUid).catch(() => null),
     fetchBothPhases(companyUid).catch(() => ({ csmPhase: null, crmPhase: null })),
@@ -109,6 +111,7 @@ export async function GET(
     })),
     fetchEvidence(companyUid).catch(() => []),
     fetchPeople(companyUid).catch(() => []),
+    fetchAlerts(companyUid).catch(() => []),
   ]);
 
   // ── VM 構築 ──────────────────────────────────────────────────────────────
@@ -143,6 +146,8 @@ export async function GET(
       state: summaryState,
       vm:    summaryVM,
     },
+
+    alerts: alerts.filter(a => a.id),
 
     health: healthVM,
 

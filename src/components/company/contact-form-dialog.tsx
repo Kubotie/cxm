@@ -10,7 +10,6 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { CheckCircle2, UserPlus, UserCog, Loader2, AlertTriangle, Upload } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import type { AppPerson } from "@/lib/nocodb/types";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -364,7 +363,7 @@ export function ContactFormDialog({
         </DialogHeader>
 
         {done ? (
-          <div className="flex flex-col items-center py-8 gap-3 text-green-600">
+          <div className="flex flex-col items-center justify-center flex-1 py-8 gap-3 text-green-600">
             <CheckCircle2 className="w-10 h-10" />
             <p className="text-sm font-medium">
               {isEdit ? '連絡先を更新しました' : '連絡先を追加しました'}
@@ -383,7 +382,7 @@ export function ContactFormDialog({
             )}
           </div>
         ) : (
-          <ScrollArea className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="space-y-4 py-2 px-0.5">
             {/* Name */}
             <div className="space-y-1.5">
@@ -688,7 +687,7 @@ export function ContactFormDialog({
             )}
 
           </div>
-          </ScrollArea>
+          </div>
         )}
 
         {!done && (

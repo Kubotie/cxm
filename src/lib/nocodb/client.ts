@@ -51,6 +51,10 @@ export const TABLE_IDS = {
   audit_logs:                  process.env.NOCODB_AUDIT_LOGS_TABLE_ID                  ?? '',
   // UI/API からの Company 配下エンティティ変更ログ（batch run とは別テーブル）
   company_mutation_logs:       process.env.NOCODB_COMPANY_MUTATION_LOGS_TABLE_ID       ?? '',
+  // ── Policies & Rules ────────────────────────────────────────────────────────
+  // alert_policies / summary_policies を管理する運用テーブル。
+  // 未設定の場合は CRUD API が 503 を返す（graceful degradation）。
+  policies:                    process.env.NOCODB_POLICIES_TABLE_ID                    ?? '',
 };
 
 export interface NocoDBResponse<T> {

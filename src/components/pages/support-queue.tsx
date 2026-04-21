@@ -998,11 +998,23 @@ export function SupportQueue() {
                           {/* Source Status */}
                           <TableCell><SourceStatusBadge status={vm.sourceStatus} /></TableCell>
 
-                          {/* Severity */}
+                          {/* Severity + AI urgency */}
                           <TableCell>
                             <div className="flex flex-col gap-1">
                               <SeverityBadge severity={aiVm?.hasAiState ? aiVm.severity : vm.severity} />
-                              {aiVm?.hasAiState && (
+                              {aiVm?.hasAiState && aiVm.priority === 'urgent' && (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-700 border border-red-200"
+                                  title="AI urgency: urgent — 即対応推奨">
+                                  緊急
+                                </span>
+                              )}
+                              {aiVm?.hasAiState && aiVm.priority === 'high' && (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-orange-100 text-orange-700 border border-orange-200"
+                                  title="AI urgency: high — 優先対応">
+                                  高優先
+                                </span>
+                              )}
+                              {aiVm?.hasAiState && (aiVm.priority === 'normal' || aiVm.priority === 'low') && (
                                 <span className="text-[10px] text-purple-500 font-medium">AI</span>
                               )}
                             </div>

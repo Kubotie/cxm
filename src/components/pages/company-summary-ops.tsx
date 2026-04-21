@@ -123,7 +123,9 @@ const FRESHNESS_BADGE: Record<string, string> = {
 };
 
 const REVIEW_BADGE: Record<string, string> = {
-  pending:   'bg-slate-100 border-slate-300 text-slate-500',
+  null_missing:  'bg-slate-100 border-slate-200 text-slate-400',  // 未生成（record なし）
+  null_norecord: 'bg-slate-100 border-slate-300 text-slate-500',  // 旧データ（record あり・status 未設定）
+  pending:   'bg-amber-100 border-amber-300 text-amber-700',   // AI 生成済み・未確認
   reviewed:  'bg-blue-100  border-blue-300  text-blue-700',
   corrected: 'bg-purple-100 border-purple-300 text-purple-700',
   approved:  'bg-green-100 border-green-300  text-green-700',
@@ -520,8 +522,15 @@ export function CompanySummaryOps() {
           {error && (
             <div className="mb-4 p-3 rounded-md bg-red-50 border border-red-200 text-sm text-red-700 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <span>{error}</span>
-              <button onClick={() => setError(null)} className="ml-auto"><X className="w-4 h-4" /></button>
+              <div className="flex-1 min-w-0">
+                <span>{error}</span>
+                {error.includes('Invalid option') && (
+                  <p className="mt-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                    💡 <strong>NocoDB スキーマ不整合:</strong> overall_health カラムが SingleSelect（選択肢なし）になっています。NocoDB 管理画面でカラム型を <strong>Text</strong> に変更してください。
+                  </p>
+                )}
+              </div>
+              <button onClick={() => setError(null)} className="ml-auto flex-shrink-0"><X className="w-4 h-4" /></button>
             </div>
           )}
 
@@ -585,6 +594,9 @@ export function CompanySummaryOps() {
                           <TableCell>
                             <Badge
                               variant="outline"
+                              title={item.freshnessStatus === 'stale'
+                                ? 'companies.updatedAt が AI 生成時刻より新しい（source_updated_at > last_ai_updated_at）'
+                                : undefined}
                               className={`text-xs border ${FRESHNESS_BADGE[item.freshnessStatus] ?? 'bg-slate-100 text-slate-500'}`}
                             >
                               {item.freshnessStatus}
@@ -593,14 +605,44 @@ export function CompanySummaryOps() {
 
                           {/* review status */}
                           <TableCell>
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs
-                              ${isApprovedRow
-                                ? 'bg-green-100 border-green-300 text-green-700 font-medium'
-                                : REVIEW_BADGE[item.humanReviewStatus ?? 'pending'] ?? 'bg-slate-100 border-slate-200 text-slate-500'}`}
-                            >
-                              {isApprovedRow && <Lock className="w-2.5 h-2.5" />}
-                              {item.reviewGroupLabel}
-                            </span>
+                            {(() => {
+                              const isCorrected = item.humanReviewStatus === 'corrected';
+                              // null の場合は freshnessStatus で "未生成" か "未設定" を区別
+                              const badgeKey = isApprovedRow
+                                ? 'approved'
+                                : item.humanReviewStatus
+                                  ?? (item.freshnessStatus === 'missing' ? 'null_missing' : 'null_norecord');
+                              const badgeClass = REVIEW_BADGE[badgeKey] ?? 'bg-slate-100 border-slate-200 text-slate-500';
+                              const label = isApprovedRow
+                                ? item.reviewGroupLabel
+                                : item.humanReviewStatus === null && item.freshnessStatus === 'missing'
+                                  ? '未生成'
+                                  : item.humanReviewStatus === null
+                                    ? '未設定'
+                                    : item.reviewGroupLabel;
+                              return (
+                                <div className="flex flex-col gap-1">
+                                  <span
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-xs
+                                      ${isApprovedRow ? 'font-medium' : ''} ${badgeClass}`}
+                                    title={item.humanReviewStatus === null && item.freshnessStatus !== 'missing'
+                                      ? 'NocoDB に human_review_status が未設定のレコード（旧データ）'
+                                      : undefined}
+                                  >
+                                    {isApprovedRow && <Lock className="w-2.5 h-2.5" />}
+                                    {label}
+                                  </span>
+                                  {isCorrected && (
+                                    <span
+                                      className="text-[10px] text-purple-500 leading-none"
+                                      title="corrected は手動補正済み。batch review で 'reviewed' に上書きされます"
+                                    >
+                                      ↻ batch で上書き対象
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </TableCell>
 
                           {/* 優先度 */}
@@ -686,6 +728,7 @@ export function CompanySummaryOps() {
                   <span className="flex gap-3 mt-1 text-[11px]">
                     <span className="text-slate-500 font-medium">missing → 自動スキップ（レコードなし）</span>
                     <span className="text-green-600 font-medium">🔒 approved → 自動スキップ（保護）</span>
+                    <span className="text-purple-600 font-medium">corrected も "reviewed" に上書き（手動補正が消えます）</span>
                   </span>
                 </>
               )}

@@ -181,25 +181,20 @@ export async function GET(req: NextRequest) {
     // AI health は summary から引く（listVM 経由で取れないので別途 null）
     // List では detail API と違い summaryState を持っていないため省略
 
-    // ── People / Action signal を構築（⚠️ 一部は近似値） ───────────────────
+    // ── People / Action signal を構築（全フィールド実測）──────────────────
     //
-    // 【実測値】
-    //   hasNoDecisionMaker : fetchPeopleSignalsByUids で得た dmCount から算出（実測）
-    //   openActionCount    : companies テーブルの open_action_count カラムを参照（実測）
-    //   keyContactCount    : 同上 dmCount（実測）
+    //   hasNoDecisionMaker : people テーブルから is_decision_maker フラグで集計（実測）
+    //   hasStaleDm         : company_people の high DM に lastTouchpoint > 90d が存在（実測）
+    //   hasOverdueActions  : company_actions の due_date < today かつ open/in_progress（実測）
+    //   openActionCount    : companies.open_actions カラム（実測）
+    //   keyContactCount    : people の dmCount（実測）
     //
-    // 【⚠️ 近似値 — 常に false 固定】
-    //   hasStaleDm        : company_people の lastTouchpoint を全件取得しないため検出不可。
-    //                       Detail API では actionVM を通じて実測。
-    //                       理想実装: fetchPeopleSignalsByUids に staleDmCount を追加。
-    //   hasOverdueActions : company_actions の dueDate を全件取得しないため検出不可。
-    //                       Detail API では action 一覧を取得した上で期限比較（実測）。
-    //                       理想実装: fetchPeopleSignalsByUids と並行して
-    //                                 fetchActionsSignalsByUids(overdueCount) を追加。
-    //
-    // → priorityScore の breakdown に含まれる hasStaleDm / hasOverdueActions は
-    //   List 上では「実際より低く見積もられる可能性がある」近似スコアである点に注意。
+    // ⚠️ NOCODB_COMPANY_PEOPLE_TABLE_ID / NOCODB_COMPANY_ACTIONS_TABLE_ID が未設定の場合、
+    //    対応シグナルは graceful degradation で false/0 になる（スコアに反映されない）。
     const peopleSignal = peopleSignalMap.get(uid);
+    // ⚠️ 開発メモ: シードデータ環境では全社 open_actions=5 のため action_many_open(+8) が一律発火し、
+    //   priorityScore の順位差が小さく見える。本番データが入ると people/action シグナルが分散し、
+    //   scores に意味のある差が生まれる。
     const openActionCount = company.openActions ?? 0;
     const peopleActionSignal: PeopleActionSignal = {
       hasNoDecisionMaker: (peopleSignal?.totalCount ?? 0) > 0 && (peopleSignal?.dmCount ?? 0) === 0,

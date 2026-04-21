@@ -14,6 +14,7 @@ import type { PhaseSource }     from '@/lib/company/phase-comparison';
 import type { PriorityScoreBreakdown } from '@/lib/company/priority-score';
 import type {
   AppCompany,
+  AppAlert,
   AppEvidence,
   AppPerson,
   AppSupportCase,
@@ -101,6 +102,10 @@ export interface CompanyDetailApiResponse {
     /** UI 表示用の導出値 */
     vm:                CompanySummaryViewModel;
   };
+
+  // ── Alerts（open alerts 一覧）─────────────────────────────────────────────
+  /** status=open の全アラート。source が "policy:xxx" のものは Policy 由来 */
+  alerts:    AppAlert[];
 
   // ── Health / Risk / Opportunity ───────────────────────────────────────────
   health:    CompanyHealthSignalVM;

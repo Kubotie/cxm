@@ -1,48 +1,99 @@
 // ─── Batch API 認証ヘルパー ───────────────────────────────────────────────────
-// DolphinScheduler などの外部サービスからバッチ API を呼ぶ際の簡易 Bearer 認証。
 //
-// env: SUPPORT_BATCH_SECRET
-//   - 未設定の場合: 認証をスキップし警告のみ（ローカル開発用）
-//   - 設定済みの場合: Authorization: Bearer <token> が一致しなければ 401
+// ── 認証トークンの使い分け ────────────────────────────────────────────────────
 //
-// 使用方法:
-//   const auth = checkBatchAuth(req);
-//   if (!auth.ok) return auth.response;
+//   SUPPORT_BATCH_SECRET  手動 ops 実行（DolphinScheduler, curl, ops UI）向け
+//   CRON_SECRET           Vercel Cron 自動実行向け
+//                         Vercel は CRON_SECRET が設定されていると
+//                         cron リクエストに自動で
+//                         "Authorization: Bearer {CRON_SECRET}" を付与する。
+//
+// ── 関数の使い分け ────────────────────────────────────────────────────────────
+//   checkBatchAuth           → 手動 ops のみ許可（既存バッチ系）
+//   checkCronOrBatchAuth     → Cron + 手動 ops の両方を許可（staleness 等 cron 化対象）
+//
+// ── ローカル開発時（両 secret 未設定）─────────────────────────────────────────
+//   両関数ともに認証をスキップして警告のみを出す。
 
 import { NextRequest, NextResponse } from 'next/server';
 
-const ENV_KEY = 'SUPPORT_BATCH_SECRET';
+// ── 内部ヘルパー ──────────────────────────────────────────────────────────────
+
+function extractBearerToken(req: NextRequest): string {
+  const header = req.headers.get('Authorization') ?? '';
+  return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+}
+
+function logFailure(req: NextRequest, hint: string) {
+  const ip = req.headers.get('x-forwarded-for') ?? req.headers.get('x-real-ip') ?? 'unknown';
+  console.warn('[batch-auth] 認証失敗:', { ip, path: req.nextUrl.pathname, hint });
+}
+
+// ── 手動 ops 専用 ─────────────────────────────────────────────────────────────
 
 /**
- * リクエストヘッダーの Bearer トークンを検証する。
- * 認証失敗時は 401 NextResponse を返す。成功・スキップ時は null を返す。
+ * SUPPORT_BATCH_SECRET による Bearer 認証。
+ * DolphinScheduler / 手動 curl / ops UI からのリクエストに使用。
  *
- * 使用方法:
- *   const authError = checkBatchAuth(req);
- *   if (authError) return authError;
- *
- * SUPPORT_BATCH_SECRET が未設定の場合は認証をスキップ（ローカル開発向け）。
+ * 未設定の場合は認証をスキップ（ローカル開発向け）。
  */
 export function checkBatchAuth(req: NextRequest): NextResponse | null {
-  const secret = process.env[ENV_KEY];
+  const secret = process.env.SUPPORT_BATCH_SECRET;
 
-  // 未設定: スキップ（本番では必ず設定すること）
   if (!secret) {
+    console.warn('[batch-auth] SUPPORT_BATCH_SECRET が未設定です。認証をスキップしています。');
+    return null;
+  }
+
+  const token = extractBearerToken(req);
+  if (!token || token !== secret) {
+    logFailure(req, 'SUPPORT_BATCH_SECRET 不一致');
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  return null;
+}
+
+// ── Cron + 手動 ops 両対応 ────────────────────────────────────────────────────
+
+/**
+ * CRON_SECRET または SUPPORT_BATCH_SECRET のいずれかに一致すれば通過する。
+ * scheduled エンドポイント（Vercel Cron + 手動 ops 両方から呼ばれる）に使用。
+ *
+ * ── Vercel Cron の動作 ──────────────────────────────────────────────────────
+ *   CRON_SECRET が Vercel プロジェクトに設定されている場合、
+ *   Vercel は cron リクエストに自動で "Authorization: Bearer {CRON_SECRET}" を付与する。
+ *   このため、cron 専用エンドポイントは CRON_SECRET だけで認証できる。
+ *
+ * ── 両 secret 未設定 ────────────────────────────────────────────────────────
+ *   ローカル開発時は認証をスキップする。
+ */
+export function checkCronOrBatchAuth(req: NextRequest): NextResponse | null {
+  const cronSecret  = process.env.CRON_SECRET;
+  const batchSecret = process.env.SUPPORT_BATCH_SECRET;
+
+  // 両方未設定 → 開発モード（スキップ + 警告）
+  if (!cronSecret && !batchSecret) {
     console.warn(
-      '[batch-auth] SUPPORT_BATCH_SECRET が未設定です。' +
+      '[batch-auth] CRON_SECRET / SUPPORT_BATCH_SECRET が未設定です。' +
       '認証をスキップしています（本番環境では必ず設定してください）。',
     );
     return null;
   }
 
-  const header = req.headers.get('Authorization') ?? '';
-  const token  = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-
-  if (!token || token !== secret) {
-    const ip = req.headers.get('x-forwarded-for') ?? req.headers.get('x-real-ip') ?? 'unknown';
-    console.warn('[batch-auth] 認証失敗:', { ip, path: req.nextUrl.pathname });
+  const token = extractBearerToken(req);
+  if (!token) {
+    logFailure(req, 'Authorization ヘッダーなし');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // CRON_SECRET または SUPPORT_BATCH_SECRET のいずれかに一致すれば OK
+  const valid =
+    (cronSecret  && token === cronSecret) ||
+    (batchSecret && token === batchSecret);
+
+  if (!valid) {
+    logFailure(req, 'CRON_SECRET/SUPPORT_BATCH_SECRET 不一致');
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   return null;
 }

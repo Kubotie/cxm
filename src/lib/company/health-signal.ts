@@ -206,12 +206,15 @@ function buildRiskSignals(
   // ── Communication ────────────────────────────────────────────────────────
   if (communicationVM && communicationVM.riskLevel !== 'none') {
     const days = communicationVM.blankDays;
+    const lastDateLabel = communicationVM.lastContactDate
+      ? `（最終接触: ${communicationVM.lastContactDate}）`
+      : '';
     signals.push({
       id:           `comm_blank:${companyUid}`,
       type:         'communication_blank',
       severity:     communicationVM.riskLevel === 'risk' ? 'high' : 'medium',
       title:        `コミュニケーション空白 ${days}日`,
-      description:  `最終接触から ${days} 日間コミュニケーションがありません`,
+      description:  `最終接触から ${days} 日間コミュニケーションがありません${lastDateLabel}`,
       sourceType:   'log_chatwork',  // 代表ソース（実際は複数）
       sourceId:     null,
       companyUid,

@@ -74,7 +74,7 @@ import { getHealthBadge, HEALTH_BADGE, RISK_SEVERITY_BADGE, PROJECT_STATUS_BADGE
 import type { RiskSignal, OpportunitySignal } from "@/lib/company/health-signal";
 import type { ProjectItemVM } from "@/lib/company/project-aggregate";
 import type { CommunicationEntry } from "@/lib/company/communication-signal";
-import type { AppSupportCase, AppCseTicket, AppPerson } from "@/lib/nocodb/types";
+import type { AppAlert, AppSupportCase, AppCseTicket, AppPerson } from "@/lib/nocodb/types";
 import type {
   ContactCandidate,
   ContactCandidatesResult,
@@ -516,6 +516,9 @@ export function CompanyDetail() {
   const projects    = detail?.projects;
   const support     = detail?.support;
   const people      = detail?.people;
+  const policyAlerts: AppAlert[] = (detail?.alerts ?? []).filter(
+    a => a.source?.startsWith('policy:'),
+  );
   const healthBadge = getHealthBadge(health?.overallHealth);
 
   const supportTabLabel = support
@@ -1011,7 +1014,7 @@ export function CompanyDetail() {
                     注意が必要なこと
                   </h2>
 
-                  {(health?.riskSignals ?? []).length === 0 && orgVM.peopleRisks.length === 0 ? (
+                  {(health?.riskSignals ?? []).length === 0 && orgVM.peopleRisks.length === 0 && policyAlerts.length === 0 ? (
                     <div className="flex items-start gap-2.5 text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded px-3 py-2.5">
                       <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
                       <div>
@@ -1043,10 +1046,39 @@ export function CompanyDetail() {
                         </div>
                       )}
 
+                      {/* Policy-derived alerts */}
+                      {policyAlerts.length > 0 && (
+                        <div className="space-y-2">
+                          {(health?.riskSignals ?? []).length > 0 && <Separator />}
+                          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Policy アラート</p>
+                          {policyAlerts.map(a => {
+                            const dot = a.severity === 'high'
+                              ? 'bg-orange-500'
+                              : a.severity === 'low'
+                              ? 'bg-slate-400'
+                              : 'bg-amber-400';
+                            return (
+                              <div key={a.id} className="flex items-start gap-2 text-sm">
+                                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5 ${dot}`} />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-slate-700 font-medium text-xs">{a.title}</span>
+                                    <Badge variant="outline" className="text-[10px] py-0 border-violet-200 text-violet-600 bg-violet-50">Policy</Badge>
+                                  </div>
+                                  {a.description && (
+                                    <p className="text-[11px] text-slate-500 mt-0.5">{a.description}</p>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
                       {/* People risks (not included in health signals) */}
                       {orgVM.peopleRisks.length > 0 && (
                         <div className="space-y-2">
-                          {(health?.riskSignals ?? []).length > 0 && <Separator />}
+                          {((health?.riskSignals ?? []).length > 0 || policyAlerts.length > 0) && <Separator />}
                           <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">People リスク</p>
                           {orgVM.peopleRisks.map((risk, i) => {
                             const person = orgVM.persons.find(p => p.id === risk.personId);
