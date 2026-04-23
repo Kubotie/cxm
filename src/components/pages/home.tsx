@@ -490,7 +490,7 @@ export function Home() {
 
   // Tier 2（今週の文脈 — 現況+週次）: 現況シグナル + 週次傾向
   const risk      = items.filter(i => i.overallHealth === "critical" || i.overallHealth === "at_risk");
-  const renewal30 = items.filter(i => i.renewalBucket === "0-30");
+  const renewal90 = items.filter(i => i.renewalBucket === "0-30" || i.renewalBucket === "31-90");
   const expand    = items.filter(i => i.overallHealth === "expanding");
   const contextTiles: DiffGroup[] = [
     {
@@ -502,11 +502,11 @@ export function Home() {
       renderDetail: i => i.overallHealth === "critical" ? "Critical" : "At Risk",
     },
     {
-      id: "ctxRenewal30", label: "更新間近（30日）",
+      id: "ctxRenewal90", label: "更新間近（90日）",
       icon: <Calendar className="w-3.5 h-3.5" />,
-      count: renewal30.length, items: renewal30.slice(0, 3), segment: "renewal_30",
-      iconColor: "text-rose-600", bgClass: "bg-rose-50",
-      borderColor: "border-rose-200", accentColor: "border-l-rose-500",
+      count: renewal90.length, items: renewal90.slice(0, 3), segment: "renewal_90",
+      iconColor: "text-orange-500", bgClass: "bg-orange-50",
+      borderColor: "border-orange-200", accentColor: "border-l-orange-400",
       renderDetail: i => i.renewalDaysLeft != null ? `あと${i.renewalDaysLeft}日` : null,
     },
     trendGroups.find(g => g.id === "trendWeeklyWorsened")!,
