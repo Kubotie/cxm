@@ -16,31 +16,33 @@
 // ── 認証 ─────────────────────────────────────────────────────────────────────
 //   checkCronOrBatchAuth（CRON_SECRET または SUPPORT_BATCH_SECRET）
 //
+// ── 応答パターン ──────────────────────────────────────────────────────────────
+//   DolphinScheduler の HTTP タスクは 60 秒タイムアウトを持つ。
+//   実際の処理（NocoDB × 5 + Metabase + 企業ループ）は 60 秒を超えることがあるため、
+//   認証・バリデーション後に即座に 200 を返し、
+//   Next.js after() でバックグラウンド処理する。
+//   処理結果は Vercel ログ（console.log）で確認できる。
+//
 // ── DolphinScheduler 設定例 ───────────────────────────────────────────────────
 //   タスク種別 : HTTP
 //   URL        : https://your-app.vercel.app/api/batch/company-snapshot
 //   メソッド   : POST
-//   Headers    : Authorization: Bearer {SUPPORT_BATCH_SECRET}
-//                Content-Type: application/json
-//   Body       : {"dry_run": false, "limit": 500}
+//   Http Parameters (HEADERS):
+//     Authorization : Bearer {SUPPORT_BATCH_SECRET}
+//     Content-Type  : application/json
+//   Http Condition : {"dry_run": false, "limit": 500}
 //   スケジュール: 毎日 03:00 JST (= 18:00 UTC 前日)
 //
 // ── リクエストボディ ─────────────────────────────────────────────────────────
-//   dry_run?  : boolean  (default: false) — true なら NocoDB に書かず結果だけ返す
+//   dry_run?  : boolean  (default: false) — true なら NocoDB に書かず結果だけログ出力
 //   limit?    : number   (default: 500, max: 1000)
 //
-// ── レスポンス ────────────────────────────────────────────────────────────────
-//   {
-//     dry_run:        boolean,
-//     snapshot_date:  string,      // "YYYY-MM-DD"
-//     total_targeted: number,
-//     written_count:  number,
-//     skipped_count:  number,      // NOCODB_COMPANY_DAILY_SNAPSHOT_TABLE_ID 未設定時など
-//     failed_count:   number,
-//     duration_ms:    number,
-//   }
+// ── レスポンス（即時） ────────────────────────────────────────────────────────
+//   { status: 'accepted', snapshot_date: string, dry_run: boolean, limit: number }
+//   実際の書き込み結果は Vercel ログで確認する。
 
 import { NextRequest, NextResponse }  from 'next/server';
+import { after }                       from 'next/server';
 import { checkCronOrBatchAuth }        from '@/lib/batch/auth';
 import { writeBatchRunLog, sanitizeRequestParams } from '@/lib/batch/logger';
 import { resolveCompanySummaryTargets } from '@/lib/batch/company-summary-targets';
@@ -51,6 +53,9 @@ import { fetchSupportCountsByUids }    from '@/lib/nocodb/support-by-company';
 import { fetchProjectMrrMap }          from '@/lib/metabase/mrr';
 import { upsertCompanySnapshot, todayDateStr } from '@/lib/nocodb/company-snapshot';
 import type { CompanyDailySnapshot }   from '@/lib/nocodb/company-snapshot';
+
+// Vercel Pro で最大 300 秒まで実行を許可（after() バックグラウンド処理用）
+export const maxDuration = 300;
 
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT     = 1000;
@@ -82,53 +87,33 @@ function computeRenewal(dateStr: string | null): {
   return { daysLeft, bucket };
 }
 
-export async function POST(req: NextRequest) {
-  // ── 認証 ────────────────────────────────────────────────────────────────────
-  const authError = checkCronOrBatchAuth(req);
-  if (authError) return authError;
+// ── バックグラウンド処理本体 ──────────────────────────────────────────────────
 
+async function runSnapshotJob(
+  body:         RequestBody,
+  snapshotDate: string,
+  limit:        number,
+  dryRun:       boolean,
+): Promise<void> {
   const startedAt = new Date();
-  const body: RequestBody = await req.json().catch(() => ({}));
-
-  const dryRun       = body.dry_run ?? false;
-  const rawLimit     = body.limit ?? DEFAULT_LIMIT;
-  const limit        = Math.min(isNaN(rawLimit) ? DEFAULT_LIMIT : rawLimit, MAX_LIMIT);
-  const snapshotDate = todayDateStr();
-
-  // ── テーブル ID チェック ─────────────────────────────────────────────────────
-  if (!TABLE_IDS.company_daily_snapshot) {
-    return NextResponse.json(
-      {
-        error: 'NOCODB_COMPANY_DAILY_SNAPSHOT_TABLE_ID が未設定です。' +
-               'NocoDB でテーブルを作成し、環境変数を設定してください。',
-      },
-      { status: 503 },
-    );
-  }
+  console.log(`[batch/company-snapshot] 開始 dry_run=${dryRun} limit=${limit} date=${snapshotDate}`);
 
   // ── Step 1: 全企業リスト取得 ─────────────────────────────────────────────────
   let targets: Awaited<ReturnType<typeof resolveCompanySummaryTargets>>;
   try {
     targets = await resolveCompanySummaryTargets({ limit });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
     console.error('[batch/company-snapshot] 企業リスト取得失敗:', err);
-    return NextResponse.json({ error: `企業リスト取得エラー: ${msg}` }, { status: 500 });
+    return;
   }
 
   if (targets.length === 0) {
-    return NextResponse.json({
-      dry_run:        dryRun,
-      snapshot_date:  snapshotDate,
-      total_targeted: 0,
-      written_count:  0,
-      skipped_count:  0,
-      failed_count:   0,
-      duration_ms:    Date.now() - startedAt.getTime(),
-    });
+    console.log('[batch/company-snapshot] 対象企業なし → 終了');
+    return;
   }
 
   const allUids = targets.map(t => t.company.id);
+  console.log(`[batch/company-snapshot] 対象企業数: ${allUids.length}`);
 
   // ── Step 2: 並列データ取得 ───────────────────────────────────────────────────
   const [csmMap, crmMap, projectMap, mrrMap, supportMap] = await Promise.all([
@@ -151,24 +136,15 @@ export async function POST(req: NextRequest) {
   let writtenCount = 0;
   let failedCount  = 0;
 
-  for (const { company, listVM } of targets) {
+  for (const { company } of targets) {
     const uid = company.id;
 
-    // M-Phase
     const csmPhase = csmMap.get(uid) ?? null;
     const crmPhase = crmMap.get(uid) ?? null;
     const mPhase   = csmPhase?.mPhase ?? null;
 
-    // overall_health: listVM（company_summary_state）から取得
-    // listVM は CompanySummaryListItemViewModel で overall_health を持たないため
-    // company_summary_state の値は取得済みの target に含まれない。
-    // 代替: alerts / phase から導出した health は取れないが、
-    // overall_health はスナップショットの主用途（差分検知）で十分な精度を持つ。
-    // → 今回は null で保存し、将来 company_summary_state を一括取得する形に拡張可能。
-    // （company_summary_list API とは別に summaryState を取得するとコストが増大するため省略）
     const overallHealth: string | null = null;
 
-    // MRR + Renewal
     const projList = projectMap.get(uid) ?? [];
     let totalMrr = 0;
     let earliestEndDate: string | null = null;
@@ -188,9 +164,8 @@ export async function POST(req: NextRequest) {
       earliestEndDate             ?? null;
     const { bucket: renewalBucket } = computeRenewal(renewalDate);
 
-    // Support
     const support = supportMap.get(uid);
-    const openSupportCount = (support?.openCount ?? 0);
+    const openSupportCount = support?.openCount ?? 0;
 
     const snapshot: Omit<CompanyDailySnapshot, 'Id'> = {
       company_uid:        uid,
@@ -212,12 +187,16 @@ export async function POST(req: NextRequest) {
         failedCount++;
       }
     } else {
-      writtenCount++; // dry_run では常にカウント
+      writtenCount++;
     }
   }
 
-  const finishedAt   = new Date();
-  const durationMs   = finishedAt.getTime() - startedAt.getTime();
+  const finishedAt = new Date();
+  const durationMs = finishedAt.getTime() - startedAt.getTime();
+
+  console.log(
+    `[batch/company-snapshot] 完了 written=${writtenCount} failed=${failedCount} duration=${durationMs}ms`,
+  );
 
   // ── 監査ログ ─────────────────────────────────────────────────────────────────
   if (!dryRun) {
@@ -241,14 +220,42 @@ export async function POST(req: NextRequest) {
       result_json:     JSON.stringify({ snapshot_date: snapshotDate, written_count: writtenCount }),
     }).catch(() => {});
   }
+}
 
+// ── HTTP ハンドラ ─────────────────────────────────────────────────────────────
+
+export async function POST(req: NextRequest) {
+  // ── 認証 ────────────────────────────────────────────────────────────────────
+  const authError = checkCronOrBatchAuth(req);
+  if (authError) return authError;
+
+  const body: RequestBody = await req.json().catch(() => ({}));
+
+  const dryRun       = body.dry_run ?? false;
+  const rawLimit     = body.limit ?? DEFAULT_LIMIT;
+  const limit        = Math.min(isNaN(rawLimit) ? DEFAULT_LIMIT : rawLimit, MAX_LIMIT);
+  const snapshotDate = todayDateStr();
+
+  // ── テーブル ID チェック ─────────────────────────────────────────────────────
+  if (!TABLE_IDS.company_daily_snapshot) {
+    return NextResponse.json(
+      {
+        error: 'NOCODB_COMPANY_DAILY_SNAPSHOT_TABLE_ID が未設定です。' +
+               'NocoDB でテーブルを作成し、環境変数を設定してください。',
+      },
+      { status: 503 },
+    );
+  }
+
+  // ── バックグラウンドで実行（after はレスポンス送信後も継続する）──────────────
+  after(() => runSnapshotJob(body, snapshotDate, limit, dryRun));
+
+  // ── 即時 200 を返す（DolphinScheduler タイムアウト対策）─────────────────────
   return NextResponse.json({
-    dry_run:        dryRun,
-    snapshot_date:  snapshotDate,
-    total_targeted: targets.length,
-    written_count:  writtenCount,
-    skipped_count:  0,
-    failed_count:   failedCount,
-    duration_ms:    durationMs,
+    status:        'accepted',
+    snapshot_date: snapshotDate,
+    dry_run:       dryRun,
+    limit,
+    message:       'バックグラウンドで処理を開始しました。結果は Vercel ログで確認してください。',
   });
 }
