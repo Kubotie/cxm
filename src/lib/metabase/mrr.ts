@@ -2,11 +2,12 @@
 //
 // https://bi.ptmind.com/public/question/ac9183fd-b0f0-497f-8d1c-55a3e037b330.csv
 //
-// CSV カラム（確認済み）:
-//   Project ID, Count, Order Start Date (max), Order End Date (max),
-//   Order End Date (min), Total MRR (max value), Total MRR (sum),
-//   Payment Type (max), has_offline, has_online,
-//   Order Term (min - months), Order Term (max - months), has_auto_renewal_contract
+// CSV カラム（実際の Metabase 出力 — ロケールにより日本語混じりになる）:
+//   Project ID, カウント,
+//   Order Start Date: Dayの最大値, Order End Date: Dayの最大値, Order End Date: Dayの最小値,
+//   Total Mrrの最大値, Total Mrrの合計値,
+//   Payment Typeの最大値, has_offline, has_online,
+//   Order Termの最小値, Order Termの最大値, has_auto_renewal_contract
 //
 // キー: Project ID（project_info テーブルの project_id と突合する）
 // 1時間キャッシュ（Next.js fetch cache）
@@ -62,8 +63,15 @@ export async function fetchProjectMrrMap(): Promise<Map<string, ProjectMrrData>>
 
     const headers = parseCsvLine(lines[0]);
     const idxId        = headers.indexOf('Project ID');
-    const idxMrrSum    = headers.findIndex(h => h.includes('Total MRR') && h.toLowerCase().includes('sum'));
-    const idxEndDate   = headers.findIndex(h => h.includes('Order End Date') && h.toLowerCase().includes('max'));
+    // Metabase のロケール設定により英語 ("Total MRR (sum)") または日本語 ("Total Mrrの合計値") が混在
+    const idxMrrSum    = headers.findIndex(h =>
+      (h.includes('Total MRR') || h.includes('Total Mrr')) &&
+      (h.toLowerCase().includes('sum') || h.includes('合計')),
+    );
+    const idxEndDate   = headers.findIndex(h =>
+      h.includes('Order End Date') &&
+      (h.toLowerCase().includes('max') || h.includes('最大')),
+    );
     const idxAutoRenew = headers.indexOf('has_auto_renewal_contract');
 
     if (idxId < 0 || idxMrrSum < 0) {
