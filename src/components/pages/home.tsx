@@ -145,6 +145,67 @@ interface DiffGroup {
   renderDetail:     (item: CompanyListItemVM) => string | null;
 }
 
+function buildTrendGroups(all: CompanyListItemVM[]): DiffGroup[] {
+  return [
+    {
+      id: "trendWeeklyWorsened", label: "健全度悪化（週）",
+      icon: <TrendingDown className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.weeklyHealthWorsened === true).length,
+      items: all.filter(i => i.snapshotDiff?.weeklyHealthWorsened === true).slice(0, 3),
+      segment: "weekly_worsened",
+      iconColor: "text-red-600", bgClass: "bg-red-50",
+      borderColor: "border-red-200", accentColor: "border-l-red-500",
+      renderDetail: i => i.snapshotDiff?.weeklyHealthTransition ?? null,
+    },
+    {
+      id: "trendWeeklyActivated", label: "健全化（週）",
+      icon: <TrendingUp className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.weeklyActivated === true).length,
+      items: all.filter(i => i.snapshotDiff?.weeklyActivated === true).slice(0, 3),
+      segment: "weekly_activated",
+      iconColor: "text-emerald-600", bgClass: "bg-emerald-50",
+      borderColor: "border-emerald-200", accentColor: "border-l-emerald-500",
+      renderDetail: i => i.snapshotDiff?.weeklyHealthTransition ?? null,
+    },
+    {
+      id: "trendMonthlyRenewal", label: "更新接近（月）",
+      icon: <Calendar className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.monthlyRenewalEntered === true).length,
+      items: all.filter(i => i.snapshotDiff?.monthlyRenewalEntered === true).slice(0, 3),
+      segment: "monthly_renewal_entered",
+      iconColor: "text-orange-600", bgClass: "bg-orange-50",
+      borderColor: "border-orange-200", accentColor: "border-l-orange-500",
+      renderDetail: i => i.renewalDaysLeft != null ? `あと${i.renewalDaysLeft}日` : null,
+    },
+    {
+      id: "trendMonthlyMrrInc", label: "MRR増加（月）",
+      icon: <TrendingUp className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.monthlyMrrIncreased === true).length,
+      items: all.filter(i => i.snapshotDiff?.monthlyMrrIncreased === true).slice(0, 3),
+      segment: "monthly_mrr_increased",
+      iconColor: "text-emerald-600", bgClass: "bg-emerald-50",
+      borderColor: "border-emerald-200", accentColor: "border-l-emerald-500",
+      renderDetail: i => {
+        const d = i.snapshotDiff?.monthlyMrrDelta;
+        return d != null && d > 0 ? `+${formatMrr(d)}` : null;
+      },
+    },
+    {
+      id: "trendMonthlyMrrDec", label: "MRR減少（月）",
+      icon: <TrendingDown className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.monthlyMrrDecreased === true).length,
+      items: all.filter(i => i.snapshotDiff?.monthlyMrrDecreased === true).slice(0, 3),
+      segment: "monthly_mrr_decreased",
+      iconColor: "text-red-600", bgClass: "bg-red-50",
+      borderColor: "border-red-200", accentColor: "border-l-red-500",
+      renderDetail: i => {
+        const d = i.snapshotDiff?.monthlyMrrDelta;
+        return d != null && d < 0 ? `-${formatMrr(Math.abs(d))}` : null;
+      },
+    },
+  ];
+}
+
 function buildDiffGroups(all: CompanyListItemVM[]): DiffGroup[] {
   const phaseChg    = all.filter(i => i.snapshotDiff?.phaseChanged === true);
   const entered30   = all.filter(i => i.snapshotDiff?.renewalEnteredThirty === true);
@@ -557,12 +618,13 @@ export function Home() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const signals    = buildSignals(items);
-  const diffGroups = buildDiffGroups(items);
-  const topItems   = items.slice(0, 7);
-  const total      = items.length;
-  const hasDiffData = diffGroups.some(g => g.count > 0);
+  const signals      = buildSignals(items);
+  const diffGroups   = buildDiffGroups(items);
+  const trendGroups  = buildTrendGroups(items);
+  const topItems     = items.slice(0, 7);
+  const total        = items.length;
   const hasSnapshotDiff = items.some(i => i.snapshotDiff !== undefined);
+  const hasTrendData = trendGroups.some(g => g.count > 0);
 
   // ── 健全度集計 ──────────────────────────────────────────────────────────────
   const critical  = items.filter(i => i.overallHealth === "critical").length;
@@ -666,6 +728,29 @@ export function Home() {
             ) : (
               <div className="grid grid-cols-4 gap-3">
                 {diffGroups.map(g => <DiffTile key={g.id} group={g} />)}
+              </div>
+            )}
+          </div>
+
+          {/* ── Section TREND: 週次/月次傾向 ────────────────────────────── */}
+          <div className="mb-6">
+            <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-3">
+              週次 / 月次傾向
+              <span className="ml-2 normal-case font-normal text-slate-300">
+                — 7日・30日スナップショット比較 / 件数・ラベルで一覧へ
+              </span>
+            </p>
+            {loading ? (
+              <div className="grid grid-cols-5 gap-3">
+                {[0,1,2,3,4].map(i => <Skeleton key={i} className="h-28 rounded-xl" />)}
+              </div>
+            ) : !hasSnapshotDiff ? (
+              <div className="bg-white border border-slate-100 rounded-xl px-4 py-3 text-[11px] text-slate-400">
+                傾向データなし — スナップショット蓄積後（7日以降）から表示されます
+              </div>
+            ) : (
+              <div className="grid grid-cols-5 gap-3">
+                {trendGroups.map(g => <DiffTile key={g.id} group={g} />)}
               </div>
             )}
           </div>

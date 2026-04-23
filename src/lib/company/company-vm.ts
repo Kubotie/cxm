@@ -126,6 +126,24 @@ export interface CompanyListItemVM extends CompanySummaryListItemViewModel {
     previousHealth:       string | null;
     /** 遷移文字列（例: "healthy → at_risk"）。変化なし時は null */
     healthTransition:     string | null;
+
+    // ── Weekly (7-day) trend ──────────────────────────────────────────────
+    /** 7日間で健全度が悪化したか */
+    weeklyHealthWorsened:    boolean;
+    /** 7日間で健全度が healthy/expanding に改善したか（"activated"）*/
+    weeklyActivated:         boolean;
+    /** 週次の健全度遷移文字列。変化なし時は null */
+    weeklyHealthTransition:  string | null;
+
+    // ── Monthly (30-day) trend ────────────────────────────────────────────
+    /** 30日間で更新バケットが近づいたか（91+→31-90/0-30）*/
+    monthlyRenewalEntered:   boolean;
+    /** 30日間の MRR 変化量（null = いずれか null） */
+    monthlyMrrDelta:         number | null;
+    /** 30日間で MRR が増加したか */
+    monthlyMrrIncreased:     boolean;
+    /** 30日間で MRR が減少したか */
+    monthlyMrrDecreased:     boolean;
   };
 
   // ── Basic ───────────────────────────────────────────────────────────────

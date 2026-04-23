@@ -79,7 +79,13 @@ type SegmentKey =
   | 'mrr_increased'
   | 'mrr_decreased'
   | 'health_worsened'
-  | 'health_improved';
+  | 'health_improved'
+  // ── 週次/月次傾向 ────────────────────────────────────────────────────────
+  | 'weekly_worsened'
+  | 'weekly_activated'
+  | 'monthly_renewal_entered'
+  | 'monthly_mrr_increased'
+  | 'monthly_mrr_decreased';
 
 interface Segment {
   key:    SegmentKey;
@@ -192,6 +198,37 @@ const SEGMENTS: Segment[] = [
     filter: i => i.snapshotDiff?.healthImproved === true,
     color:  'border-emerald-500 text-emerald-700 bg-emerald-50',
   },
+  // ── 週次/月次傾向 ────────────────────────────────────────────────────────
+  {
+    key:    'weekly_worsened',
+    label:  '悪化（週）',
+    filter: i => i.snapshotDiff?.weeklyHealthWorsened === true,
+    color:  'border-red-500 text-red-700 bg-red-50',
+  },
+  {
+    key:    'weekly_activated',
+    label:  '健全化（週）',
+    filter: i => i.snapshotDiff?.weeklyActivated === true,
+    color:  'border-emerald-500 text-emerald-700 bg-emerald-50',
+  },
+  {
+    key:    'monthly_renewal_entered',
+    label:  '更新接近（月）',
+    filter: i => i.snapshotDiff?.monthlyRenewalEntered === true,
+    color:  'border-orange-500 text-orange-700 bg-orange-50',
+  },
+  {
+    key:    'monthly_mrr_increased',
+    label:  'MRR増（月）',
+    filter: i => i.snapshotDiff?.monthlyMrrIncreased === true,
+    color:  'border-emerald-500 text-emerald-700 bg-emerald-50',
+  },
+  {
+    key:    'monthly_mrr_decreased',
+    label:  'MRR減（月）',
+    filter: i => i.snapshotDiff?.monthlyMrrDecreased === true,
+    color:  'border-red-500 text-red-700 bg-red-50',
+  },
 ];
 
 // ── フィルタ適用 ──────────────────────────────────────────────────────────────
@@ -248,6 +285,36 @@ function uniqueValues(items: CompanyListItemVM[], key: keyof CompanyListItemVM):
   return [...set].sort((a, b) => a.localeCompare(b, 'ja'));
 }
 
+// ── MRR フォーマット ─────────────────────────────────────────────────────────
+
+function formatMrr(yen: number): string {
+  if (yen >= 100_000_000) return `¥${(yen / 100_000_000).toFixed(1)}億`;
+  if (yen >= 10_000)      return `¥${Math.round(yen / 10_000).toLocaleString()}万`;
+  return `¥${yen.toLocaleString()}`;
+}
+
+// ── セグメント対応アクション prefill ─────────────────────────────────────────
+
+function getSegmentPrefill(segment: SegmentKey, item: CompanyListItemVM): string | null {
+  if (segment === 'renewal_30' || segment === 'renewal_entered_30' || segment === 'monthly_renewal_entered') {
+    const days = item.renewalDaysLeft;
+    return days != null ? `更新対応: ${item.companyName}（あと${days}日）` : `更新対応: ${item.companyName}`;
+  }
+  if (segment === 'support_high' || segment === 'support_increased') {
+    return `サポート確認: ${item.companyName}`;
+  }
+  if (segment === 'expanding' || segment === 'weekly_activated') {
+    return `upsell提案: ${item.companyName}`;
+  }
+  if (segment === 'health_worsened' || segment === 'weekly_worsened' || segment === 'critical' || segment === 'at_risk') {
+    return `健全度悪化確認: ${item.companyName}`;
+  }
+  if (segment === 'mrr_decreased' || segment === 'monthly_mrr_decreased') {
+    return `MRR減少確認: ${item.companyName}`;
+  }
+  return null;
+}
+
 // ── 推奨アクション候補 ─────────────────────────────────────────────────────────
 
 function getNextActionCandidate(item: CompanyListItemVM): string | null {
@@ -280,12 +347,12 @@ function FreshnessBadge({ status }: { status: string }) {
 
 // ── Company カード ────────────────────────────────────────────────────────────
 
-function CompanyCard({ item }: { item: CompanyListItemVM }) {
+function CompanyCard({ item, segment }: { item: CompanyListItemVM; segment: SegmentKey }) {
   const [actionOpen, setActionOpen] = useState(false);
 
   const health     = getHealthBadge(item.overallHealth);
   const reasons    = orderedReasons(item, item.priorityBreakdown ?? []);
-  const nextAction = getNextActionCandidate(item);
+  const nextAction = getSegmentPrefill(segment, item) ?? getNextActionCandidate(item);
 
   // 機会 vs リスク理由を分離
   const isExpanding = item.overallHealth === 'expanding';
@@ -325,6 +392,23 @@ function CompanyCard({ item }: { item: CompanyListItemVM }) {
               {item.phaseGap && (
                 <span className="ml-1 text-amber-500" title={item.phaseGapDescription ?? undefined}>⚠</span>
               )}
+            </span>
+          )}
+
+          {/* MRR */}
+          {item.mrr != null && item.mrr > 0 && (
+            <span className="text-[11px] text-slate-500 flex-shrink-0 hidden lg:block tabular-nums">
+              {formatMrr(item.mrr)}
+            </span>
+          )}
+
+          {/* 更新日数 */}
+          {item.renewalDaysLeft != null && item.renewalBucket !== null && (
+            <span className={`text-[11px] flex-shrink-0 tabular-nums font-medium hidden md:block ${
+              item.renewalBucket === '0-30'  ? 'text-rose-600' :
+              item.renewalBucket === '31-90' ? 'text-orange-500' : 'text-slate-400'
+            }`}>
+              {item.renewalDaysLeft >= 0 ? `更新${item.renewalDaysLeft}日` : '更新超過'}
             </span>
           )}
 
@@ -383,7 +467,7 @@ function CompanyCard({ item }: { item: CompanyListItemVM }) {
         onOpenChange={setActionOpen}
         companyUid={item.companyUid}
         companyName={item.companyName}
-        prefillTitle={nextAction ?? ''}
+        prefillTitle={nextAction ?? `${item.companyName} — アクション`}
         sourceType="signal"
         createdFrom="manual"
       />
@@ -413,6 +497,8 @@ export function CompanyList() {
     'phase_changed','renewal_entered_30','renewal_entered_90',
     'support_increased','mrr_increased','mrr_decreased',
     'health_worsened','health_improved',
+    'weekly_worsened','weekly_activated',
+    'monthly_renewal_entered','monthly_mrr_increased','monthly_mrr_decreased',
   ]);
 
   const initSegment = ((): SegmentKey => {
@@ -740,6 +826,55 @@ export function CompanyList() {
             </div>
           )}
 
+          {/* ── アクティブフィルターチップ ────────────────────────────── */}
+          {hasActiveFilters && (
+            <div className="px-6 py-2 border-b border-slate-100 bg-white flex flex-wrap items-center gap-1.5 flex-shrink-0">
+              <span className="text-[10px] text-slate-400 mr-1">絞り込み中:</span>
+              {filters.health && (
+                <span className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                  Health: {filters.health}
+                  <button onClick={() => setFilter('health', '')} className="hover:text-slate-900"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )}
+              {filters.phase && (
+                <span className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                  フェーズ: {filters.phase}
+                  <button onClick={() => setFilter('phase', '')} className="hover:text-slate-900"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )}
+              {filters.owner && (
+                <span className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                  担当: {filters.owner}
+                  <button onClick={() => setFilter('owner', '')} className="hover:text-slate-900"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )}
+              {filters.commBlank && (
+                <span className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                  空白: {filters.commBlank === 'warning' ? '30日以上' : '60日以上'}
+                  <button onClick={() => setFilter('commBlank', '')} className="hover:text-slate-900"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )}
+              {filters.freshness && (
+                <span className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                  Summary: {filters.freshness}
+                  <button onClick={() => setFilter('freshness', '')} className="hover:text-slate-900"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )}
+              {filters.supportCrit && (
+                <span className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                  Support: Critical あり
+                  <button onClick={() => setFilter('supportCrit', '')} className="hover:text-slate-900"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )}
+              <button
+                onClick={resetFilters}
+                className="text-[11px] text-slate-400 hover:text-slate-600 underline ml-1"
+              >
+                すべて解除
+              </button>
+            </div>
+          )}
+
           {/* ── エラー ────────────────────────────────────────────────── */}
           {loadError && (
             <AlertBox variant="error" className="mx-6 mt-4 flex-shrink-0">
@@ -778,7 +913,7 @@ export function CompanyList() {
             ) : (
               <div className="space-y-1.5">
                 {displayed.map(item => (
-                  <CompanyCard key={item.companyUid} item={item} />
+                  <CompanyCard key={item.companyUid} item={item} segment={segment} />
                 ))}
                 {displayed.length >= 500 && (
                   <p className="text-xs text-slate-400 text-center py-2">

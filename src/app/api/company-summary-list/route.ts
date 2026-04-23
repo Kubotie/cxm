@@ -43,7 +43,11 @@ import { fetchLatestCommunicationDatesByUids } from '@/lib/nocodb/communication-
 import { fetchSupportCountsByUids }           from '@/lib/nocodb/support-by-company';
 import { fetchPeopleSignalsByUids, fetchStaleDmSignalsByUids } from '@/lib/nocodb/people';
 import { fetchOverdueActionSignalsByUids }    from '@/lib/nocodb/company-actions';
-import { fetchPreviousSnapshotsByUids }       from '@/lib/nocodb/company-snapshot';
+import {
+  fetchPreviousSnapshotsByUids,
+  fetchSnapshotsByDate,
+  nDaysAgoDateStr,
+}                                              from '@/lib/nocodb/company-snapshot';
 import type { PeopleActionSignal }            from '@/lib/company/company-people-risk';
 
 // ── VM builders ───────────────────────────────────────────────────────────────
@@ -155,7 +159,7 @@ export async function GET(req: NextRequest) {
   // ── Step 2: 全企業 UID を収集して bulk fetch ───────────────────────────────
   const allUids = targets.map(t => t.company.id);
 
-  const [csmPhaseHistoryMap, crmMap, projectMap, mrrMap, commDateMap, supportMap, peopleSignalMap, overdueActionMap, staleDmMap, prevSnapshotMap] = await Promise.all([
+  const [csmPhaseHistoryMap, crmMap, projectMap, mrrMap, commDateMap, supportMap, peopleSignalMap, overdueActionMap, staleDmMap, prevSnapshotMap, weeklySnapshotMap, monthlySnapshotMap] = await Promise.all([
     fetchCsmPhasesWithHistoryByUids(allUids).catch(
       () => new Map<string, CsmPhaseWithHistory>(),
     ),
@@ -180,6 +184,10 @@ export async function GET(req: NextRequest) {
     fetchStaleDmSignalsByUids(allUids).catch(() => new Map<string, boolean>()),
     // 前日スナップショット: company_daily_snapshot 未設定 or 未蓄積時は空 Map（graceful degradation）
     fetchPreviousSnapshotsByUids(allUids).catch(() => new Map<string, import('@/lib/nocodb/company-snapshot').CompanyDailySnapshot>()),
+    // 7日前スナップショット（週次傾向）
+    fetchSnapshotsByDate(allUids, nDaysAgoDateStr(7)).catch(() => new Map<string, import('@/lib/nocodb/company-snapshot').CompanyDailySnapshot>()),
+    // 30日前スナップショット（月次傾向）
+    fetchSnapshotsByDate(allUids, nDaysAgoDateStr(30)).catch(() => new Map<string, import('@/lib/nocodb/company-snapshot').CompanyDailySnapshot>()),
   ]);
   // csmPhaseHistoryMap から current のみ抽出して既存の csmMap 互換で使う
   const csmMap = new Map(
@@ -281,37 +289,63 @@ export async function GET(req: NextRequest) {
     };
 
     // ── Snapshot 差分計算 ────────────────────────────────────────────────────
-    const prevSnap = prevSnapshotMap.get(uid) ?? null;
+    const prevSnap    = prevSnapshotMap.get(uid)    ?? null;
+    const weeklySnap  = weeklySnapshotMap.get(uid)  ?? null;
+    const monthlySnap = monthlySnapshotMap.get(uid) ?? null;
     let snapshotDiff: import('@/lib/company/company-vm').CompanyListItemVM['snapshotDiff'];
-    if (prevSnap) {
-      const currentMPhase   = csmPhase?.mPhase ?? null;
-      const snapshotSupport = prevSnap.open_support_count ?? 0;
-      const supportDelta    = supportCounts.openCount - snapshotSupport;
-      const snapshotMrr     = prevSnap.mrr;
-      const currentMrr_     = totalMrr > 0 ? totalMrr : null;
-      const mrrDelta        = currentMrr_ !== null && snapshotMrr !== null
-        ? currentMrr_ - snapshotMrr : null;
-      const snapshotBucket  = prevSnap.renewal_bucket as import('@/lib/company/company-vm').CompanyListItemVM['renewalBucket'];
 
-      // ── health 差分 ─────────────────────────────────────────────────────────
+    if (prevSnap || weeklySnap || monthlySnap) {
+      const currentMPhase  = csmPhase?.mPhase ?? null;
+      const currentMrr_    = totalMrr > 0 ? totalMrr : null;
+      const currHealth     = healthVM.overallHealth as string | null;
+
       const HEALTH_ORDER: Record<string, number> = {
         critical: 0, at_risk: 1, healthy: 2, expanding: 3,
       };
-      const prevHealth  = prevSnap.overall_health;
-      const currHealth  = healthVM.overallHealth as string | null;
+
+      // ── 前日差分（prevSnap がある場合のみ計算）─────────────────────────────
+      const snapshotSupport = prevSnap?.open_support_count ?? 0;
+      const supportDelta    = (prevSnap ? supportCounts.openCount - snapshotSupport : 0);
+      const snapshotMrr     = prevSnap?.mrr ?? null;
+      const mrrDelta        = currentMrr_ !== null && snapshotMrr !== null
+        ? currentMrr_ - snapshotMrr : null;
+      const snapshotBucket  = (prevSnap?.renewal_bucket ?? null) as import('@/lib/company/company-vm').CompanyListItemVM['renewalBucket'];
+
+      const prevHealth  = prevSnap?.overall_health ?? null;
       const prevHOrder  = prevHealth ? (HEALTH_ORDER[prevHealth]  ?? -1) : -1;
       const currHOrder  = currHealth ? (HEALTH_ORDER[currHealth] ?? -1) : -1;
       const healthChanged  = prevHealth !== null && currHealth !== null && prevHealth !== currHealth;
       const healthWorsened = healthChanged && currHOrder < prevHOrder;
       const healthImproved = healthChanged && currHOrder > prevHOrder;
 
+      // ── 週次傾向（weeklySnap がある場合のみ）─────────────────────────────
+      const weeklyHealth   = weeklySnap?.overall_health ?? null;
+      const weeklyHOrder   = weeklyHealth ? (HEALTH_ORDER[weeklyHealth] ?? -1) : -1;
+      const weeklyChanged  = weeklyHealth !== null && currHealth !== null && weeklyHealth !== currHealth;
+      const weeklyHealthWorsened   = weeklyChanged && currHOrder < weeklyHOrder;
+      const weeklyActivated        = weeklyChanged && currHOrder > weeklyHOrder
+        && (currHealth === 'healthy' || currHealth === 'expanding');
+      const weeklyHealthTransition = weeklyChanged
+        ? `${weeklyHealth} → ${currHealth}` : null;
+
+      // ── 月次傾向（monthlySnap がある場合のみ）──────────────────────────────
+      const monthlyBucket  = (monthlySnap?.renewal_bucket ?? null) as import('@/lib/company/company-vm').CompanyListItemVM['renewalBucket'];
+      const monthlyMrr     = monthlySnap?.mrr ?? null;
+      const monthlyMrrDelta = currentMrr_ !== null && monthlyMrr !== null
+        ? currentMrr_ - monthlyMrr : null;
+      // 更新バケットが近づいた: 30日前は 91-180 or 180+ で、今は 31-90 or 0-30
+      const monthlyRenewalEntered =
+        (monthlyBucket === '91-180' || monthlyBucket === '180+') &&
+        (renewalBucket === '31-90'  || renewalBucket === '0-30');
+
       snapshotDiff = {
-        phaseChanged:         currentMPhase !== null && prevSnap.m_phase !== null && currentMPhase !== prevSnap.m_phase,
-        previousMPhase:       prevSnap.m_phase,
-        supportDelta,
-        supportIncreased:     supportDelta > 0,
-        renewalEnteredThirty: snapshotBucket !== '0-30' && renewalBucket === '0-30',
-        renewalEnteredNinety: (snapshotBucket === '91-180' || snapshotBucket === '180+' || snapshotBucket === null) && renewalBucket === '31-90',
+        // 前日差分
+        phaseChanged:         prevSnap !== null && currentMPhase !== null && prevSnap.m_phase !== null && currentMPhase !== prevSnap.m_phase,
+        previousMPhase:       prevSnap?.m_phase ?? null,
+        supportDelta:         prevSnap ? supportDelta : null,
+        supportIncreased:     prevSnap ? supportDelta > 0 : false,
+        renewalEnteredThirty: prevSnap !== null && snapshotBucket !== '0-30' && renewalBucket === '0-30',
+        renewalEnteredNinety: prevSnap !== null && (snapshotBucket === '91-180' || snapshotBucket === '180+' || snapshotBucket === null) && renewalBucket === '31-90',
         mrrDelta,
         mrrIncreased:         mrrDelta !== null && mrrDelta > 0,
         mrrDecreased:         mrrDelta !== null && mrrDelta < 0,
@@ -320,6 +354,15 @@ export async function GET(req: NextRequest) {
         healthImproved,
         previousHealth:       prevHealth,
         healthTransition:     healthChanged ? `${prevHealth} → ${currHealth}` : null,
+        // 週次傾向
+        weeklyHealthWorsened,
+        weeklyActivated,
+        weeklyHealthTransition,
+        // 月次傾向
+        monthlyRenewalEntered,
+        monthlyMrrDelta,
+        monthlyMrrIncreased:  monthlyMrrDelta !== null && monthlyMrrDelta > 0,
+        monthlyMrrDecreased:  monthlyMrrDelta !== null && monthlyMrrDelta < 0,
       };
     }
 

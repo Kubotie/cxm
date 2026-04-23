@@ -135,6 +135,48 @@ export function todayDateStr(): string {
 }
 
 /**
+ * n 日前の日付文字列を返す。
+ * 週次/月次傾向計算で「7日前」「30日前」のスナップショットを取得するのに使う。
+ */
+export function nDaysAgoDateStr(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * 複数企業の「targetDate 以前の最新スナップショット」を一括取得する。
+ * 週次/月次トレンド計算で「7日前時点の状態」「30日前時点の状態」を得るのに使用。
+ *
+ * @returns Map<company_uid, CompanyDailySnapshot>
+ */
+export async function fetchSnapshotsByDate(
+  companyUids: string[],
+  targetDate: string,
+): Promise<Map<string, CompanyDailySnapshot>> {
+  const tableId = TABLE_IDS.company_daily_snapshot;
+  if (!tableId || companyUids.length === 0) return new Map();
+
+  // targetDate 以前で最新のスナップショットを uid ごとに1件取得
+  const where = `(company_uid,in,${companyUids.join(',')})~and(snapshot_date,lte,${targetDate})`;
+  const limit = String(Math.min(companyUids.length * 2, 1000));
+
+  const rows = await nocoFetch<CompanyDailySnapshot>(tableId, {
+    where,
+    sort:  '-snapshot_date',
+    limit,
+  }).catch(() => [] as CompanyDailySnapshot[]);
+
+  const result = new Map<string, CompanyDailySnapshot>();
+  for (const row of rows) {
+    const uid = row.company_uid;
+    if (!uid) continue;
+    if (!result.has(uid)) result.set(uid, row); // sort 済みで先着1件 = 最新
+  }
+  return result;
+}
+
+/**
  * 複数企業の「前日スナップショット」を一括取得する。
  * 今日より前（snapshot_date < today）の最新1件を返す。
  * 差分計算（前日比）用。
