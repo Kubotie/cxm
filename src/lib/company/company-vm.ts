@@ -116,6 +116,16 @@ export interface CompanyListItemVM extends CompanySummaryListItemViewModel {
     mrrIncreased:         boolean;
     /** MRR が減少したか */
     mrrDecreased:         boolean;
+    /** 健全度が変化したか */
+    healthChanged:        boolean;
+    /** 健全度が悪化したか（critical < at_risk < healthy < expanding の順） */
+    healthWorsened:       boolean;
+    /** 健全度が改善したか */
+    healthImproved:       boolean;
+    /** 昨日の overall_health */
+    previousHealth:       string | null;
+    /** 遷移文字列（例: "healthy → at_risk"）。変化なし時は null */
+    healthTransition:     string | null;
   };
 
   // ── Basic ───────────────────────────────────────────────────────────────

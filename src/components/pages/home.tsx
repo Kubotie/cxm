@@ -214,6 +214,26 @@ function buildDiffGroups(all: CompanyListItemVM[]): DiffGroup[] {
         return d != null && d > 0 ? `+${formatMrr(d)}` : null;
       },
     },
+    {
+      id: "diffHealthDec", label: "健全度 悪化",
+      icon: <AlertTriangle className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.healthWorsened === true).length,
+      items: all.filter(i => i.snapshotDiff?.healthWorsened === true).slice(0, 3),
+      segment: "health_worsened",
+      iconColor: "text-red-600", bgClass: "bg-red-50",
+      borderColor: "border-red-200", accentColor: "border-l-red-500",
+      renderDetail: i => i.snapshotDiff?.healthTransition ?? null,
+    },
+    {
+      id: "diffHealthInc", label: "健全度 改善",
+      icon: <TrendingUp className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.healthImproved === true).length,
+      items: all.filter(i => i.snapshotDiff?.healthImproved === true).slice(0, 3),
+      segment: "health_improved",
+      iconColor: "text-emerald-600", bgClass: "bg-emerald-50",
+      borderColor: "border-emerald-200", accentColor: "border-l-emerald-500",
+      renderDetail: i => i.snapshotDiff?.healthTransition ?? null,
+    },
   ];
 }
 
@@ -644,7 +664,7 @@ export function Home() {
                 差分データなし — スナップショット蓄積後（翌日以降）から表示されます
               </div>
             ) : (
-              <div className="grid grid-cols-6 gap-3">
+              <div className="grid grid-cols-4 gap-3">
                 {diffGroups.map(g => <DiffTile key={g.id} group={g} />)}
               </div>
             )}

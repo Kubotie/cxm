@@ -77,7 +77,9 @@ type SegmentKey =
   | 'renewal_entered_90'
   | 'support_increased'
   | 'mrr_increased'
-  | 'mrr_decreased';
+  | 'mrr_decreased'
+  | 'health_worsened'
+  | 'health_improved';
 
 interface Segment {
   key:    SegmentKey;
@@ -177,6 +179,18 @@ const SEGMENTS: Segment[] = [
     label:  'MRR減少',
     filter: i => i.snapshotDiff?.mrrDecreased === true,
     color:  'border-red-500 text-red-700 bg-red-50',
+  },
+  {
+    key:    'health_worsened',
+    label:  '健全度悪化',
+    filter: i => i.snapshotDiff?.healthWorsened === true,
+    color:  'border-red-500 text-red-700 bg-red-50',
+  },
+  {
+    key:    'health_improved',
+    label:  '健全度改善',
+    filter: i => i.snapshotDiff?.healthImproved === true,
+    color:  'border-emerald-500 text-emerald-700 bg-emerald-50',
   },
 ];
 
@@ -398,6 +412,7 @@ export function CompanyList() {
     'expanding','critical','at_risk','support_high','summary_stale',
     'phase_changed','renewal_entered_30','renewal_entered_90',
     'support_increased','mrr_increased','mrr_decreased',
+    'health_worsened','health_improved',
   ]);
 
   const initSegment = ((): SegmentKey => {

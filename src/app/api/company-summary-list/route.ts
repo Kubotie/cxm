@@ -293,6 +293,18 @@ export async function GET(req: NextRequest) {
         ? currentMrr_ - snapshotMrr : null;
       const snapshotBucket  = prevSnap.renewal_bucket as import('@/lib/company/company-vm').CompanyListItemVM['renewalBucket'];
 
+      // ── health 差分 ─────────────────────────────────────────────────────────
+      const HEALTH_ORDER: Record<string, number> = {
+        critical: 0, at_risk: 1, healthy: 2, expanding: 3,
+      };
+      const prevHealth  = prevSnap.overall_health;
+      const currHealth  = healthVM.overallHealth as string | null;
+      const prevHOrder  = prevHealth ? (HEALTH_ORDER[prevHealth]  ?? -1) : -1;
+      const currHOrder  = currHealth ? (HEALTH_ORDER[currHealth] ?? -1) : -1;
+      const healthChanged  = prevHealth !== null && currHealth !== null && prevHealth !== currHealth;
+      const healthWorsened = healthChanged && currHOrder < prevHOrder;
+      const healthImproved = healthChanged && currHOrder > prevHOrder;
+
       snapshotDiff = {
         phaseChanged:         currentMPhase !== null && prevSnap.m_phase !== null && currentMPhase !== prevSnap.m_phase,
         previousMPhase:       prevSnap.m_phase,
@@ -303,6 +315,11 @@ export async function GET(req: NextRequest) {
         mrrDelta,
         mrrIncreased:         mrrDelta !== null && mrrDelta > 0,
         mrrDecreased:         mrrDelta !== null && mrrDelta < 0,
+        healthChanged,
+        healthWorsened,
+        healthImproved,
+        previousHealth:       prevHealth,
+        healthTransition:     healthChanged ? `${prevHealth} → ${currHealth}` : null,
       };
     }
 

@@ -53,6 +53,7 @@ import { fetchSupportCountsByUids }    from '@/lib/nocodb/support-by-company';
 import { fetchProjectMrrMap }          from '@/lib/metabase/mrr';
 import { upsertCompanySnapshot, todayDateStr } from '@/lib/nocodb/company-snapshot';
 import type { CompanyDailySnapshot }   from '@/lib/nocodb/company-snapshot';
+import { getCompanySummaryStatesByUids } from '@/lib/nocodb/company-summary-read';
 
 // Vercel Pro で最大 300 秒まで実行を許可（after() バックグラウンド処理用）
 export const maxDuration = 300;
@@ -116,7 +117,7 @@ async function runSnapshotJob(
   console.log(`[batch/company-snapshot] 対象企業数: ${allUids.length}`);
 
   // ── Step 2: 並列データ取得 ───────────────────────────────────────────────────
-  const [csmMap, crmMap, projectMap, mrrMap, supportMap] = await Promise.all([
+  const [csmMap, crmMap, projectMap, mrrMap, supportMap, summaryStateMap] = await Promise.all([
     fetchCsmPhasesByUids(allUids).catch(() =>
       new Map() as Awaited<ReturnType<typeof fetchCsmPhasesByUids>>,
     ),
@@ -129,6 +130,10 @@ async function runSnapshotJob(
     fetchProjectMrrMap().catch(() => new Map()),
     fetchSupportCountsByUids(allUids).catch(() =>
       new Map() as Awaited<ReturnType<typeof fetchSupportCountsByUids>>,
+    ),
+    // overall_health: AI summary state から取得（未設定時は null で degradation）
+    getCompanySummaryStatesByUids(allUids).catch(() =>
+      new Map() as Awaited<ReturnType<typeof getCompanySummaryStatesByUids>>,
     ),
   ]);
 
@@ -143,7 +148,7 @@ async function runSnapshotJob(
     const crmPhase = crmMap.get(uid) ?? null;
     const mPhase   = csmPhase?.mPhase ?? null;
 
-    const overallHealth: string | null = null;
+    const overallHealth: string | null = summaryStateMap.get(uid)?.overallHealth ?? null;
 
     const projList = projectMap.get(uid) ?? [];
     let totalMrr = 0;
