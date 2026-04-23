@@ -99,6 +99,45 @@ export const FRESHNESS_SHORT_LABEL: Record<string, string> = {
   locked:  '承認済',
 };
 
+/** Freshness badge のクラス + ラベル（CompanyCard / Sheet など共通利用） */
+export const FRESHNESS_BADGE: Record<string, { label: string; className: string }> = {
+  missing: { label: '未生成', className: 'bg-slate-100 text-slate-600 border-slate-300' },
+  stale:   { label: '要更新', className: 'bg-amber-100 text-amber-700 border-amber-200' },
+  fresh:   { label: '最新',   className: 'bg-teal-100 text-teal-700 border-teal-200'   },
+  locked:  { label: '承認済', className: 'bg-green-100 text-green-700 border-green-200' },
+};
+
+export function getFreshnessBadge(status: string | null | undefined) {
+  if (!status) return { label: '—', className: 'bg-gray-100 text-gray-500 border-gray-200' };
+  return FRESHNESS_BADGE[status] ?? { label: status, className: 'bg-gray-100 text-gray-500 border-gray-200' };
+}
+
+// ── Phase badge ───────────────────────────────────────────────────────────────
+
+/**
+ * フェーズバッジのクラスを返す。
+ * hasGap / isStagnant / normal の3状態で色を固定し、ad hoc な inline ternary を排除する。
+ */
+export function getPhaseBadgeClass(opts: {
+  hasGap?:    boolean;
+  isStagnant?: boolean;
+}): string {
+  if (opts.hasGap)      return 'bg-amber-50 text-amber-700 border-amber-300';
+  if (opts.isStagnant)  return 'bg-orange-50 text-orange-700 border-orange-200';
+  return 'bg-indigo-50 text-indigo-700 border-indigo-200';
+}
+
+// ── Phase source chip（CSM / CRM）────────────────────────────────────────────
+
+/**
+ * Phase の情報源（CSM = NocoDB / CRM = Salesforce）の badge クラス。
+ * CSM → indigo（社内情報）、CRM → purple（外部連携）で固定。
+ */
+export const PHASE_SOURCE_CHIP_CLS: Record<'CSM' | 'CRM', string> = {
+  CSM: 'bg-indigo-50 text-indigo-600 border-indigo-200',
+  CRM: 'bg-purple-50 text-purple-600 border-purple-200',
+};
+
 // ── Priority score 計算用ウェイト ─────────────────────────────────────────────
 // priority-score.ts がこれを参照する。変更時は priority-score.ts のコメントも更新。
 
@@ -127,4 +166,9 @@ export const PRIORITY_WEIGHT = {
   // 新: overdue=12（support_critical と同格）, many_open=8（phase 系と同格）
   action_overdue:         12,  // 期限切れ Action あり
   action_many_open:        8,  // open action >= 5件
+  // ── Opportunity / Expansion ───────────────────────────────────────────────
+  // 機会系は at_risk(15) より弱く、phase_gap(10) と同格に設定する。
+  // スタックしても critical(30) を超えないよう上限を意識した値にする。
+  health_expanding:       10,  // overall_health === 'expanding'
+  opportunity_signal:      6,  // expansion_project / upsell_signal / new_use_case
 } as const;

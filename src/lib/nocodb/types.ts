@@ -1139,17 +1139,24 @@ export interface RawProjectInfo {
 }
 
 export interface AppProjectInfo {
-  id:            string;  // project_id or NocoDB Id
-  companyUid:    string;
-  sfAccountId:   string | null;  // master_company_sf_id（join キー）
-  name:          string;
-  status:        'active' | 'stalled' | 'unused' | 'inactive';
-  startDate:     string | null;
-  lastUpdatedAt: string | null;
-  description:   string;
-  useCase:       string | null;
-  health:        'high' | 'medium' | 'low' | null;
-  paidType:      string | null;  // "PTI-PAID" / "PTX-PAID" / "FREE"
+  id:                 string;  // project_id or NocoDB Id
+  companyUid:         string;
+  sfAccountId:        string | null;  // master_company_sf_id（join キー）
+  name:               string;
+  status:             'active' | 'stalled' | 'unused' | 'inactive';
+  startDate:          string | null;
+  lastUpdatedAt:      string | null;
+  description:        string;
+  useCase:            string | null;
+  health:             'high' | 'medium' | 'low' | null;
+  paidType:           string | null;  // "PTI-PAID" / "PTX-PAID" / "FREE"
+  // ── 利用状況シグナル（UI + AI 用）────────────────────────────────────────
+  /** 過去30日アクティブイベント数（利用活動量の直接指標） */
+  l30Active:          number | null;
+  /** 活用済みフラグ（habituation_status = "True"） */
+  habituationStatus:  boolean | null;
+  /** 最新契約終了日（upsell / renewal タイミング判定用） */
+  latestOrderEndDate: string | null;
 }
 
 /**
@@ -1187,17 +1194,24 @@ export function toAppProjectInfo(raw: RawProjectInfo, companyUid?: string): AppP
   const startDateRaw   = raw.start_date ?? raw.project_create_time ?? null;
 
   return {
-    id:            raw.project_id ? String(raw.project_id) : String(raw.Id),
-    companyUid:    companyUid ?? raw.company_uid ?? '',
-    sfAccountId:   (raw.master_company_sf_id as string | null | undefined) ?? null,
-    name:          raw.project_name ? String(raw.project_name) : '(名前なし)',
+    id:                 raw.project_id ? String(raw.project_id) : String(raw.Id),
+    companyUid:         companyUid ?? raw.company_uid ?? '',
+    sfAccountId:        (raw.master_company_sf_id as string | null | undefined) ?? null,
+    name:               raw.project_name ? String(raw.project_name) : '(名前なし)',
     status,
-    startDate:     startDateRaw ? String(startDateRaw).slice(0, 10) : null,
-    lastUpdatedAt: lastUpdatedRaw ? String(lastUpdatedRaw).slice(0, 10) : null,
-    description:   raw.description ? String(raw.description) : '',
-    useCase:       raw.use_case ? String(raw.use_case) : null,
+    startDate:          startDateRaw ? String(startDateRaw).slice(0, 10) : null,
+    lastUpdatedAt:      lastUpdatedRaw ? String(lastUpdatedRaw).slice(0, 10) : null,
+    description:        raw.description ? String(raw.description) : '',
+    useCase:            raw.use_case ? String(raw.use_case) : null,
     health,
-    paidType:      (raw.paid_type as string | null | undefined) ?? null,
+    paidType:           (raw.paid_type as string | null | undefined) ?? null,
+    l30Active:          raw.l30_active != null ? Number(raw.l30_active) : null,
+    habituationStatus:  raw.habituation_status != null
+      ? String(raw.habituation_status).toLowerCase() === 'true'
+      : null,
+    latestOrderEndDate: raw.latest_order_end_date
+      ? String(raw.latest_order_end_date).slice(0, 10)
+      : null,
   };
 }
 
