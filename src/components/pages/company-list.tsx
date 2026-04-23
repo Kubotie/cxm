@@ -346,6 +346,9 @@ function FreshnessBadge({ status }: { status: string }) {
 }
 
 // ── Company カード ────────────────────────────────────────────────────────────
+//
+// Row 1 (固定列): health | 企業名 | フェーズ | 空白日数 | support | 更新[urgent] | アクション | →
+// Row 2 (理由):   ↑機会理由 → リスク理由 …  │  [推奨アクション ボタン]
 
 function CompanyCard({ item, segment }: { item: CompanyListItemVM; segment: SegmentKey }) {
   const [actionOpen, setActionOpen] = useState(false);
@@ -354,10 +357,9 @@ function CompanyCard({ item, segment }: { item: CompanyListItemVM; segment: Segm
   const reasons    = orderedReasons(item, item.priorityBreakdown ?? []);
   const nextAction = getSegmentPrefill(segment, item) ?? getNextActionCandidate(item);
 
-  // 機会 vs リスク理由を分離
   const isExpanding = item.overallHealth === 'expanding';
   const oppReason   = isExpanding && reasons.length > 0 ? reasons[0] : null;
-  const riskReasons = isExpanding ? reasons.slice(1) : reasons;
+  const riskReasons = (isExpanding ? reasons.slice(1) : reasons).slice(0, 2);
 
   const commCls = item.communicationRiskLevel === 'risk'    ? 'text-red-500'
                 : item.communicationRiskLevel === 'warning' ? 'text-amber-500'
@@ -365,98 +367,119 @@ function CompanyCard({ item, segment }: { item: CompanyListItemVM; segment: Segm
   const commLabel = item.communicationBlankDays != null
     ? `${item.communicationBlankDays}日前` : '—';
 
+  // 更新日数: 0-30 or 31-90 の場合のみ表示（91日以上は混雑を避けて非表示）
+  const showRenewal = item.renewalBucket === '0-30' || item.renewalBucket === '31-90';
+  const renewalCls  = item.renewalBucket === '0-30' ? 'text-rose-600 font-medium' : 'text-orange-500';
+  const renewalLabel = item.renewalDaysLeft != null
+    ? (item.renewalDaysLeft >= 0 ? `更${item.renewalDaysLeft}日` : '超過')
+    : null;
+
   const hasRow2 = reasons.length > 0 || !!nextAction;
 
   return (
     <>
       <div className="bg-white border border-slate-200 rounded-lg hover:border-slate-300 hover:shadow-sm transition-all group">
-        {/* 1行目: 主要情報 */}
-        <div className={`flex items-center gap-2 px-4 pt-3 min-w-0 ${hasRow2 ? 'pb-1' : 'pb-3'}`}>
-          <Badge
-            variant="outline"
-            className={`text-[10px] px-1.5 py-0 flex-shrink-0 font-medium ${health.className}`}
-          >
-            {health.label}
-          </Badge>
 
+        {/* ── Row 1: 主要情報（固定列）───────────────────────────────────── */}
+        <div className={`flex items-center gap-0 px-3 pt-2.5 min-w-0 ${hasRow2 ? 'pb-1' : 'pb-2.5'}`}>
+
+          {/* Health badge（固定幅 52px） */}
+          <div className="w-[52px] flex-shrink-0">
+            <Badge
+              variant="outline"
+              className={`text-[10px] px-1.5 py-0 font-medium ${health.className}`}
+            >
+              {health.label}
+            </Badge>
+          </div>
+
+          {/* 企業名（flex-1, リンク） */}
           <Link
             href={`/companies/${item.companyUid}`}
-            className="text-sm font-medium text-slate-800 flex-1 truncate hover:text-slate-900 hover:underline"
+            className="flex-1 min-w-0 text-sm font-medium text-slate-800 truncate hover:text-indigo-700 hover:underline px-1"
           >
             {item.companyName}
           </Link>
 
-          {item.activePhaseLabel && (
-            <span className="text-[11px] text-slate-400 flex-shrink-0 hidden sm:block">
-              {item.activePhaseLabel}
-              {item.phaseGap && (
-                <span className="ml-1 text-amber-500" title={item.phaseGapDescription ?? undefined}>⚠</span>
-              )}
-            </span>
-          )}
+          {/* フェーズ（固定幅 80px, sm+） */}
+          <div className="w-20 flex-shrink-0 hidden sm:flex items-center gap-0.5 justify-end">
+            {item.activePhaseLabel ? (
+              <span className="text-[11px] text-slate-400 truncate">
+                {item.activePhaseLabel}
+                {item.phaseGap && <span className="ml-0.5 text-amber-500">⚠</span>}
+              </span>
+            ) : (
+              <span className="text-[11px] text-slate-200">—</span>
+            )}
+          </div>
 
-          {/* MRR */}
-          {item.mrr != null && item.mrr > 0 && (
-            <span className="text-[11px] text-slate-500 flex-shrink-0 hidden lg:block tabular-nums">
-              {formatMrr(item.mrr)}
-            </span>
-          )}
+          {/* 空白日数（固定幅 44px） */}
+          <div className="w-11 flex-shrink-0 text-right">
+            <span className={`text-[11px] tabular-nums ${commCls}`}>{commLabel}</span>
+          </div>
 
-          {/* 更新日数 */}
-          {item.renewalDaysLeft != null && item.renewalBucket !== null && (
-            <span className={`text-[11px] flex-shrink-0 tabular-nums font-medium hidden md:block ${
-              item.renewalBucket === '0-30'  ? 'text-rose-600' :
-              item.renewalBucket === '31-90' ? 'text-orange-500' : 'text-slate-400'
-            }`}>
-              {item.renewalDaysLeft >= 0 ? `更新${item.renewalDaysLeft}日` : '更新超過'}
-            </span>
-          )}
+          {/* Support badge（固定幅 40px） */}
+          <div className="w-10 flex-shrink-0 flex justify-end">
+            {(item.criticalSupportCount ?? 0) > 0 ? (
+              <span className="flex items-center gap-0.5 text-[10px] font-medium text-red-600 bg-red-50 border border-red-200 rounded px-1 py-0">
+                <Headphones className="w-2.5 h-2.5" />C:{item.criticalSupportCount}
+              </span>
+            ) : (item.openSupportCount ?? 0) >= 3 ? (
+              <span className="flex items-center gap-0.5 text-[10px] text-orange-600 bg-orange-50 border border-orange-200 rounded px-1 py-0">
+                <Headphones className="w-2.5 h-2.5" />{item.openSupportCount}
+              </span>
+            ) : null}
+          </div>
 
-          <span className={`text-[11px] flex-shrink-0 ${commCls}`}>{commLabel}</span>
+          {/* 更新日数（urgent only, 固定幅 36px） */}
+          <div className="w-9 flex-shrink-0 text-right hidden md:block">
+            {showRenewal && renewalLabel ? (
+              <span className={`text-[10px] tabular-nums ${renewalCls}`}>{renewalLabel}</span>
+            ) : null}
+          </div>
 
-          {(item.criticalSupportCount ?? 0) > 0 ? (
-            <span className="flex-shrink-0 flex items-center gap-0.5 text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0">
-              <Headphones className="w-3 h-3" /> C:{item.criticalSupportCount}
-            </span>
-          ) : (item.openSupportCount ?? 0) >= 5 ? (
-            <span className="flex-shrink-0 flex items-center gap-0.5 text-[11px] text-orange-600 bg-orange-50 border border-orange-200 rounded px-1.5 py-0">
-              <Headphones className="w-3 h-3" /> {item.openSupportCount}
-            </span>
-          ) : null}
-
+          {/* Summary staleness（条件付き） */}
           {(item.freshnessStatus === 'missing' || item.freshnessStatus === 'stale') && (
-            <FreshnessBadge status={item.freshnessStatus} />
+            <div className="flex-shrink-0 ml-1">
+              <FreshnessBadge status={item.freshnessStatus} />
+            </div>
           )}
 
-          {/* アクション作成ボタン（hover 時に表示） */}
+          {/* アクション作成ボタン（hover 表示） */}
           <Button
             size="sm"
             variant="outline"
-            className="h-6 text-[11px] gap-1 flex-shrink-0 px-2 border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="h-5 text-[10px] gap-0.5 flex-shrink-0 px-1.5 ml-1 border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity"
             onClick={e => { e.preventDefault(); e.stopPropagation(); setActionOpen(true); }}
           >
-            <Plus className="w-3 h-3" />アクション
+            <Plus className="w-2.5 h-2.5" />
           </Button>
 
-          <Link href={`/companies/${item.companyUid}`} className="flex-shrink-0">
-            <ArrowRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 transition-colors" />
+          <Link href={`/companies/${item.companyUid}`} className="flex-shrink-0 ml-1">
+            <ArrowRight className="w-3 h-3 text-slate-300 group-hover:text-slate-500 transition-colors" />
           </Link>
         </div>
 
-        {/* 2行目: 機会 / リスク理由 + 推奨アクション */}
+        {/* ── Row 2: 理由 + 推奨アクション ───────────────────────────────── */}
         {hasRow2 && (
-          <div className="flex items-center flex-wrap gap-x-3 gap-y-0.5 px-4 pb-3 pt-0 pl-[calc(52px+16px)]">
+          <div className="flex items-center gap-2 px-3 pb-2 pl-[calc(52px+12px)] min-w-0">
+            {/* 機会理由 */}
             {oppReason && (
-              <span className="text-[11px] text-indigo-500 truncate">↑ {oppReason}</span>
+              <span className="text-[11px] text-indigo-500 truncate min-w-0">↑ {oppReason}</span>
             )}
-            {riskReasons.slice(0, oppReason ? 1 : 2).map((r, i) => (
-              <span key={i} className="text-[11px] text-slate-400 truncate">→ {r}</span>
+            {/* リスク理由（最大2件） */}
+            {riskReasons.map((r, i) => (
+              <span key={i} className="text-[11px] text-slate-400 truncate min-w-0">→ {r}</span>
             ))}
+
+            {/* 推奨アクション（右端、クリックでダイアログ） */}
             {nextAction && (
-              <span className="text-[11px] text-slate-400 ml-auto flex-shrink-0">
-                <span className="text-[10px] text-slate-300 mr-1">推奨:</span>
+              <button
+                className="ml-auto flex-shrink-0 text-[10px] text-slate-500 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 hover:text-indigo-600 rounded px-2 py-0.5 transition-colors"
+                onClick={e => { e.preventDefault(); e.stopPropagation(); setActionOpen(true); }}
+              >
                 {nextAction}
-              </span>
+              </button>
             )}
           </div>
         )}
