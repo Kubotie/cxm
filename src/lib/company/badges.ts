@@ -171,4 +171,9 @@ export const PRIORITY_WEIGHT = {
   // スタックしても critical(30) を超えないよう上限を意識した値にする。
   health_expanding:       10,  // overall_health === 'expanding'
   opportunity_signal:      6,  // expansion_project / upsell_signal / new_use_case
+  // ── Renewal 接近 ─────────────────────────────────────────────────────────
+  // 更新は at_risk(15) と同格。CSM として優先的に動く必要があるため。
+  // 30日以内は即対応が必要 → 15、31-90日は予防的 → 5。
+  renewal_30:             15,  // renewalBucket === '0-30'
+  renewal_90:              5,  // renewalBucket === '31-90'
 } as const;

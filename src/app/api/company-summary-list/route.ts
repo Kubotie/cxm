@@ -373,6 +373,7 @@ export async function GET(req: NextRequest) {
       openSupportCount:       supportCounts.openCount,
       communicationBlankDays: blankDays,
       peopleActionSignal,
+      renewalBucket,
     });
 
     return {

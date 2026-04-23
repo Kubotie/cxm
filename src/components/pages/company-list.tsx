@@ -334,6 +334,24 @@ function getNextActionCandidate(item: CompanyListItemVM): string | null {
   return null;
 }
 
+// ── フェーズ短縮表示 ──────────────────────────────────────────────────────────
+//
+// 12文字超のフェーズ名を短縮して一覧の詰まりを解消する。
+// title 属性でネイティブ tooltip にフル名を残す。
+//
+// 例: "Active Expansion" → "Active Exp."
+//     "Implementation"   → "Implementa…"
+//     "Onboarding"       → "Onboarding" (10文字以内なのでそのまま)
+
+function abbreviatePhase(label: string): string {
+  if (label.length <= 12) return label;
+  const words = label.trim().split(/\s+/);
+  if (words.length === 1) return label.slice(0, 10) + '…';
+  // 2語以上: 1語目はそのまま、2語目以降を最初の4文字+'.'に短縮
+  const abbr = words.slice(1).map(w => (w.length <= 4 ? w : w.slice(0, 4) + '.')).join(' ');
+  return words[0] + ' ' + abbr;
+}
+
 // ── Summary freshness badge ───────────────────────────────────────────────────
 
 function FreshnessBadge({ status }: { status: string }) {
@@ -401,12 +419,20 @@ function CompanyCard({ item, segment }: { item: CompanyListItemVM; segment: Segm
             {item.companyName}
           </Link>
 
-          {/* フェーズ（固定幅 80px, sm+） */}
-          <div className="w-20 flex-shrink-0 hidden sm:flex items-center gap-0.5 justify-end">
+          {/* フェーズ（固定幅 88px, sm+）— 短縮表示 + title で full tooltip */}
+          <div className="w-[88px] flex-shrink-0 hidden sm:flex items-center gap-0.5 justify-end">
             {item.activePhaseLabel ? (
-              <span className="text-[11px] text-slate-400 truncate">
-                {item.activePhaseLabel}
-                {item.phaseGap && <span className="ml-0.5 text-amber-500">⚠</span>}
+              <span
+                className="text-[11px] text-slate-400 truncate cursor-default"
+                title={item.activePhaseLabel}
+              >
+                {abbreviatePhase(item.activePhaseLabel)}
+                {item.phaseGap && (
+                  <span
+                    className="ml-0.5 text-amber-500"
+                    title={`フェーズ差異: ${item.phaseGapDescription ?? ''}`}
+                  >⚠</span>
+                )}
               </span>
             ) : (
               <span className="text-[11px] text-slate-200">—</span>

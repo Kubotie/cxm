@@ -745,20 +745,24 @@ export function Home() {
 
           {/* ══ SECTION 2: 変化サマリー（2段 × 4列）──────────────────────── */}
           <div className="mb-6">
-            {/* Tier 1: 今日の変化（緊急） */}
-            <div className="flex items-center gap-2 mb-2">
-              <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest">
-                今日の変化
-              </p>
-              {!hasSnapshotDiff && (
-                <span className="text-[10px] text-slate-300">
-                  — スナップショット蓄積後（翌日〜）から表示
-                </span>
-              )}
-            </div>
+            {/* Tier 1: 今日の変化（緊急・前日差分ベース） */}
+            <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-2">
+              今日の変化
+            </p>
             {loading ? (
               <div className="grid grid-cols-4 gap-3 mb-3">
                 {[0,1,2,3].map(i => <Skeleton key={i} className="h-28 rounded-xl" />)}
+              </div>
+            ) : !hasSnapshotDiff ? (
+              // スナップショット未蓄積 → 空カードを並べず1行で案内
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 mb-3">
+                <span className="text-[11px] text-slate-400">
+                  前日比データ蓄積中
+                </span>
+                <span className="text-[11px] text-slate-300">—</span>
+                <span className="text-[11px] text-slate-300">
+                  スナップショットバッチ実行後（翌日〜）から差分が表示されます
+                </span>
               </div>
             ) : (
               <div className="grid grid-cols-4 gap-3 mb-3">
@@ -766,20 +770,35 @@ export function Home() {
               </div>
             )}
 
-            {/* Tier 2: 今週の文脈（現況 + 週次） */}
-            <div className="flex items-center gap-2 mb-2">
-              <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest">
-                今週の文脈
-              </p>
-              <span className="text-[10px] text-slate-300">— 現況シグナル + 週次傾向</span>
-            </div>
+            {/* Tier 2: 今週の文脈（現況シグナル + 週次傾向） */}
+            <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-2">
+              今週の文脈
+              <span className="ml-2 normal-case font-normal text-slate-300">— 現況シグナル + 週次傾向</span>
+            </p>
             {loading ? (
               <div className="grid grid-cols-4 gap-3">
                 {[0,1,2,3].map(i => <Skeleton key={i} className="h-28 rounded-xl" />)}
               </div>
             ) : (
               <div className="grid grid-cols-4 gap-3">
-                {contextTiles.map(g => <DiffTile key={g.id} group={g} />)}
+                {/* 現況シグナル 3枚（常に live data）*/}
+                {contextTiles.filter(g => g.id !== "trendWeeklyWorsened").map(g => (
+                  <DiffTile key={g.id} group={g} />
+                ))}
+                {/* 週次悪化タイル: スナップショット蓄積中は破線プレースホルダー */}
+                {hasSnapshotDiff
+                  ? contextTiles.filter(g => g.id === "trendWeeklyWorsened").map(g => (
+                      <DiffTile key={g.id} group={g} />
+                    ))
+                  : (
+                    <div className="flex flex-col items-center justify-center gap-1 p-3 rounded-xl border border-dashed border-slate-200 bg-white">
+                      <span className="text-[10px] text-slate-300 font-medium">週次悪化</span>
+                      <span className="text-[10px] text-slate-200 text-center leading-snug">
+                        7日分蓄積後<br />から表示
+                      </span>
+                    </div>
+                  )
+                }
               </div>
             )}
           </div>

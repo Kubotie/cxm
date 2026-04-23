@@ -27,6 +27,8 @@ export interface PriorityScoreInput {
   communicationBlankDays: number | null;
   /** People / Action シグナル（省略時はスキップ） */
   peopleActionSignal?: PeopleActionSignal | null;
+  /** 更新バケット（省略時はスコアに反映しない） */
+  renewalBucket?: '0-30' | '31-90' | '91-180' | '180+' | 'expired' | null;
 }
 
 export interface PriorityScoreResult {
@@ -101,6 +103,13 @@ export function calcPriorityScore(
   // ── Projects ─────────────────────────────────────────────────────────────
   if (healthVM.riskSignals.some(s => s.type === 'project_stalled')) {
     add('projects: all stalled', PRIORITY_WEIGHT.project_all_stalled);
+  }
+
+  // ── Renewal 接近 ────────────────────────────────────────────────────────────
+  if (input.renewalBucket === '0-30') {
+    add('renewal: 30日以内', PRIORITY_WEIGHT.renewal_30);
+  } else if (input.renewalBucket === '31-90') {
+    add('renewal: 31-90日', PRIORITY_WEIGHT.renewal_90);
   }
 
   // ── Opportunity / Expansion ───────────────────────────────────────────────
