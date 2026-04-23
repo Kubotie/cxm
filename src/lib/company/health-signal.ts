@@ -170,13 +170,26 @@ function buildRiskSignals(
       companyUid,
       drilldownUrl: `/companies/${companyUid}?tab=support`,
     });
-  } else if (openHighSupport >= 5) {
+  } else if (openHighSupport >= 8) {
+    // 8件以上で high、5〜7件は medium（支援負荷はあるがそれだけで at_risk にしない）
     signals.push({
       id:           `support_high:${companyUid}`,
       type:         'support_high_volume',
       severity:     'high',
-      title:        `High サポート ${openHighSupport}件`,
-      description:  'High 重要度のオープンケースが多数あります',
+      title:        `Highサポートケース ${openHighSupport}件`,
+      description:  'High重要度のオープンケースが多数積み残されています',
+      sourceType:   'support_case',
+      sourceId:     null,
+      companyUid,
+      drilldownUrl: `/companies/${companyUid}?tab=support`,
+    });
+  } else if (openHighSupport >= 5) {
+    signals.push({
+      id:           `support_high:${companyUid}`,
+      type:         'support_high_volume',
+      severity:     'medium',
+      title:        `Highサポートケース ${openHighSupport}件`,
+      description:  'High重要度のオープンケースが積み残されています',
       sourceType:   'support_case',
       sourceId:     null,
       companyUid,
@@ -229,7 +242,10 @@ function buildRiskSignals(
         id:           `${ps.type}:${companyUid}`,
         type:         'project_stalled',
         severity:     ps.severity,
-        title:        ps.type === 'no_active_projects' ? 'アクティブプロジェクトなし' : 'プロジェクト停滞',
+        title:        ps.type === 'no_active_projects'        ? 'アクティブプロジェクトなし'
+                    : ps.type === 'all_stalled'              ? '全プロジェクトが停滞'
+                    : ps.type === 'majority_stalled_or_unused' ? 'プロジェクトの多数が停滞'
+                    : 'プロジェクト停滞',
         description:  ps.description,
         sourceType:   'project',
         sourceId:     null,
@@ -329,7 +345,8 @@ function determineOverallHealth(
   const mediumCount = riskSignals.filter(s => s.severity === 'medium').length;
 
   if (hasCritical) return 'critical';
-  if (highCount >= 2 || (highCount >= 1 && mediumCount >= 2)) return 'at_risk';
+  // at_risk: 複数の明確なリスクが重なる場合のみ（単一シグナルで at_risk にしない）
+  if (highCount >= 2 || (highCount >= 1 && mediumCount >= 3)) return 'at_risk';
 
   // expanding: AI が expanding と判定 かつ active project あり かつ risk シグナルが少ない
   if (
@@ -341,9 +358,9 @@ function determineOverallHealth(
     return 'expanding';
   }
 
-  // AI が at_risk / critical と言っていたら採用
+  // AI が at_risk / critical と言っていたら採用（ただし risk シグナルが 2件以上ある場合のみ）
   if (aiHealth === 'critical') return 'critical';
-  if (aiHealth === 'at_risk'  && riskSignals.length > 0) return 'at_risk';
+  if (aiHealth === 'at_risk'  && riskSignals.length >= 2) return 'at_risk';
 
   return 'healthy';
 }

@@ -19,6 +19,16 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -70,7 +80,9 @@ import {
   buildCompanySummaryViewModel,
   SUMMARY_FRESHNESS_CONFIG,
 } from "@/lib/company/company-summary-state-policy";
-import { getHealthBadge, HEALTH_BADGE, RISK_SEVERITY_BADGE, PROJECT_STATUS_BADGE } from "@/lib/company/badges";
+import { getHealthBadge, HEALTH_BADGE, RISK_SEVERITY_BADGE, PROJECT_STATUS_BADGE, getPhaseBadgeClass, PHASE_SOURCE_CHIP_CLS } from "@/lib/company/badges";
+import { routingColor, routingLabelJa, sourceStatusColor, sourceStatusLabel } from "@/lib/support/labels";
+import { AlertBox } from "@/components/ui/alert-box";
 import type { RiskSignal, OpportunitySignal } from "@/lib/company/health-signal";
 import type { ProjectItemVM } from "@/lib/company/project-aggregate";
 import type { CommunicationEntry } from "@/lib/company/communication-signal";
@@ -81,6 +93,7 @@ import type {
   ContactCandidateAction,
   ContactCandidateSource,
 } from "@/lib/company/contact-candidate";
+import { SUMMARY_POLICY_TEMPLATES } from "@/lib/policy/templates";
 import { ActionCreateDialog }  from "@/components/company/action-create-dialog";
 import { SfTodoDialog }        from "@/components/company/sf-todo-dialog";
 import type { SfTodoCreateResult } from "@/app/api/company/[companyUid]/sf-todos/route";
@@ -135,23 +148,15 @@ function parseItems(arr: unknown[]): RiskItem[] {
 }
 
 // ── Badge helpers ──────────────────────────────────────────────────────────────
+// ROUTING_STATUS_LABEL / CSE_STATUS_LABEL は labels.ts の routingLabelJa/routingColor
+// および sourceStatusLabel/sourceStatusColor に統一。ローカル定義を廃止。
 
-const ROUTING_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
-  unassigned:          { label: '未割当',       cls: 'bg-red-50 text-red-700 border-red-200' },
-  triaged:             { label: 'トリアージ済',  cls: 'bg-amber-50 text-amber-700 border-amber-200' },
-  assigned:            { label: '担当者割当',    cls: 'bg-sky-50 text-sky-700 border-sky-200' },
-  'in progress':       { label: '対応中',        cls: 'bg-blue-50 text-blue-700 border-blue-200' },
-  'waiting on customer': { label: '顧客確認待', cls: 'bg-slate-100 text-slate-600 border-slate-200' },
-  'waiting on cse':    { label: 'CSE待ち',       cls: 'bg-orange-50 text-orange-700 border-orange-200' },
-};
-
-const CSE_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
-  open:              { label: 'Open',        cls: 'bg-red-50 text-red-700 border-red-200' },
-  in_progress:       { label: '対応中',      cls: 'bg-blue-50 text-blue-700 border-blue-200' },
-  waiting_customer:  { label: '顧客確認待',  cls: 'bg-amber-50 text-amber-700 border-amber-200' },
-  resolved:          { label: '解決済',      cls: 'bg-green-50 text-green-700 border-green-200' },
-  closed:            { label: 'Closed',      cls: 'bg-gray-50 text-gray-500 border-gray-200' },
-};
+/** CSE チケットステータスキーを SOURCE_STATUS_COLOR のキー形式に正規化 */
+function normalizeCseStatus(status: string): string {
+  return (status ?? 'open').toLowerCase()
+    .replace(/_/g, ' ')             // in_progress → in progress
+    .replace('waiting customer', 'waiting on customer'); // company-detail 独自表記を吸収
+}
 
 const COMM_SOURCE_ICON: Record<string, React.ReactNode> = {
   chatwork:      <MessageSquare className="w-3 h-3 text-indigo-500 flex-shrink-0" />,
@@ -166,29 +171,63 @@ const COMM_SOURCE_LABEL: Record<string, string> = {
 };
 
 function SeverityDot({ severity }: { severity: string }) {
-  const s = (severity ?? '').toLowerCase();
-  const cls = s === 'critical' ? 'bg-red-500'
-    : s === 'high'    ? 'bg-orange-500'
-    : s === 'medium'  ? 'bg-amber-400'
-    : 'bg-slate-400';
+  const s = (severity ?? '').toLowerCase() as keyof typeof RISK_SEVERITY_BADGE;
+  const cls = RISK_SEVERITY_BADGE[s]?.dotClass ?? 'bg-slate-400';
   return <span className={`w-2 h-2 rounded-full flex-shrink-0 ${cls}`} />;
 }
 
 function PhaseSourceChip({ source }: { source: 'CSM' | 'CRM' | null }) {
   if (!source) return null;
-  const cls = source === 'CSM'
-    ? 'bg-indigo-50 text-indigo-600 border-indigo-200'
-    : 'bg-purple-50 text-purple-600 border-purple-200';
+  const cls = PHASE_SOURCE_CHIP_CLS[source];
   return (
     <Badge variant="outline" className={`text-[10px] py-0 ${cls}`}>{source}</Badge>
   );
 }
 
+// ── Design constants ─────────────────────────────────────────────────────────
+// ad hoc な inline クラス文字列を一箇所に集約する。
+// 変更時はここだけ直せばよい。
+
+/** Tab trigger — 全タブ共通スタイル */
+const TAB_TRIGGER_CLS =
+  'text-xs h-9 px-3 rounded-none border-b-2 border-transparent bg-transparent shadow-none ' +
+  'data-[state=active]:border-indigo-500 data-[state=active]:text-indigo-700 data-[state=active]:font-semibold ' +
+  'data-[state=active]:bg-transparent data-[state=active]:shadow-none ' +
+  'text-slate-500 hover:text-slate-700';
+
+/** Page / Card のセクション大見出し（上段ラベル） */
+const SECTION_HEADER_CLS =
+  'text-[10px] font-semibold text-slate-400 uppercase tracking-wide';
+
+/** セクション内サブ見出し */
+const SUBSECTION_HEADER_CLS =
+  'text-[10px] font-semibold text-slate-500 uppercase tracking-wide';
+
+/** Policy / AI 関連 badge — violet テーマ */
+const POLICY_BADGE_CLS =
+  'text-[10px] py-0 px-1.5 border-violet-200 text-violet-600 bg-violet-50';
+
+/** Summary ポリシー名からアイコン・推奨フラグ・色クラスを推論 */
+function getSpMeta(name: string) {
+  if (name.includes('標準'))           return { icon: '📋', isDefault: true,  colorCls: 'text-green-700 bg-green-50 border-green-200' };
+  if (name.includes('攻略') || name.includes('拡大')) return { icon: '🚀', isDefault: false, colorCls: 'text-blue-700 bg-blue-50 border-blue-200' };
+  if (name.includes('リスク'))          return { icon: '🔍', isDefault: false, colorCls: 'text-amber-700 bg-amber-50 border-amber-200' };
+  if (name.includes('報告') || name.includes('マネージャー')) return { icon: '📊', isDefault: false, colorCls: 'text-slate-600 bg-slate-50 border-slate-200' };
+  if (name.includes('週次'))            return { icon: '🔄', isDefault: false, colorCls: 'text-violet-700 bg-violet-50 border-violet-200' };
+  return                                       { icon: '📋', isDefault: false, colorCls: 'text-slate-600 bg-slate-50 border-slate-200' };
+}
+
+/** Alert strip の level → AlertBox variant 対応 */
+const ALERT_STRIP_VARIANT = {
+  error: 'error',
+  warn:  'warning',
+  info:  'info',
+} as const satisfies Record<string, import('@/components/ui/alert-box').AlertBoxVariant>;
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 // /api/company/[companyUid] はUIルートのため checkBatchAuth 不要。
-// ただし既存の ops / batch ルートは Bearer が必要なため、ここでトークンを保持しておく。
-const BATCH_TOKEN = process.env.NEXT_PUBLIC_SUPPORT_BATCH_SECRET ?? '';
+// Summary 生成・保存・詳細取得はすべて /api/company/[uid]/... ルート（認証不要）。
 
 export function CompanyDetail() {
   const params = useParams();
@@ -210,6 +249,18 @@ export function CompanyDetail() {
   const [summaryReviewing,     setSummaryReviewing]     = useState(false);
   const [summaryResult,        setSummaryResult]        = useState<CompanyEvidenceSummaryApiResponse | null>(null);
   const [summaryError,         setSummaryError]         = useState<string | null>(null);
+
+  // ── Policy 一覧（summary selector + policy alert name 解決に共用）────────
+  const [allPolicies, setAllPolicies] = useState<{
+    policyId:          string;
+    name:              string;
+    policyType:        string;
+    status?:           string;
+    generationTrigger?: string;
+    description?:      string;
+    summaryFocus?:     string;
+  }[]>([]);
+  const [selectedPolicyId, setSelectedPolicyId] = useState<string>('__default__');
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [activeTab,  setActiveTab]  = useState("overview");
@@ -279,6 +330,54 @@ export function CompanyDetail() {
   const summaryVM   = buildCompanySummaryViewModel(savedRecord);
   const summaryBusy = summaryLoading || summarySaving || summaryReviewing;
 
+  // ── Derived policy values ────────────────────────────────────────────────
+  /** policyId → name の逆引き Map（alert + summary 両方） */
+  const policyNameMap = useMemo(
+    () => new Map(allPolicies.map(p => [p.policyId, p.name])),
+    [allPolicies],
+  );
+  /**
+   * Summary セレクター用リスト。
+   * ① 組み込みテンプレート（保存不要・inline summary_focus 使用）
+   * ② 保存済み active / draft ポリシー（paused / archived は除外）
+   *
+   * id が "__tmpl__" プレフィックスのものは inline 扱い（summary_focus を POST）。
+   * それ以外は policy_id を POST してサーバー側で内容を解決する。
+   */
+  const summaryPoliciesForSelector = useMemo(() => {
+    // ① 組み込みテンプレート
+    const builtins = SUMMARY_POLICY_TEMPLATES
+      .filter(t => (t.policy as { target?: string }).target === 'company_summary')
+      .map(t => ({
+        policyId:          `__tmpl__${t.id}`,
+        name:              t.name,
+        policyType:        'summary' as const,
+        status:            'builtin' as string,
+        generationTrigger: undefined,
+        description:       t.description,
+        summaryFocus:      (t.policy as { summary_focus?: string }).summary_focus,
+        isBuiltin:         true,
+        isDraft:           false,
+      }));
+
+    // ② 保存済みポリシー（active + draft。paused・archived は除外）
+    const saved = allPolicies
+      .filter(p => p.policyType === 'summary' && (p.status === 'active' || p.status === 'draft'))
+      .map(p => ({
+        policyId:          p.policyId,
+        name:              p.name,
+        policyType:        'summary' as const,
+        status:            p.status ?? 'draft',
+        generationTrigger: p.generationTrigger,
+        description:       p.description,
+        summaryFocus:      p.summaryFocus,
+        isBuiltin:         false,
+        isDraft:           p.status === 'draft',
+      }));
+
+    return { builtins, saved };
+  }, [allPolicies]);
+
   // ── Data fetch ────────────────────────────────────────────────────────────
   // /api/company/[companyUid] は UI向けルート（Bearer 認証不要）
   // TODO: サーバーサイドフェッチ or SWR に移行してクライアント再計算を減らすこと
@@ -288,8 +387,8 @@ export function CompanyDetail() {
     setLoadError(null);
     fetch(`/api/company/${companyId}`)
       .then(r => {
-        if (r.status === 401) throw new Error('company詳細API: 認証エラー（SUPPORT_BATCH_SECRET の設定を確認）');
-        if (r.status === 404) throw new Error(`company詳細API: 企業が見つかりません (uid: ${companyId})`);
+        if (r.status === 503) return r.json().then((e: { error?: string }) => Promise.reject(`データベース接続エラー。しばらく待ってから再試行してください。`));
+        if (r.status === 404) throw new Error(`この企業は見つかりませんでした (uid: ${companyId})`);
         if (!r.ok) return r.json().then((e: { error?: string }) => Promise.reject(`company詳細API: ${e.error ?? `HTTP ${r.status}`}`));
         return r.json();
       })
@@ -304,6 +403,35 @@ export function CompanyDetail() {
   }, [companyId]);
 
   useEffect(() => { loadDetail(); }, [loadDetail]);
+
+  // ── Policy 一覧（summary selector + alert name 解決に共用、初回のみ取得）──
+  useEffect(() => {
+    // type 指定なし: alert + summary 両方を取得
+    fetch('/api/ops/policies?limit=200')
+      .then(r => r.ok ? r.json() : null)
+      .then((data: { items?: {
+        policyId: string; name: string; policyType: string; status?: string;
+        description?: string;
+        summaryPolicy?: { generation_trigger?: string; summary_focus?: string };
+      }[] } | null) => {
+        if (data?.items) {
+          setAllPolicies(
+            data.items
+              .filter(p => p.status !== 'archived')
+              .map(p => ({
+                policyId:          p.policyId,
+                name:              p.name,
+                policyType:        p.policyType,
+                status:            p.status,
+                generationTrigger: p.summaryPolicy?.generation_trigger,
+                description:       p.description,
+                summaryFocus:      p.summaryPolicy?.summary_focus,
+              })),
+          );
+        }
+      })
+      .catch(() => { /* silent — policy 情報は optional */ });
+  }, []);
 
   // ── Actions 初期ロード ────────────────────────────────────────────────────
   useEffect(() => {
@@ -342,8 +470,23 @@ export function CompanyDetail() {
 
   async function generateCompanySummary() {
     setSummaryLoading(true); setSummaryError(null); setShowSummarySheet(true);
+
+    // __tmpl__ プレフィックス → inline summary_focus を使用（保存不要）
+    // それ以外 → 保存済み policy_id を使用（draft でも生成可能）
+    let body: Record<string, string> = {};
+    if (selectedPolicyId.startsWith('__tmpl__')) {
+      const sp = summaryPoliciesForSelector.builtins.find(p => p.policyId === selectedPolicyId);
+      if (sp?.summaryFocus) body = { summary_focus: sp.summaryFocus };
+    } else if (selectedPolicyId !== '__default__') {
+      body = { policy_id: selectedPolicyId };
+    }
+
     try {
-      const res = await fetch(`/api/company/${companyId}/summary`, { method: 'POST' });
+      const res = await fetch(`/api/company/${companyId}/summary`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`);
       setSummaryResult(await res.json() as CompanyEvidenceSummaryApiResponse);
     } catch (e) { setSummaryError(e instanceof Error ? e.message : String(e)); }
@@ -379,6 +522,7 @@ export function CompanyDetail() {
           evidence_count:          summaryResult.evidence_count,
           alert_count:             summaryResult.alert_count,
           people_count:            summaryResult.people_count,
+          applied_policy_id:       summaryResult.applied_policy_id ?? null,
         }),
       });
       const data = await res.json() as { saved: boolean; created: boolean; save_error?: string };
@@ -615,13 +759,7 @@ export function CompanyDetail() {
                           className="flex items-center gap-1 flex-shrink-0 cursor-pointer"
                           onClick={() => setActiveTab('overview')}
                         >
-                          <Badge variant="outline" className={`text-[10px] py-0 flex-shrink-0 ${
-                            phase.hasGap
-                              ? 'bg-amber-50 text-amber-700 border-amber-300'
-                              : phase.isStagnant
-                              ? 'bg-orange-50 text-orange-700 border-orange-200'
-                              : 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                          }`}>
+                          <Badge variant="outline" className={`text-[10px] py-0 flex-shrink-0 ${getPhaseBadgeClass({ hasGap: phase.hasGap, isStagnant: phase.isStagnant })}`}>
                             {phase.primaryPhaseLabel}
                           </Badge>
                           <PhaseSourceChip source={phase.primarySource} />
@@ -818,21 +956,23 @@ export function CompanyDetail() {
 
             {/* ── Layer 3: Alert Strip（文脈付き警告） ───────────────────── */}
             {alertItems.length > 0 && (
-              <div className="border-t border-slate-100">
+              <div className="border-t border-slate-100 space-y-0">
                 {alertItems.map(item => (
-                  <div key={item.key} className={`px-5 py-1 flex items-center gap-2 text-[10px] ${
-                    item.level === 'error' ? 'bg-red-50 text-red-700 border-b border-red-100' :
-                    item.level === 'warn'  ? 'bg-amber-50 text-amber-700 border-b border-amber-100' :
-                    'bg-sky-50 text-sky-700 border-b border-sky-100'
-                  }`}>
-                    <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                    <span>{item.label}</span>
-                    {item.action && item.actionLabel && (
-                      <button className="ml-1 underline font-medium" onClick={item.action}>
-                        {item.actionLabel}
-                      </button>
-                    )}
-                  </div>
+                  <AlertBox
+                    key={item.key}
+                    variant={ALERT_STRIP_VARIANT[item.level]}
+                    size="sm"
+                    className="rounded-none border-x-0 border-t-0 text-[10px]"
+                  >
+                    <span className="flex items-center gap-2">
+                      {item.label}
+                      {item.action && item.actionLabel && (
+                        <button className="underline font-medium flex-shrink-0" onClick={item.action}>
+                          {item.actionLabel}
+                        </button>
+                      )}
+                    </span>
+                  </AlertBox>
                 ))}
               </div>
             )}
@@ -848,15 +988,11 @@ export function CompanyDetail() {
           >
             <TabsList className="flex-shrink-0 bg-white border-b rounded-none h-9 px-5 justify-start gap-0 p-0">
               <TabsTrigger value="overview"
-                className="text-xs h-9 px-3 rounded-none border-b-2 border-transparent bg-transparent shadow-none
-                  data-[state=active]:border-indigo-500 data-[state=active]:text-indigo-700 data-[state=active]:font-semibold data-[state=active]:bg-transparent data-[state=active]:shadow-none
-                  text-slate-500 hover:text-slate-700">
+                className={TAB_TRIGGER_CLS}>
                 Overview
               </TabsTrigger>
               <TabsTrigger value="actions"
-                className="text-xs h-9 px-3 rounded-none border-b-2 border-transparent bg-transparent shadow-none
-                  data-[state=active]:border-indigo-500 data-[state=active]:text-indigo-700 data-[state=active]:font-semibold data-[state=active]:bg-transparent data-[state=active]:shadow-none
-                  text-slate-500 hover:text-slate-700">
+                className={TAB_TRIGGER_CLS}>
                 Actions
                 {localActions.filter(a => a.status === 'open' || a.status === 'in_progress').length > 0 && (
                   <span className="ml-1 text-[9px] bg-blue-100 text-blue-700 rounded-full px-1 py-0">
@@ -865,27 +1001,19 @@ export function CompanyDetail() {
                 )}
               </TabsTrigger>
               <TabsTrigger value="support"
-                className="text-xs h-9 px-3 rounded-none border-b-2 border-transparent bg-transparent shadow-none
-                  data-[state=active]:border-indigo-500 data-[state=active]:text-indigo-700 data-[state=active]:font-semibold data-[state=active]:bg-transparent data-[state=active]:shadow-none
-                  text-slate-500 hover:text-slate-700">
+                className={TAB_TRIGGER_CLS}>
                 {supportTabLabel}
               </TabsTrigger>
               <TabsTrigger value="projects"
-                className="text-xs h-9 px-3 rounded-none border-b-2 border-transparent bg-transparent shadow-none
-                  data-[state=active]:border-indigo-500 data-[state=active]:text-indigo-700 data-[state=active]:font-semibold data-[state=active]:bg-transparent data-[state=active]:shadow-none
-                  text-slate-500 hover:text-slate-700">
+                className={TAB_TRIGGER_CLS}>
                 {projectTabLabel}
               </TabsTrigger>
               <TabsTrigger value="communication"
-                className="text-xs h-9 px-3 rounded-none border-b-2 border-transparent bg-transparent shadow-none
-                  data-[state=active]:border-indigo-500 data-[state=active]:text-indigo-700 data-[state=active]:font-semibold data-[state=active]:bg-transparent data-[state=active]:shadow-none
-                  text-slate-500 hover:text-slate-700">
+                className={TAB_TRIGGER_CLS}>
                 Communication
               </TabsTrigger>
               <TabsTrigger value="people"
-                className="text-xs h-9 px-3 rounded-none border-b-2 border-transparent bg-transparent shadow-none
-                  data-[state=active]:border-indigo-500 data-[state=active]:text-indigo-700 data-[state=active]:font-semibold data-[state=active]:bg-transparent data-[state=active]:shadow-none
-                  text-slate-500 hover:text-slate-700">
+                className={TAB_TRIGGER_CLS}>
                 {peopleTabLabel}
               </TabsTrigger>
             </TabsList>
@@ -894,86 +1022,30 @@ export function CompanyDetail() {
             <TabsContent value="overview" className="flex-1 overflow-hidden m-0">
               <div className="h-full overflow-auto p-4 space-y-3">
 
-                {/* ════ A: 現在地 ════════════════════════════════════════════ */}
+                {/* ════ A: AI インサイト ══════════════════════════════════════ */}
+                {/* AI Summary を主役に: 左列で広く見せ、Phase/Health を右コンパクト列に */}
                 <section className="bg-white border rounded-lg p-4">
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-3">現在地</p>
+                  <p className={`${SECTION_HEADER_CLS} mb-3`}>AI インサイト</p>
                   <div className="flex items-start gap-5 flex-wrap">
 
-                    {/* Phase */}
-                    <div className="space-y-1 min-w-[90px]">
-                      <p className="text-[10px] text-slate-400">Phase</p>
-                      {phase?.primaryPhaseLabel ? (
-                        <div>
-                          <div className="flex items-center gap-1 flex-wrap">
-                            <span className="text-sm font-semibold text-slate-800">{phase.primaryPhaseLabel}</span>
-                            <PhaseSourceChip source={phase.primarySource} />
-                          </div>
-                          {phase.isComparable && phase.secondaryPhaseLabel && (
-                            <p className="text-[10px] text-slate-400 mt-0.5">
-                              {phase.secondarySource}: {phase.secondaryPhaseLabel}
-                              {phase.hasGap && <span className="text-amber-600 ml-1">⚠ 差分</span>}
-                            </p>
-                          )}
-                          {phase.isStagnant && phase.stagnationDays !== null && (
-                            <p className="text-[10px] text-orange-500 mt-0.5">{phase.stagnationDays}日間停滞</p>
-                          )}
-                          {phase.primaryOwner && (
-                            <p className="text-[10px] text-slate-400 mt-0.5">{phase.primaryOwner}</p>
-                          )}
-                          {phase.daysUntilRenewal !== null && (
-                            <p className={`text-[10px] mt-0.5 ${phase.daysUntilRenewal < 60 ? 'text-red-600 font-medium' : 'text-slate-400'}`}>
-                              更新まで {phase.daysUntilRenewal}日
-                            </p>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-slate-400">未設定</span>
-                      )}
-                    </div>
-
-                    <div className="w-px bg-slate-200 self-stretch flex-shrink-0" />
-
-                    {/* Health */}
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-slate-400">Health</p>
-                      <Badge variant="outline" className={`text-xs ${healthBadge.className}`}>
-                        {healthBadge.label}
-                      </Badge>
-                      {/* dominant signal — At Risk / Critical の根拠を 1 行表示 */}
-                      {(health?.riskSignals?.length ?? 0) > 0 && (
-                        <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">
-                          {health!.riskSignals[0].title}
-                          {health!.riskSignals.length > 1 && (
-                            <span className="text-slate-400"> +{health!.riskSignals.length - 1}</span>
-                          )}
-                        </p>
-                      )}
-                      {savedRecord?.overallHealth && savedRecord.overallHealth !== health?.overallHealth && (
-                        <p className="text-[10px] text-slate-400 mt-0.5">
-                          AI: {getHealthBadge(savedRecord.overallHealth).label}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="w-px bg-slate-200 self-stretch flex-shrink-0" />
-
-                    {/* AI Summary */}
-                    <div className="space-y-1 flex-1 min-w-[180px]">
+                    {/* ── AI Summary（主役・左列・flex-1）── */}
+                    <div className="space-y-1.5 flex-1 min-w-[220px]">
                       <div className="flex items-center justify-between">
-                        <p className="text-[10px] text-slate-400">AI Summary</p>
+                        <div className="flex items-center gap-2">
+                          <SummaryStateBadge vm={summaryVM} record={savedRecord} variant="inline" />
+                        </div>
                         {summaryVM.hasSummary && (
                           <button
-                            className="text-[10px] text-violet-600 hover:underline"
+                            className="text-[10px] text-indigo-500 hover:underline flex-shrink-0"
                             onClick={() => setShowSummarySheet(true)}
                           >
                             詳細・レビュー →
                           </button>
                         )}
                       </div>
-                      <SummaryStateBadge vm={summaryVM} record={savedRecord} variant="inline" />
                       {!summaryVM.hasSummary && (
                         <button
-                          className="mt-1 text-[10px] text-violet-600 hover:text-violet-800 hover:underline flex items-center gap-0.5"
+                          className="text-[10px] text-indigo-500 hover:text-indigo-700 hover:underline flex items-center gap-0.5"
                           onClick={generateCompanySummary}
                           disabled={summaryBusy}
                         >
@@ -982,52 +1054,371 @@ export function CompanyDetail() {
                         </button>
                       )}
                       {savedRecord?.aiSummary && (
-                        <p className="text-[11px] text-slate-600 leading-relaxed line-clamp-2 mt-1 border-l-2 border-violet-100 pl-2">
+                        <p className="text-[11px] text-slate-700 leading-relaxed line-clamp-4 border-l-2 border-indigo-200 pl-2">
                           {savedRecord.aiSummary}
                         </p>
                       )}
-                      {/* AI 要点: Key Risks / Opportunities（各2件まで） */}
-                      {(savedRecord?.keyRisks || savedRecord?.keyOpportunities) && (
-                        <div className="mt-2 space-y-0.5">
-                          {savedRecord.keyRisks && parseItems(savedRecord.keyRisks as unknown[]).slice(0, 2).map((r, i) => (
-                            <div key={`r${i}`} className="flex items-baseline gap-1 text-[10px] text-slate-600">
-                              <AlertTriangle className="w-2.5 h-2.5 text-red-400 flex-shrink-0 translate-y-px" />
-                              <span className="line-clamp-1">{r.title}</span>
-                            </div>
-                          ))}
+                      {/* AI 要点: Opportunities → Risks の順（機会を先に） */}
+                      {(savedRecord?.keyOpportunities || savedRecord?.keyRisks) && (
+                        <div className="space-y-0.5 pt-0.5">
                           {savedRecord.keyOpportunities && parseItems(savedRecord.keyOpportunities as unknown[]).slice(0, 2).map((o, i) => (
                             <div key={`o${i}`} className="flex items-baseline gap-1 text-[10px] text-slate-600">
-                              <TrendingUp className="w-2.5 h-2.5 text-green-500 flex-shrink-0 translate-y-px" />
+                              <TrendingUp className="w-2.5 h-2.5 text-indigo-400 flex-shrink-0 translate-y-px" />
                               <span className="line-clamp-1">{o.title}</span>
+                            </div>
+                          ))}
+                          {savedRecord.keyRisks && parseItems(savedRecord.keyRisks as unknown[]).slice(0, 1).map((r, i) => (
+                            <div key={`r${i}`} className="flex items-baseline gap-1 text-[10px] text-slate-400">
+                              <AlertTriangle className="w-2 h-2 text-amber-400 flex-shrink-0 translate-y-px" />
+                              <span className="line-clamp-1">{r.title}</span>
                             </div>
                           ))}
                         </div>
                       )}
                     </div>
+
+                    <div className="w-px bg-slate-100 self-stretch flex-shrink-0" />
+
+                    {/* ── Phase + Health（補助・右コンパクト列）── */}
+                    <div className="flex-shrink-0 space-y-3 min-w-[130px]">
+
+                      {/* Phase */}
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] text-slate-400">Phase</p>
+                        {phase?.primaryPhaseLabel ? (
+                          <div>
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <span className="text-xs font-medium text-slate-700">{phase.primaryPhaseLabel}</span>
+                              <PhaseSourceChip source={phase.primarySource} />
+                            </div>
+                            {phase.isStagnant && phase.stagnationDays !== null && (
+                              <p className="text-[10px] text-amber-500 mt-0.5">{phase.stagnationDays}日間停滞</p>
+                            )}
+                            {phase.hasGap && (
+                              <p className="text-[10px] text-amber-600 mt-0.5">⚠ フェーズ差分</p>
+                            )}
+                            {phase.daysUntilRenewal !== null && (
+                              <p className={`text-[10px] mt-0.5 ${phase.daysUntilRenewal < 60 ? 'text-red-600 font-medium' : 'text-slate-400'}`}>
+                                更新まで {phase.daysUntilRenewal}日
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-slate-400">未設定</span>
+                        )}
+                      </div>
+
+                      {/* Health */}
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] text-slate-400">Health</p>
+                        <Badge variant="outline" className={`text-xs ${healthBadge.className}`}>
+                          {healthBadge.label}
+                        </Badge>
+                        {(health?.riskSignals?.length ?? 0) > 0 && (
+                          <p className="text-[10px] text-slate-500 leading-snug">
+                            {health!.riskSignals[0].title}
+                            {health!.riskSignals.length > 1 && (
+                              <TooltipProvider delayDuration={200}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="text-slate-400 cursor-help underline decoration-dotted decoration-slate-300 ml-0.5">
+                                      +{health!.riskSignals.length - 1}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="bottom" className="text-xs max-w-[220px]">
+                                    <ul className="space-y-1">
+                                      {health!.riskSignals.slice(1).map(s => (
+                                        <li key={s.id} className="flex items-center gap-1.5">
+                                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                                            s.severity === 'critical' ? 'bg-red-500'
+                                            : s.severity === 'high'   ? 'bg-orange-400'
+                                            : 'bg-amber-300'
+                                          }`} />
+                                          {s.title}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                          </p>
+                        )}
+                        {(detail?.alerts?.length ?? 0) > 0 && (
+                          <button
+                            className="text-[10px] text-amber-600 hover:text-amber-800 hover:underline flex items-center gap-0.5"
+                            onClick={() => {
+                              setActiveTab('overview');
+                              setTimeout(() => {
+                                document.getElementById('alerts-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                              }, 50);
+                            }}
+                          >
+                            <AlertTriangle className="w-2.5 h-2.5" />
+                            アラート {detail!.alerts!.length}件
+                            {policyAlerts.length > 0 && (
+                              <span className="text-slate-400 font-normal ml-0.5">
+                                （Policy {policyAlerts.length}）
+                              </span>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </section>
 
-                {/* ════ B: 注意が必要なこと ══════════════════════════════════ */}
+                {/* ════ B: 機会と次の一手 ════════════════════════════════════ */}
                 <section className="bg-white border rounded-lg p-4">
-                  <h2 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                    <ShieldAlert className="w-3 h-3" />
-                    注意が必要なこと
+                  <h2 className={`${SECTION_HEADER_CLS} mb-3 flex items-center gap-1.5`}>
+                    <TrendingUp className="w-3 h-3" />
+                    機会と次の一手
+                  </h2>
+
+                  <div className="space-y-4">
+                    {/* Opportunity signals */}
+                    {(health?.opportunitySignals ?? []).length > 0 ? (
+                      <div className="space-y-2">
+                        <p className={SUBSECTION_HEADER_CLS}>機会シグナル</p>
+                        {(health?.opportunitySignals ?? []).map(sig => (
+                          <OpportunitySignalRow
+                            key={sig.id}
+                            signal={sig}
+                            onActionCTA={(s, cta) => openActionDialog(buildOpportunitySignalPrefill(s, cta))}
+                            onSfTodoCTA={(s, cta) => openSfTodoDialog({
+                              prefillTitle:     cta.suggestedAction,
+                              relatedSignalId:  s.id,
+                              relatedSignalRef: s.title,
+                            })}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <p className="text-xs text-slate-600 font-medium">安定運用中</p>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          拡大シグナルは現在検出されていません。維持観点で定期確認し、次の提案余地を探りましょう。
+                        </p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] text-slate-400">確認先:</span>
+                          <button className="text-[11px] text-indigo-400 hover:underline" onClick={() => setActiveTab('projects')}>→ プロジェクト</button>
+                          <button className="text-[11px] text-indigo-400 hover:underline" onClick={() => setActiveTab('support')}>→ サポート</button>
+                          <button className="text-[11px] text-indigo-400 hover:underline" onClick={() => setActiveTab('communication')}>→ ログ</button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* AI Recommended Next Action */}
+                    {savedRecord?.recommendedNextAction && (
+                      <>
+                        {(health?.opportunitySignals ?? []).length > 0 && <Separator />}
+                        <div className="space-y-1.5">
+                          <p className={SUBSECTION_HEADER_CLS}>AI 推奨アクション</p>
+                          <AlertBox variant="policy" size="sm">
+                            <div className="flex items-start gap-2">
+                              <p className="leading-relaxed flex-1">{savedRecord.recommendedNextAction}</p>
+                              <button
+                                className="text-[10px] text-indigo-600 hover:underline flex-shrink-0"
+                                onClick={() => openActionDialog(MANUAL_PREFILL)}
+                              >
+                                + Action
+                              </button>
+                            </div>
+                          </AlertBox>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Summary: missing/stale → generate CTA */}
+                    {(summaryIsMissing || summaryIsStale) && (
+                      <>
+                        <Separator />
+                        <div className="space-y-1.5">
+                          <p className={SUBSECTION_HEADER_CLS}>AI Summary</p>
+                          <div className="border border-dashed border-indigo-200 rounded p-2.5 space-y-2">
+                            <p className="text-xs text-slate-500">
+                              {summaryIsMissing
+                                ? 'AI Summary 未生成。Evidence・Alert・People データを元に自動生成できます。'
+                                : 'AI Summary が古くなっています（30日以上）。最新データで更新してください。'}
+                            </p>
+                            <div className="space-y-1">
+                              <Select value={selectedPolicyId} onValueChange={setSelectedPolicyId}>
+                                <SelectTrigger className="h-7 text-xs border-indigo-200 text-indigo-700 bg-white">
+                                  <SelectValue placeholder="ポリシーを選択" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__default__" className="text-xs">
+                                    <span className="text-slate-400">デフォルト（フォーカス指定なし）</span>
+                                  </SelectItem>
+                                  <SelectGroup>
+                                    <SelectLabel className="text-[10px] text-slate-400 px-2 py-1">組み込みテンプレート</SelectLabel>
+                                    {summaryPoliciesForSelector.builtins.map(p => {
+                                      const meta = getSpMeta(p.name);
+                                      return (
+                                        <SelectItem key={p.policyId} value={p.policyId} className="text-xs">
+                                          <div className="flex flex-col gap-0.5 py-0.5">
+                                            <div className="flex items-center gap-1.5">
+                                              <span>{meta.icon}</span>
+                                              <span className="font-medium text-slate-800">{p.name}</span>
+                                              {meta.isDefault && (
+                                                <span className="text-[9px] bg-green-600 text-white px-1 rounded">推奨</span>
+                                              )}
+                                            </div>
+                                            {p.description && (
+                                              <span className="text-[10px] text-slate-400 leading-snug max-w-[260px] truncate">{p.description}</span>
+                                            )}
+                                          </div>
+                                        </SelectItem>
+                                      );
+                                    })}
+                                  </SelectGroup>
+                                  {summaryPoliciesForSelector.saved.length > 0 && (
+                                    <>
+                                      <SelectSeparator />
+                                      <SelectGroup>
+                                        <SelectLabel className="text-[10px] text-slate-400 px-2 py-1">カスタムポリシー</SelectLabel>
+                                        {summaryPoliciesForSelector.saved.map(p => {
+                                          const meta = getSpMeta(p.name);
+                                          return (
+                                            <SelectItem key={p.policyId} value={p.policyId} className="text-xs">
+                                              <div className="flex flex-col gap-0.5 py-0.5">
+                                                <div className="flex items-center gap-1.5">
+                                                  <span>{meta.icon}</span>
+                                                  <span className={`font-medium ${p.isDraft ? 'text-slate-500' : 'text-slate-800'}`}>{p.name}</span>
+                                                  {p.isDraft && (
+                                                    <span className="text-[9px] bg-amber-100 text-amber-700 border border-amber-200 px-1 rounded">試作中</span>
+                                                  )}
+                                                </div>
+                                                {p.description && (
+                                                  <span className="text-[10px] text-slate-400 leading-snug max-w-[260px] truncate">{p.description}</span>
+                                                )}
+                                              </div>
+                                            </SelectItem>
+                                          );
+                                        })}
+                                      </SelectGroup>
+                                    </>
+                                  )}
+                                </SelectContent>
+                              </Select>
+                              {/* 選択中ポリシーの用途ヒント */}
+                            </div>
+                            <Button
+                              size="sm" variant="outline"
+                              className="h-7 text-xs gap-1.5 border-indigo-200 text-indigo-700"
+                              onClick={generateCompanySummary}
+                              disabled={summaryBusy}
+                            >
+                              {summaryLoading
+                                ? <Loader2 className="w-3 h-3 animate-spin" />
+                                : <Sparkles className="w-3 h-3" />
+                              }
+                              {summaryIsMissing ? 'AI Summary を生成' : 'Summary を更新'}
+                            </Button>
+                            <p className="text-[10px] text-slate-400">プレビューのみ。保存は Sheet 内で行います</p>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Summary: fresh/approved → review buttons */}
+                    {summaryVM.hasSummary && savedRecord && !summaryIsMissing && !summaryIsStale && (
+                      <>
+                        <Separator />
+                        <div className="space-y-1.5">
+                          <p className={SUBSECTION_HEADER_CLS}>Summary レビュー</p>
+                          <div className="flex gap-1.5 flex-wrap">
+                            {summaryVM.isApproved ? (
+                              <Button
+                                size="sm" variant="outline"
+                                className="h-7 text-xs gap-1 border-amber-200 text-amber-700"
+                                onClick={() => setShowDowngradeConfirm(true)}
+                                disabled={summaryBusy}
+                              >
+                                <Lock className="w-3 h-3" /> 承認解除
+                              </Button>
+                            ) : (
+                              <>
+                                {summaryVM.canRegenerate && (
+                                  <>
+                                    <Button size="sm" variant="outline"
+                                      className="h-7 text-xs gap-1 border-slate-200 text-slate-700"
+                                      onClick={() => handleReview('reviewed')} disabled={summaryBusy}>
+                                      <CheckCircle2 className="w-3 h-3" /> 確認済
+                                    </Button>
+                                    <TooltipProvider delayDuration={400}>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button size="sm" variant="outline"
+                                            className="h-7 text-xs gap-1 border-indigo-200 text-indigo-700"
+                                            onClick={() => handleReview('approved')} disabled={summaryBusy}>
+                                            <CheckCircle2 className="w-3 h-3" /> 承認
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" className="text-xs max-w-[200px]">
+                                          承認後は on_event・定期バッチによる自動再生成がスキップされます
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                  </>
+                                )}
+                                <Button size="sm" variant="outline"
+                                  className="h-7 text-xs gap-1 border-indigo-200 text-indigo-700"
+                                  onClick={handleRegenerate}
+                                  disabled={summaryBusy || !summaryVM.canRegenerate}
+                                >
+                                  {summaryLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                                  再生成して保存
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                          {summaryError && <p className="text-xs text-red-600">{summaryError}</p>}
+                        </div>
+                      </>
+                    )}
+
+                    <Separator />
+
+                    {/* Action 導線 */}
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <button
+                        className="text-xs text-indigo-600 hover:underline font-medium"
+                        onClick={() => openActionDialog(MANUAL_PREFILL)}
+                      >
+                        + Action 作成
+                      </button>
+                      <span className="text-slate-200">|</span>
+                      <button
+                        className="text-xs text-indigo-600 hover:underline"
+                        onClick={() => openSfTodoDialog({})}
+                      >
+                        + SF ToDo
+                      </button>
+                      <span className="text-slate-200">|</span>
+                      <button
+                        className="text-xs text-indigo-600 hover:underline"
+                        onClick={() => { setContactDialogPerson(undefined); setContactDialogOpen(true); }}
+                      >
+                        + 連絡先追加
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                {/* ════ C: 要注意事項 ══════════════════════════════════════════ */}
+                <section id="alerts-section" className="bg-white border rounded-lg p-4">
+                  <h2 className={`${SECTION_HEADER_CLS} mb-3 flex items-center gap-1.5`}>
+                    <AlertTriangle className="w-3 h-3 text-amber-400" />
+                    要注意事項
                   </h2>
 
                   {(health?.riskSignals ?? []).length === 0 && orgVM.peopleRisks.length === 0 && policyAlerts.length === 0 ? (
-                    <div className="flex items-start gap-2.5 text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded px-3 py-2.5">
-                      <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-medium text-slate-700">現在大きなリスクシグナルはありません</p>
-                        <p className="text-[10px] text-slate-400 mt-0.5">
-                          Support・People・Communication・Phase に異常は検出されていません
-                        </p>
-                      </div>
-                    </div>
+                    <p className="text-[11px] text-slate-400">リスクシグナルは検出されていません</p>
                   ) : (
                     <div className="space-y-4">
 
-                      {/* Health Risk signals (support-critical / comm blank / phase gap / project stalled etc.) */}
+                      {/* Health Risk signals */}
                       {(health?.riskSignals ?? []).length > 0 && (
                         <div className="space-y-2">
                           {(health?.riskSignals ?? []).map(sig => (
@@ -1050,20 +1441,37 @@ export function CompanyDetail() {
                       {policyAlerts.length > 0 && (
                         <div className="space-y-2">
                           {(health?.riskSignals ?? []).length > 0 && <Separator />}
-                          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Policy アラート</p>
+                          <p className={SUBSECTION_HEADER_CLS}>Policy アラート</p>
                           {policyAlerts.map(a => {
                             const dot = a.severity === 'high'
                               ? 'bg-orange-500'
                               : a.severity === 'low'
                               ? 'bg-slate-400'
                               : 'bg-amber-400';
+                            const policyId   = a.source ? a.source.slice('policy:'.length) : undefined;
+                            const policyName = policyId ? policyNameMap.get(policyId) : undefined;
+                            const tooltipText = policyName
+                              ? `ポリシー「${policyName}」の条件でヒットしました`
+                              : 'ポリシーベースのアラートです';
                             return (
                               <div key={a.id} className="flex items-start gap-2 text-sm">
                                 <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5 ${dot}`} />
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="text-slate-700 font-medium text-xs">{a.title}</span>
-                                    <Badge variant="outline" className="text-[10px] py-0 border-violet-200 text-violet-600 bg-violet-50">Policy</Badge>
+                                    <TooltipProvider delayDuration={300}>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Badge variant="outline" className={`${POLICY_BADGE_CLS} gap-1 cursor-help`}>
+                                            <Zap className="w-2.5 h-2.5" />
+                                            {policyName ?? 'Policy'}
+                                          </Badge>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top" className="max-w-[200px] text-xs">
+                                          {tooltipText}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
                                   </div>
                                   {a.description && (
                                     <p className="text-[11px] text-slate-500 mt-0.5">{a.description}</p>
@@ -1075,11 +1483,11 @@ export function CompanyDetail() {
                         </div>
                       )}
 
-                      {/* People risks (not included in health signals) */}
+                      {/* People risks */}
                       {orgVM.peopleRisks.length > 0 && (
                         <div className="space-y-2">
                           {((health?.riskSignals ?? []).length > 0 || policyAlerts.length > 0) && <Separator />}
-                          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">People リスク</p>
+                          <p className={SUBSECTION_HEADER_CLS}>People リスク</p>
                           {orgVM.peopleRisks.map((risk, i) => {
                             const person = orgVM.persons.find(p => p.id === risk.personId);
                             return (
@@ -1116,165 +1524,9 @@ export function CompanyDetail() {
                   )}
                 </section>
 
-                {/* ════ C: 機会と次の一手 ════════════════════════════════════ */}
-                <section className="bg-white border rounded-lg p-4">
-                  <h2 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                    <TrendingUp className="w-3 h-3" />
-                    機会と次の一手
-                  </h2>
-
-                  <div className="space-y-4">
-                    {/* Opportunity signals */}
-                    {(health?.opportunitySignals ?? []).length > 0 ? (
-                      <div className="space-y-2">
-                        <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">機会シグナル</p>
-                        {(health?.opportunitySignals ?? []).map(sig => (
-                          <OpportunitySignalRow
-                            key={sig.id}
-                            signal={sig}
-                            onActionCTA={(s, cta) => openActionDialog(buildOpportunitySignalPrefill(s, cta))}
-                            onSfTodoCTA={(s, cta) => openSfTodoDialog({
-                              prefillTitle:     cta.suggestedAction,
-                              relatedSignalId:  s.id,
-                              relatedSignalRef: s.title,
-                            })}
-                          />
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-slate-400">機会シグナルなし</p>
-                    )}
-
-                    {/* AI Recommended Next Action */}
-                    {savedRecord?.recommendedNextAction && (
-                      <>
-                        {(health?.opportunitySignals ?? []).length > 0 && <Separator />}
-                        <div className="space-y-1.5">
-                          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">AI 推奨アクション</p>
-                          <div className="bg-violet-50 border border-violet-100 rounded p-2.5 text-xs text-violet-800">
-                            <div className="flex items-start gap-2">
-                              <p className="leading-relaxed flex-1">{savedRecord.recommendedNextAction}</p>
-                              <button
-                                className="text-[10px] text-violet-600 hover:underline flex-shrink-0"
-                                onClick={() => openActionDialog(MANUAL_PREFILL)}
-                              >
-                                + Action
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </>
-                    )}
-
-                    {/* Summary: missing/stale → generate CTA */}
-                    {(summaryIsMissing || summaryIsStale) && (
-                      <>
-                        <Separator />
-                        <div className="space-y-1.5">
-                          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">AI Summary</p>
-                          <div className="border border-dashed border-violet-200 rounded p-2.5">
-                            <p className="text-xs text-slate-500 mb-2">
-                              {summaryIsMissing
-                                ? 'AI Summary 未生成。Evidence・Alert・People データを元に自動生成できます。'
-                                : 'AI Summary が古くなっています（30日以上）。最新データで更新してください。'}
-                            </p>
-                            <Button
-                              size="sm" variant="outline"
-                              className="h-7 text-xs gap-1.5 border-violet-200 text-violet-700"
-                              onClick={generateCompanySummary}
-                              disabled={summaryBusy}
-                            >
-                              {summaryLoading
-                                ? <Loader2 className="w-3 h-3 animate-spin" />
-                                : <Sparkles className="w-3 h-3" />
-                              }
-                              {summaryIsMissing ? 'AI Summary を生成' : 'Summary を更新'}
-                            </Button>
-                          </div>
-                        </div>
-                      </>
-                    )}
-
-                    {/* Summary: fresh/approved → review buttons */}
-                    {summaryVM.hasSummary && savedRecord && !summaryIsMissing && !summaryIsStale && (
-                      <>
-                        <Separator />
-                        <div className="space-y-1.5">
-                          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Summary レビュー</p>
-                          <div className="flex gap-1.5 flex-wrap">
-                            {summaryVM.isApproved ? (
-                              <Button
-                                size="sm" variant="outline"
-                                className="h-7 text-xs gap-1 border-amber-200 text-amber-700"
-                                onClick={() => setShowDowngradeConfirm(true)}
-                                disabled={summaryBusy}
-                              >
-                                <Lock className="w-3 h-3" /> 承認解除
-                              </Button>
-                            ) : (
-                              <>
-                                {summaryVM.canRegenerate && (
-                                  <>
-                                    <Button size="sm" variant="outline"
-                                      className="h-7 text-xs gap-1 border-sky-200 text-sky-700"
-                                      onClick={() => handleReview('reviewed')} disabled={summaryBusy}>
-                                      <CheckCircle2 className="w-3 h-3" /> 確認済
-                                    </Button>
-                                    <Button size="sm" variant="outline"
-                                      className="h-7 text-xs gap-1 border-green-200 text-green-700"
-                                      onClick={() => handleReview('approved')} disabled={summaryBusy}>
-                                      <CheckCircle2 className="w-3 h-3" /> 承認
-                                    </Button>
-                                  </>
-                                )}
-                                <Button size="sm" variant="outline"
-                                  className="h-7 text-xs gap-1 border-violet-200 text-violet-700"
-                                  onClick={handleRegenerate}
-                                  disabled={summaryBusy || !summaryVM.canRegenerate}
-                                >
-                                  {summaryLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                                  再生成して保存
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                          {summaryError && <p className="text-xs text-red-600">{summaryError}</p>}
-                        </div>
-                      </>
-                    )}
-
-                    <Separator />
-
-                    {/* Quick action links */}
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <span className="text-[10px] text-slate-400">クイックアクション:</span>
-                      <button
-                        className="text-xs text-indigo-600 hover:underline"
-                        onClick={() => openActionDialog(MANUAL_PREFILL)}
-                      >
-                        + Action 作成
-                      </button>
-                      <span className="text-slate-200">|</span>
-                      <button
-                        className="text-xs text-indigo-600 hover:underline"
-                        onClick={() => openSfTodoDialog({})}
-                      >
-                        + SF ToDo
-                      </button>
-                      <span className="text-slate-200">|</span>
-                      <button
-                        className="text-xs text-indigo-600 hover:underline"
-                        onClick={() => { setContactDialogPerson(undefined); setContactDialogOpen(true); }}
-                      >
-                        + 連絡先追加
-                      </button>
-                    </div>
-                  </div>
-                </section>
-
                 {/* ════ D: 根拠 ══════════════════════════════════════════════ */}
                 <section className="bg-white border rounded-lg p-4">
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-3">根拠</p>
+                  <p className={`${SECTION_HEADER_CLS} mb-3`}>根拠</p>
 
                   <div className="grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-4">
 
@@ -1289,11 +1541,13 @@ export function CompanyDetail() {
                         </button>
                       </div>
                       {comm?.blankDays !== null && (comm?.blankDays ?? 0) >= 30 && (
-                        <div className={`text-[10px] mb-2 px-2 py-1 rounded ${
-                          comm?.riskLevel === 'risk' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'
-                        }`}>
+                        <AlertBox
+                          variant={comm?.riskLevel === 'risk' ? 'error' : 'warning'}
+                          size="sm"
+                          className="mb-2 text-[10px]"
+                        >
                           最終コミュニケーションから <strong>{comm?.blankDays}</strong> 日経過
-                        </div>
+                        </AlertBox>
                       )}
                       {comm ? (
                         comm.recentEntries.length > 0 ? (
@@ -1455,7 +1709,7 @@ export function CompanyDetail() {
                   SF 未連携企業のため、プロジェクト情報は取得できません（company_uid: {companyId}）
                 </p>
               ) : (
-                <ProjectsTab projects={projects} />
+                <ProjectsTab projects={projects} companyUid={companyId} />
               )}
             </TabsContent>
 
@@ -1497,9 +1751,73 @@ export function CompanyDetail() {
               <SheetDescription>
                 Evidence・Alert・People を元にした AI 分析サマリー
               </SheetDescription>
+              {/* Policy セレクタ — Sheet 内でも切り替え可能（常時表示） */}
+              <div className="mt-2 space-y-1">
+                <Select value={selectedPolicyId} onValueChange={setSelectedPolicyId} disabled={summaryLoading}>
+                  <SelectTrigger className="h-7 text-xs border-violet-200 bg-violet-50 text-violet-700">
+                    <SelectValue placeholder="ポリシーを選択" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__default__" className="text-xs">
+                      <span className="text-slate-400">デフォルト（フォーカス指定なし）</span>
+                    </SelectItem>
+                    <SelectGroup>
+                      <SelectLabel className="text-[10px] text-slate-400 px-2 py-1">組み込みテンプレート</SelectLabel>
+                      {summaryPoliciesForSelector.builtins.map(p => {
+                        const meta = getSpMeta(p.name);
+                        return (
+                          <SelectItem key={p.policyId} value={p.policyId} className="text-xs">
+                            <div className="flex flex-col gap-0.5 py-0.5">
+                              <div className="flex items-center gap-1.5">
+                                <span>{meta.icon}</span>
+                                <span className="font-medium text-slate-800">{p.name}</span>
+                                {meta.isDefault && (
+                                  <span className="text-[9px] bg-green-600 text-white px-1 rounded">推奨</span>
+                                )}
+                              </div>
+                              {p.description && (
+                                <span className="text-[10px] text-slate-400 leading-snug max-w-[300px]">{p.description}</span>
+                              )}
+                            </div>
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectGroup>
+                    {summaryPoliciesForSelector.saved.length > 0 && (
+                      <>
+                        <SelectSeparator />
+                        <SelectGroup>
+                          <SelectLabel className="text-[10px] text-slate-400 px-2 py-1">カスタムポリシー</SelectLabel>
+                          {summaryPoliciesForSelector.saved.map(p => {
+                            const meta = getSpMeta(p.name);
+                            return (
+                              <SelectItem key={p.policyId} value={p.policyId} className="text-xs">
+                                <div className="flex flex-col gap-0.5 py-0.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <span>{meta.icon}</span>
+                                    <span className={`font-medium ${p.isDraft ? 'text-slate-500' : 'text-slate-800'}`}>{p.name}</span>
+                                    {p.isDraft && (
+                                      <span className="text-[9px] bg-amber-100 text-amber-700 border border-amber-200 px-1 rounded">試作中</span>
+                                    )}
+                                  </div>
+                                  {p.description && (
+                                    <span className="text-[10px] text-slate-400 leading-snug max-w-[300px]">{p.description}</span>
+                                  )}
+                                </div>
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectGroup>
+                      </>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
             </SheetHeader>
 
-            <SummaryStateBadge vm={summaryVM} record={savedRecord} variant="sheet-panel" />
+            <div className="flex-shrink-0 mt-2 px-0">
+              <SummaryStateBadge vm={summaryVM} record={savedRecord} variant="inline" />
+            </div>
 
             <ScrollArea className="flex-1 min-h-0 mt-4">
               {/* Loading */}
@@ -1515,9 +1833,7 @@ export function CompanyDetail() {
               {/* Error */}
               {!summaryLoading && !summarySaving && summaryError && (
                 <div className="space-y-4 px-4 pb-4">
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                    <p className="text-sm text-red-700">{summaryError}</p>
-                  </div>
+                  <AlertBox variant="error">{summaryError}</AlertBox>
                   <div className="flex gap-2">
                     <Button size="sm" onClick={generateCompanySummary}>再試行</Button>
                     <Button size="sm" variant="outline" onClick={handleRegenerate}>再生成して保存</Button>
@@ -1528,20 +1844,69 @@ export function CompanyDetail() {
               {/* Result */}
               {!summaryLoading && !summarySaving && !summaryError && summaryResult && (
                 <div className="space-y-4 px-4 pb-4">
-                  {/* Save badge */}
-                  {summaryResult.saved && (
-                    <Badge className="bg-violet-100 text-violet-700 border-violet-200 text-xs">
-                      {summaryResult.created ? '新規保存' : '上書き保存'} 完了
-                    </Badge>
+                  {/* プレビュー状態バナー */}
+                  {!summaryResult.saved ? (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+                      <Clock className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="font-medium">未保存のプレビュー</span>
+                      <span className="text-amber-600">— まだ NocoDB に保存されていません</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+                      <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="font-medium">{summaryResult.created ? '新規保存' : '上書き保存'}しました</span>
+                      <span className="text-green-600">— Overview に反映されます</span>
+                    </div>
                   )}
 
-                  {/* Health */}
-                  <div className="flex items-center gap-2 text-sm">
+                  {/* Health + 生成元 */}
+                  <div className="flex items-center gap-2 text-sm flex-wrap">
                     <span className="text-slate-500">Overall Health:</span>
                     <Badge variant="outline" className={`text-xs ${getHealthBadge(summaryResult.overall_health).className}`}>
                       {getHealthBadge(summaryResult.overall_health).label}
                     </Badge>
+                    {/* 生成ポリシー chip: policy あり → 名前+tooltip, なし → デフォルト生成 */}
+                    {summaryResult.applied_policy_name ? (
+                      <TooltipProvider delayDuration={300}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="outline" className={`${POLICY_BADGE_CLS} py-0.5 px-2 gap-1 cursor-help`}>
+                              <Zap className="w-2.5 h-2.5" />
+                              {summaryResult.applied_policy_name}
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="max-w-[240px] text-xs">
+                            {summaryResult.applied_policy_summary_focus
+                              ? `フォーカス: ${summaryResult.applied_policy_summary_focus}`
+                              : `ポリシー「${summaryResult.applied_policy_name}」を適用して生成しました`}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] py-0.5 px-2 border-slate-200 text-slate-400 bg-slate-50 gap-1">
+                        <Sparkles className="w-2.5 h-2.5" />
+                        デフォルト生成
+                      </Badge>
+                    )}
                   </div>
+
+                  {/* データソース数（Projects / Support）*/}
+                  {(summaryResult.project_count !== undefined || summaryResult.open_support_count !== undefined) && (
+                    <div className="flex items-center gap-3 text-[11px] text-slate-400 flex-wrap">
+                      {!!summaryResult.project_count && (
+                        <span className="flex items-center gap-1">
+                          <FolderOpen className="w-3 h-3" />
+                          Projects: {summaryResult.project_count}件
+                        </span>
+                      )}
+                      {!!summaryResult.open_support_count && (
+                        <span className="flex items-center gap-1">
+                          <Headphones className="w-3 h-3" />
+                          Support: {summaryResult.open_support_count}件 open
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   {/* Summary */}
                   <div>
@@ -1549,49 +1914,65 @@ export function CompanyDetail() {
                     <p className="text-sm text-slate-700 leading-relaxed">{summaryResult.summary}</p>
                   </div>
 
-                  {/* Key risks */}
-                  {(summaryResult.key_risks as RiskItem[] ?? []).length > 0 && (
-                    <div>
-                      <p className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">キーリスク</p>
-                      <div className="space-y-2">
-                        {(summaryResult.key_risks as RiskItem[]).map((r, i) => (
-                          <div key={i} className="flex items-start gap-2 text-sm">
-                            <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
-                            <div>
-                              <p className="font-medium text-slate-800">{r.title}</p>
-                              {r.description && <p className="text-xs text-slate-500">{r.description}</p>}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  {/* Section order: 攻略型 → 機会先頭 / リスク監視型 → リスク先頭 / 報告型・標準 → 次アクション先頭 */}
+                  {(() => {
+                    const isExpansion = selectedPolicyId.includes('expansion');
+                    const isRiskWatch = selectedPolicyId.includes('risk_watch');
+                    const isReport    = selectedPolicyId.includes('report');
 
-                  {/* Key opportunities */}
-                  {(summaryResult.key_opportunities as OpportunityItem[] ?? []).length > 0 && (
-                    <div>
-                      <p className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">機会・拡販ポイント</p>
-                      <div className="space-y-2">
-                        {(summaryResult.key_opportunities as OpportunityItem[]).map((o, i) => (
-                          <div key={i} className="flex items-start gap-2 text-sm">
-                            <TrendingUp className="w-3.5 h-3.5 text-green-500 flex-shrink-0 mt-0.5" />
-                            <div>
-                              <p className="font-medium text-slate-800">{o.title}</p>
-                              {o.description && <p className="text-xs text-slate-500">{o.description}</p>}
+                    const opportunitiesBlock = (summaryResult.key_opportunities as OpportunityItem[] ?? []).length > 0 && (
+                      <div key="opp">
+                        <p className="text-xs font-semibold text-blue-600 mb-2 uppercase tracking-wide">
+                          {isExpansion ? '🚀 機会・拡大ポイント（主役）' : '機会・拡販ポイント'}
+                        </p>
+                        <div className="space-y-2">
+                          {(summaryResult.key_opportunities as OpportunityItem[]).map((o, i) => (
+                            <div key={i} className="flex items-start gap-2 text-sm">
+                              <TrendingUp className="w-3.5 h-3.5 text-blue-500 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <p className="font-medium text-slate-800">{o.title}</p>
+                                {o.description && <p className="text-xs text-slate-500">{o.description}</p>}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    );
 
-                  {/* Recommended next action */}
-                  {summaryResult.recommended_next_action && (
-                    <div className="bg-violet-50 border border-violet-200 rounded-lg p-3">
-                      <p className="text-xs font-semibold text-violet-700 mb-1">推奨次アクション</p>
-                      <p className="text-sm text-violet-900">{summaryResult.recommended_next_action}</p>
-                    </div>
-                  )}
+                    const risksBlock = (summaryResult.key_risks as RiskItem[] ?? []).length > 0 && (
+                      <div key="risk">
+                        <p className="text-xs font-semibold text-red-600 mb-2 uppercase tracking-wide">
+                          {isRiskWatch ? '🔍 キーリスク（主役）' : 'キーリスク'}
+                        </p>
+                        <div className="space-y-2">
+                          {(summaryResult.key_risks as RiskItem[]).map((r, i) => (
+                            <div key={i} className="flex items-start gap-2 text-sm">
+                              <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <p className="font-medium text-slate-800">{r.title}</p>
+                                {r.description && <p className="text-xs text-slate-500">{r.description}</p>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+
+                    const actionBlock = summaryResult.recommended_next_action && (
+                      <AlertBox key="action" variant={isRiskWatch ? 'warning' : isReport ? 'info' : 'policy'}>
+                        <p className="text-xs font-semibold mb-1" style={{ color: isRiskWatch ? '#b45309' : isReport ? '#0369a1' : '#6d28d9' }}>
+                          {isRiskWatch ? '🔥 緊急アクション' : isReport ? '📋 報告・次アクション' : '✨ 推奨次アクション'}
+                        </p>
+                        <p className="text-sm">{summaryResult.recommended_next_action}</p>
+                      </AlertBox>
+                    );
+
+                    // 表示順を切り替え
+                    if (isExpansion) return <>{opportunitiesBlock}{risksBlock}{actionBlock}</>;
+                    if (isRiskWatch) return <>{risksBlock}{actionBlock}{opportunitiesBlock}</>;
+                    if (isReport)    return <>{actionBlock}{opportunitiesBlock}{risksBlock}</>;
+                    return <>{risksBlock}{opportunitiesBlock}{actionBlock}</>;
+                  })()}
 
                   {/* Meta */}
                   <div className="text-[10px] text-slate-400 border-t pt-2 space-y-0.5">
@@ -1600,11 +1981,43 @@ export function CompanyDetail() {
                     <p>Evidence: {summaryResult.evidence_count}件 / Alert: {summaryResult.alert_count}件 / People: {summaryResult.people_count}名</p>
                   </div>
 
+                  {/* 前回保存との比較（未保存かつ保存済み summary がある場合のみ） */}
+                  {!summaryResult.saved && savedRecord?.aiSummary && (
+                    <details className="group border border-slate-200 rounded-lg overflow-hidden">
+                      <summary className="flex items-center justify-between px-3 py-2 text-xs text-slate-500 cursor-pointer hover:bg-slate-50 select-none list-none">
+                        <span className="flex items-center gap-1.5">
+                          <Database className="w-3 h-3 text-slate-400" />
+                          現在保存済みのサマリー
+                          {savedRecord.lastAiUpdatedAt && (
+                            <span className="text-[10px] text-slate-400">
+                              （{new Date(savedRecord.lastAiUpdatedAt).toLocaleDateString('ja-JP', { month: 'numeric', day: 'numeric' })} 保存）
+                            </span>
+                          )}
+                        </span>
+                        <ChevronDown className="w-3.5 h-3.5 text-slate-400 group-open:rotate-180 transition-transform" />
+                      </summary>
+                      <div className="px-3 pb-3 pt-2 bg-slate-50 border-t border-slate-200">
+                        <p className="text-xs text-slate-600 leading-relaxed">{savedRecord.aiSummary}</p>
+                        {savedRecord.appliedPolicyId && (
+                          <p className="text-[10px] text-slate-400 mt-1.5 flex items-center gap-1">
+                            <Zap className="w-2.5 h-2.5" />
+                            {policyNameMap.get(savedRecord.appliedPolicyId) ?? savedRecord.appliedPolicyId}
+                          </p>
+                        )}
+                      </div>
+                    </details>
+                  )}
+
                   {/* Actions */}
-                  <div className="flex gap-2 pt-2 flex-wrap">
+                  <div className="flex gap-2 pt-1 flex-wrap">
                     {!summaryResult.saved && (
-                      <Button size="sm" onClick={handleSave} disabled={summarySaving} className="gap-1">
-                        <Database className="w-3 h-3" /> 保存
+                      <Button
+                        size="sm"
+                        onClick={handleSave}
+                        disabled={summarySaving}
+                        className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+                      >
+                        <Database className="w-3 h-3" /> この内容で保存
                       </Button>
                     )}
                     <Button size="sm" variant="outline" onClick={handleRegenerate} disabled={summaryBusy} className="gap-1">
@@ -1617,17 +2030,30 @@ export function CompanyDetail() {
               {/* Empty (sheet opened without generating) */}
               {!summaryLoading && !summarySaving && !summaryError && !summaryResult && summaryVM.hasSummary && savedRecord && (
                 <div className="space-y-4 px-4 pb-4">
-                  <div className="flex items-center gap-2 text-sm">
+                  <div className="flex items-center gap-2 flex-wrap text-sm">
                     <span className="text-slate-500">Overall Health:</span>
                     <Badge variant="outline" className={`text-xs ${getHealthBadge(savedRecord.overallHealth).className}`}>
                       {getHealthBadge(savedRecord.overallHealth).label}
                     </Badge>
+                    {/* 保存時に適用されていた Policy */}
+                    {savedRecord.appliedPolicyId && (
+                      <Badge variant="outline" className={`${POLICY_BADGE_CLS} py-0.5 px-2 gap-1`}>
+                        <Zap className="w-2.5 h-2.5" />
+                        {policyNameMap.get(savedRecord.appliedPolicyId) ?? savedRecord.appliedPolicyId}
+                      </Badge>
+                    )}
                   </div>
                   {savedRecord.aiSummary && (
                     <p className="text-sm text-slate-700 leading-relaxed">{savedRecord.aiSummary}</p>
                   )}
-                  <div className="flex gap-2 pt-2">
-                    <Button size="sm" onClick={handleRegenerate} disabled={summaryBusy || !summaryVM.canRegenerate} className="gap-1">
+                  <div className="flex gap-2 pt-2 flex-wrap">
+                    <Button size="sm" onClick={generateCompanySummary} disabled={summaryBusy} className="gap-1 bg-violet-600 hover:bg-violet-700 text-white">
+                      <Sparkles className="w-3 h-3" />
+                      {selectedPolicyId !== '__default__'
+                        ? `${getSpMeta(([...summaryPoliciesForSelector.builtins, ...summaryPoliciesForSelector.saved]).find(p => p.policyId === selectedPolicyId)?.name ?? '').icon} ポリシーで生成`
+                        : 'プレビュー生成'}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={handleRegenerate} disabled={summaryBusy || !summaryVM.canRegenerate} className="gap-1">
                       <RefreshCw className="w-3 h-3" /> 再生成して保存
                     </Button>
                     {!summaryVM.isApproved && (
@@ -1839,7 +2265,7 @@ function RiskSignalRow({
             )}
             {cta.showSfTodoCTA && (
               <button
-                className="text-[10px] text-violet-600 hover:underline"
+                className="text-[10px] text-indigo-500 hover:underline"
                 onClick={() => onSfTodoCTA(signal, cta)}
               >
                 SF ToDo作成
@@ -1873,11 +2299,8 @@ function OpportunitySignalRow({
 }) {
   const cta = getOpportunitySignalCTA(signal);
 
-  // project expansion: 判定ロジックを説明するヒント
-  // description に「N プロジェクトが稼働中」が含まれているので score も併せて可視化
-  const expansionHint = signal.type === 'expansion_project'
-    ? `判定スコア: ${signal.score} / 条件: active ≥ 2`
-    : null;
+  // project expansion: description に「N プロジェクトが稼働中」が含まれているため hint は不要
+  const expansionHint = null;
 
   return (
     <div className="flex items-start gap-2 text-sm">
@@ -1904,7 +2327,7 @@ function OpportunitySignalRow({
             )}
             {cta.showSfTodoCTA && (
               <button
-                className="text-[10px] text-violet-600 hover:underline"
+                className="text-[10px] text-indigo-500 hover:underline"
                 onClick={() => onSfTodoCTA(signal, cta)}
               >
                 SF ToDo作成
@@ -1929,7 +2352,7 @@ function CommEntryRow({ entry }: { entry: CommunicationEntry }) {
           <span className="text-slate-400 text-[10px] flex-shrink-0">{entry.dateStr ? entry.dateStr.slice(0, 10) : '日付不明'}</span>
           <span className="text-[10px] text-slate-400">{COMM_SOURCE_LABEL[entry.source]}</span>
           {entry.hasActionItems && (
-            <span className="text-[10px] bg-violet-50 text-violet-600 px-1 rounded">アクション有</span>
+            <Badge variant="outline" className={`${POLICY_BADGE_CLS} py-0 flex-shrink-0`}>アクション有</Badge>
           )}
         </div>
         {entry.excerpt && (
@@ -1943,8 +2366,9 @@ function CommEntryRow({ entry }: { entry: CommunicationEntry }) {
 // ── Support case row ──────────────────────────────────────────────────────────
 
 function SupportCaseRow({ c }: { c: AppSupportCase }) {
-  const routing = ROUTING_STATUS_LABEL[(c.routingStatus ?? '').toLowerCase()];
-  const title   = c.title;
+  const status = (c.routingStatus ?? '').toLowerCase();
+  const label  = routingLabelJa(status);
+  const color  = routingColor(status);
 
   return (
     <Link
@@ -1952,10 +2376,10 @@ function SupportCaseRow({ c }: { c: AppSupportCase }) {
       className="flex items-center gap-2 text-xs hover:bg-slate-50 rounded px-1 py-0.5 group"
     >
       <SeverityDot severity={c.severity} />
-      <span className="flex-1 truncate text-slate-700 group-hover:text-indigo-600">{title}</span>
-      {routing && (
-        <Badge variant="outline" className={`text-[10px] py-0 ${routing.cls}`}>
-          {routing.label}
+      <span className="flex-1 truncate text-slate-700 group-hover:text-indigo-600">{c.title}</span>
+      {status && (
+        <Badge variant="outline" className={`text-[10px] py-0 ${color}`}>
+          {label}
         </Badge>
       )}
       <span className="text-slate-400 flex-shrink-0">{c.createdAt?.slice(0, 10)}</span>
@@ -1967,7 +2391,9 @@ function SupportCaseRow({ c }: { c: AppSupportCase }) {
 
 function CseTicketRow({ t }: { t: AppCseTicket }) {
   const [open, setOpen] = useState(false);
-  const st = CSE_STATUS_LABEL[(t.status ?? 'open').toLowerCase()];
+  const normalizedStatus = normalizeCseStatus(t.status ?? 'open');
+  const stLabel = sourceStatusLabel(normalizedStatus);
+  const stColor = sourceStatusColor(normalizedStatus);
   // title fallback: title → description 先頭 → (タイトルなし)
   const displayTitle = t.title && t.title !== '(タイトルなし)'
     ? t.title
@@ -1983,9 +2409,7 @@ function CseTicketRow({ t }: { t: AppCseTicket }) {
       >
         <span className="text-xs text-slate-400 font-mono flex-shrink-0">{t.id.slice(0, 8)}</span>
         <span className="flex-1 truncate text-slate-700">{displayTitle}</span>
-        {st && (
-          <Badge variant="outline" className={`text-xs flex-shrink-0 ${st.cls}`}>{st.label}</Badge>
-        )}
+        <Badge variant="outline" className={`text-xs flex-shrink-0 ${stColor}`}>{stLabel}</Badge>
         <span className="text-xs text-slate-400 flex-shrink-0">{t.createdAt?.slice(0, 10)}</span>
         <ChevronRight className={`w-3.5 h-3.5 text-slate-300 flex-shrink-0 transition-transform group-hover:text-slate-400 ${open ? 'rotate-90' : ''}`} />
       </div>
@@ -2050,8 +2474,8 @@ function SupportTab({ support }: { support: CompanyDetailApiResponse['support'] 
                 <span className="flex-1 truncate text-slate-700 group-hover:text-indigo-600">
                   {c.title}
                 </span>
-                {(() => { const r = ROUTING_STATUS_LABEL[(c.routingStatus ?? '').toLowerCase()]; return r ? (
-                  <Badge variant="outline" className={`text-xs ${r.cls}`}>{r.label}</Badge>
+                {(() => { const status = (c.routingStatus ?? '').toLowerCase(); return status ? (
+                  <Badge variant="outline" className={`text-xs ${routingColor(status)}`}>{routingLabelJa(status)}</Badge>
                 ) : null; })()}
                 <span className="text-xs text-slate-400">{c.createdAt?.slice(0, 10)}</span>
                 <ArrowRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-indigo-400" />
@@ -2107,9 +2531,20 @@ function SupportTab({ support }: { support: CompanyDetailApiResponse['support'] 
 
 // ── Projects tab ──────────────────────────────────────────────────────────────
 
-function ProjectsTab({ projects }: { projects: CompanyDetailApiResponse['projects'] | undefined }) {
+function ProjectsTab({ projects, companyUid }: { projects: CompanyDetailApiResponse['projects'] | undefined; companyUid: string }) {
   if (!projects || projects.total === 0) {
-    return <p className="text-sm text-slate-400">プロジェクトなし</p>;
+    const isCmpId = companyUid.startsWith('cmp_');
+    return (
+      <div className="text-sm text-slate-400">
+        プロジェクトなし
+        {isCmpId && (
+          // company_uid が cmp_ プレフィックス = SF未連携 → project_info は master_company_sf_id 経由でしか取れない
+          <p className="mt-1 text-xs text-slate-400">
+            ※ この企業はSalesforceと未連携のため、Project情報が取得できません
+          </p>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -2132,31 +2567,84 @@ function ProjectsTab({ projects }: { projects: CompanyDetailApiResponse['project
 
       {/* Risk signals */}
       {projects.riskSignals.map((sig, i) => (
-        <div key={i} className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+        <AlertBox key={i} variant="warning">{sig.description}</AlertBox>
+      ))}
+
+      {/* Opportunity signals */}
+      {projects.opportunitySignals.map((sig, i) => (
+        <AlertBox key={i} variant="success" icon={<TrendingUp className="w-4 h-4 flex-shrink-0 mt-px text-green-500" />}>
           {sig.description}
-        </div>
+        </AlertBox>
       ))}
 
       {/* Project list */}
       <div className="bg-white border rounded-lg overflow-hidden">
         <div className="divide-y">
           {projects.projects.map((p: ProjectItemVM) => {
-            const statusCfg = PROJECT_STATUS_BADGE[p.derivedStatus] ?? PROJECT_STATUS_BADGE.inactive;
+            const statusCfg  = PROJECT_STATUS_BADGE[p.derivedStatus] ?? PROJECT_STATUS_BADGE.inactive;
+            const paidUpper  = (p.paidType ?? '').toUpperCase();
+            const isFree     = paidUpper === 'FREE';
+            const isPaid     = paidUpper === 'PTI-PAID' || paidUpper === 'PTX-PAID';
+            const paidLabel  = isFree ? 'FREE' : isPaid ? 'PAID' : null;
+            const paidCls    = isFree
+              ? 'border-slate-200 text-slate-400'
+              : isPaid
+              ? 'border-green-200 text-green-600'
+              : '';
+            // 活動レベル（L30）
+            const l30 = p.l30Active;
+            const activityLevel = l30 == null ? null
+              : l30 === 0   ? 'none'
+              : l30 < 10    ? 'low'
+              : l30 < 100   ? 'mid'
+              : 'high';
+            const activityCls = activityLevel === 'high' ? 'text-green-600'
+              : activityLevel === 'mid'  ? 'text-blue-500'
+              : activityLevel === 'low'  ? 'text-slate-400'
+              : 'text-red-400';
+
             return (
-              <div key={p.id} className="flex items-center gap-3 px-4 py-3 text-sm">
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-slate-700 truncate">{p.name}</p>
-                  {p.useCase && <p className="text-xs text-slate-400">{p.useCase}</p>}
+              <div key={p.id} className="px-4 py-3 text-sm">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium text-slate-700 flex-1 min-w-0 truncate">{p.name}</span>
+                  {/* Paid type chip */}
+                  {paidLabel && (
+                    <Badge variant="outline" className={`text-[10px] py-0 px-1.5 flex-shrink-0 ${paidCls}`}>
+                      {paidLabel}
+                    </Badge>
+                  )}
+                  {/* Status badge */}
+                  <Badge variant="outline" className={`text-xs flex-shrink-0 ${statusCfg.className}`}>
+                    {statusCfg.label}
+                  </Badge>
+                  {/* L30 activity */}
+                  {l30 != null && (
+                    <TooltipProvider delayDuration={300}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className={`text-[11px] flex-shrink-0 font-mono cursor-help ${activityCls}`}>
+                            L30:{l30}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="text-xs">
+                          過去30日のアクティブイベント数
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+                  {/* Stalled indicator */}
+                  {p.stalledDays !== null && p.stalledDays >= 60 && (
+                    <span className="text-xs text-amber-600 flex-shrink-0">{p.stalledDays}d停滞</span>
+                  )}
                 </div>
-                <Badge variant="outline" className={`text-xs flex-shrink-0 ${statusCfg.className}`}>
-                  {statusCfg.label}
-                </Badge>
-                {p.stalledDays !== null && p.stalledDays >= 60 && (
-                  <span className="text-xs text-amber-600 flex-shrink-0">{p.stalledDays}d停滞</span>
-                )}
-                {p.lastUpdatedAt && (
-                  <span className="text-xs text-slate-400 flex-shrink-0">{p.lastUpdatedAt?.slice(0, 10)}</span>
+                {/* Sub row: useCase + 契約終了日 */}
+                {(p.useCase || p.latestOrderEndDate) && (
+                  <div className="flex items-center gap-3 mt-0.5 text-[11px] text-slate-400">
+                    {p.useCase && <span className="truncate">{p.useCase}</span>}
+                    {p.latestOrderEndDate && (
+                      <span className="flex-shrink-0">契約終了: {p.latestOrderEndDate}</span>
+                    )}
+                  </div>
                 )}
               </div>
             );
@@ -2287,7 +2775,7 @@ function CommunicationTab({
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-slate-700">{entry.title}</span>
                       {entry.hasActionItems && (
-                        <Badge variant="outline" className="text-[10px] bg-violet-50 text-violet-600 border-violet-200">
+                        <Badge variant="outline" className={`${POLICY_BADGE_CLS} py-0`}>
                           アクション有
                         </Badge>
                       )}
@@ -2488,7 +2976,7 @@ function PeopleTab({
               </div>
             ) : candidateError ? (
               <div className="space-y-3 px-4 pb-4">
-                <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3">{candidateError}</div>
+                <AlertBox variant="error" size="sm">{candidateError}</AlertBox>
                 <Button size="sm" variant="outline" onClick={extractCandidates}>再試行</Button>
               </div>
             ) : candidateResult ? (

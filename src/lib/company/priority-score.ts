@@ -103,6 +103,21 @@ export function calcPriorityScore(
     add('projects: all stalled', PRIORITY_WEIGHT.project_all_stalled);
   }
 
+  // ── Opportunity / Expansion ───────────────────────────────────────────────
+  // リスク系より弱い重みで機会シグナルを加算する。
+  // expanding + opportunity_signal がスタックしても at_risk(15) 程度に収まる設計。
+  if (healthVM.overallHealth === 'expanding') {
+    add('health: expanding', PRIORITY_WEIGHT.health_expanding);
+  }
+  const hasExpansionSignal = healthVM.opportunitySignals.some(s =>
+    s.type === 'expansion_project' ||
+    s.type === 'upsell_signal'     ||
+    s.type === 'new_use_case',
+  );
+  if (hasExpansionSignal) {
+    add('opportunity: 拡大・新規活用シグナルあり', PRIORITY_WEIGHT.opportunity_signal);
+  }
+
   // ── People / Action signals ───────────────────────────────────────────────
   if (input.peopleActionSignal) {
     const pa = input.peopleActionSignal;

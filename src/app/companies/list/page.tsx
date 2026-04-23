@@ -1,5 +1,6 @@
-import { CompanyList } from "@/components/pages/company-list";
+import { redirect } from "next/navigation";
 
-export default function CompanyListPage() {
-  return <CompanyList />;
+// /companies/list → /companies に統合
+export default function CompanyListLegacyPage() {
+  redirect("/companies");
 }

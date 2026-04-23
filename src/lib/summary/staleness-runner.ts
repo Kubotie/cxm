@@ -26,6 +26,9 @@ import { getCompanySummaryStatesByUids }     from '@/lib/nocodb/company-summary-
 import { fetchEvidence }                     from '@/lib/nocodb/evidence';
 import { fetchAlerts }                       from '@/lib/nocodb/alerts';
 import { fetchPeople }                       from '@/lib/nocodb/people';
+import { fetchProjectsByCompany }            from '@/lib/nocodb/project-info';
+import { buildProjectAggregateVM }           from '@/lib/company/project-aggregate';
+import { fetchSupportAggregateForCompany }   from '@/lib/nocodb/support-by-company';
 import { saveCompanySummaryState }           from '@/lib/nocodb/company-summary-write';
 import { getPolicyById }                     from '@/lib/nocodb/policy-store';
 import { getOpenAIClient, getOpenAIModel }   from '@/lib/openai/client';
@@ -74,14 +77,17 @@ export interface StalenessRunnerResultItem {
 }
 
 export interface StalenessRunnerResult {
-  dry_run:          boolean;
-  evaluated_at:     string;
-  stale_after_days: number;
-  total_targeted:   number;
-  generated_count:  number;
-  skipped_count:    number;
-  failed_count:     number;
-  results:          StalenessRunnerResultItem[];
+  dry_run:                boolean;
+  evaluated_at:           string;
+  stale_after_days:       number;
+  /** stale と判定された企業数（approved はここに含まない） */
+  total_targeted:         number;
+  generated_count:        number;
+  skipped_count:          number;
+  failed_count:           number;
+  /** approved 保護でスキップした企業数（results に status=skipped で含まれる） */
+  approved_skipped_count: number;
+  results:                StalenessRunnerResultItem[];
 }
 
 // ── 時間ベース staleness チェック ─────────────────────────────────────────────
@@ -128,17 +134,23 @@ async function generateForCompany(
   defaultModel:  string,
   policyRecord:  PolicyRecord,
 ): Promise<{ ok: boolean; created?: boolean; error?: string }> {
-  const [evidence, alerts, people] = await Promise.all([
+  const [evidence, alerts, people, rawProjects, supportAgg] = await Promise.all([
     fetchEvidence(company.id).catch(() => []),
     fetchAlerts(company.id).catch(()  => []),
     fetchPeople(company.id).catch(()  => []),
+    fetchProjectsByCompany(company.id).catch(() => []),
+    fetchSupportAggregateForCompany(company.id).catch(() => null),
   ]);
 
+  const projectsVM     = buildProjectAggregateVM(rawProjects);
   const summaryPolicy  = policyRecord?.summaryPolicy ?? null;
   const systemPrompt   = buildSummaryPolicySystemPrompt(summaryPolicy);
   const effectiveModel = summaryPolicy?.model ?? defaultModel;
 
-  const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people);
+  const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people, {
+    projects: projectsVM,
+    support:  supportAgg ?? undefined,
+  });
   const comp = await openai.chat.completions.create({
     model:    effectiveModel,
     messages: [
@@ -213,6 +225,7 @@ export async function runStalenessRunner(
       dry_run: dryRun, evaluated_at: evaluatedAt,
       stale_after_days: staleAfterDays,
       total_targeted: 0, generated_count: 0, skipped_count: 0, failed_count: 0,
+      approved_skipped_count: 0,
       results: [],
     };
   }
@@ -221,12 +234,36 @@ export async function runStalenessRunner(
   const stateMap = await getCompanySummaryStatesByUids(companies.map(c => c.id))
     .catch(() => new Map<string, AppCompanySummaryState>());
 
-  // ── Step 3: stale フィルタ ────────────────────────────────────────────────
-  const staleCompanies = companies.filter(c => isTimeStale(stateMap.get(c.id), staleAfterDays));
+  // ── Step 3: stale フィルタ（診断ログ付き）────────────────────────────────
+  // approved 企業は isTimeStale=false で除外されるが、results には可視化のため含める
+  const approvedResults: StalenessRunnerResultItem[] = [];
+  const staleCompanies = companies.filter(c => {
+    const state = stateMap.get(c.id);
+    const stale  = isTimeStale(state, staleAfterDays);
+    console.log(
+      `[staleness-runner] stale-check | company=${c.id}` +
+      ` | rowId=${state?.rowId ?? 'null'}` +
+      ` | human_review_status=${state?.humanReviewStatus ?? 'null(state未取得)'}` +
+      ` | last_ai_updated_at=${state?.lastAiUpdatedAt ?? 'null'}` +
+      ` | isStale=${stale}`,
+    );
+    // approved 企業: stale=false で除外されるが skipped として記録
+    if (!stale && state?.humanReviewStatus === 'approved') {
+      approvedResults.push({
+        company_uid:        c.id,
+        company_name:       c.name,
+        status:             'skipped',
+        applied_policy_id:  inputPolicyId ?? state.appliedPolicyId ?? null,
+        last_ai_updated_at: state.lastAiUpdatedAt ?? null,
+        skip_reason:        'approved（locked）のためスキップ',
+      });
+    }
+    return stale;
+  });
 
   // ── dry_run: 対象リストのみ返す ────────────────────────────────────────────
   if (dryRun) {
-    const results: StalenessRunnerResultItem[] = staleCompanies.map(c => {
+    const staleResults: StalenessRunnerResultItem[] = staleCompanies.map(c => {
       const state = stateMap.get(c.id) ?? null;
       return {
         company_uid:        c.id,
@@ -237,13 +274,16 @@ export async function runStalenessRunner(
         skip_reason:        'dry_run=true のため生成をスキップ',
       };
     });
+    // approved 企業も results に含める（可視性のため）
+    const results = [...approvedResults, ...staleResults];
     return {
       dry_run: true, evaluated_at: evaluatedAt,
-      stale_after_days: staleAfterDays,
-      total_targeted:  staleCompanies.length,
-      generated_count: 0,
-      skipped_count:   staleCompanies.length,
-      failed_count:    0,
+      stale_after_days:       staleAfterDays,
+      total_targeted:         staleCompanies.length,
+      generated_count:        0,
+      skipped_count:          staleCompanies.length,
+      failed_count:           0,
+      approved_skipped_count: approvedResults.length,
       results,
     };
   }
@@ -259,16 +299,28 @@ export async function runStalenessRunner(
   for (const company of staleCompanies) {
     const state = stateMap.get(company.id) ?? null;
 
-    // approved → skip
+    console.log(
+      `[staleness-runner] processing | company=${company.id} (${company.name})` +
+      ` | rowId=${state?.rowId ?? 'null'}` +
+      ` | human_review_status=${state?.humanReviewStatus ?? 'null'}` +
+      ` | last_ai_updated_at=${state?.lastAiUpdatedAt ?? 'null'}`,
+    );
+
+    // approved はフィルタ段階で staleCompanies から除外済み（isTimeStale=false）。
+    // ここに来た場合は state 取得と stale 判定の間にレース条件が発生したケース。念のため保護。
     if (state?.humanReviewStatus === 'approved') {
-      results.push({
-        company_uid:        company.id,
-        company_name:       company.name,
-        status:             'skipped',
-        applied_policy_id:  null,
-        last_ai_updated_at: state?.lastAiUpdatedAt ?? null,
-        skip_reason:        'approved（locked）のためスキップ',
-      });
+      console.log(`[staleness-runner] skip approved (race condition guard) | company=${company.id}`);
+      // approvedResults に追加済みでない場合のみ追加
+      if (!approvedResults.some(r => r.company_uid === company.id)) {
+        approvedResults.push({
+          company_uid:        company.id,
+          company_name:       company.name,
+          status:             'skipped',
+          applied_policy_id:  state.appliedPolicyId ?? null,
+          last_ai_updated_at: state.lastAiUpdatedAt ?? null,
+          skip_reason:        'approved（locked）のためスキップ',
+        });
+      }
       continue;
     }
 
@@ -277,8 +329,7 @@ export async function runStalenessRunner(
     const policyRecord     = await resolvePolicy(resolvedPolicyId, policyCache);
 
     console.log(
-      `[staleness-runner] ${company.id} (${company.name})` +
-      ` | last_updated=${state?.lastAiUpdatedAt ?? 'null'}` +
+      `[staleness-runner] generate start | company=${company.id}` +
       ` | policy=${resolvedPolicyId ?? 'default'}`,
     );
 
@@ -305,18 +356,22 @@ export async function runStalenessRunner(
     }
   }
 
-  const generatedCount = results.filter(r => r.status === 'generated').length;
-  const skippedCount   = results.filter(r => r.status === 'skipped').length;
-  const failedCount    = results.filter(r => r.status === 'failed').length;
+  // approved 企業を results の先頭に追加（可視性のため）
+  const allResults = [...approvedResults, ...results];
+
+  const generatedCount = allResults.filter(r => r.status === 'generated').length;
+  const skippedCount   = allResults.filter(r => r.status === 'skipped').length;
+  const failedCount    = allResults.filter(r => r.status === 'failed').length;
 
   return {
-    dry_run:          dryRun,
-    evaluated_at:     evaluatedAt,
-    stale_after_days: staleAfterDays,
-    total_targeted:   staleCompanies.length,
-    generated_count:  generatedCount,
-    skipped_count:    skippedCount,
-    failed_count:     failedCount,
-    results,
+    dry_run:                dryRun,
+    evaluated_at:           evaluatedAt,
+    stale_after_days:       staleAfterDays,
+    total_targeted:         staleCompanies.length,
+    generated_count:        generatedCount,
+    skipped_count:          skippedCount,
+    failed_count:           failedCount,
+    approved_skipped_count: approvedResults.length,
+    results:                allResults,
   };
 }

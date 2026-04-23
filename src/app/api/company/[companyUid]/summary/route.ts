@@ -28,6 +28,9 @@ import { fetchEvidence }     from '@/lib/nocodb/evidence';
 import { fetchAlerts }       from '@/lib/nocodb/alerts';
 import { fetchPeople }       from '@/lib/nocodb/people';
 import { getCompanySummaryState } from '@/lib/nocodb/company-summary-read';
+import { fetchProjectsByCompany } from '@/lib/nocodb/project-info';
+import { buildProjectAggregateVM } from '@/lib/company/project-aggregate';
+import { fetchSupportAggregateForCompany } from '@/lib/nocodb/support-by-company';
 import { getOpenAIClient, getOpenAIModel } from '@/lib/openai/client';
 import {
   COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT,
@@ -67,10 +70,12 @@ export async function POST(
   }
 
   // ── リクエストボディ（省略可） ───────────────────────────────────────────
-  // policy_id: Summary Policy を適用する場合に指定
-  interface RequestBody { policy_id?: string; }
+  // policy_id:    Summary Policy を適用する場合に指定
+  // summary_focus: インラインでフォーカス指示を渡す（テスト・プレビュー用）
+  interface RequestBody { policy_id?: string; summary_focus?: string; }
   const body: RequestBody = await req.json().catch(() => ({}));
-  const policyId = body.policy_id;
+  const policyId     = body.policy_id;
+  const inlineFocus  = body.summary_focus;
 
   // ── OpenAI クライアント初期化 ────────────────────────────────────────────
   let openai: ReturnType<typeof getOpenAIClient>;
@@ -84,12 +89,14 @@ export async function POST(
   }
 
   // ── NocoDB からデータ取得（並列）+ Summary Policy 取得 ───────────────────
-  const [company, evidence, alerts, people, policyRecord] = await Promise.all([
+  const [company, evidence, alerts, people, policyRecord, rawProjects, supportAgg] = await Promise.all([
     fetchCompanyByUid(companyUid).catch(() => null),
     fetchEvidence(companyUid).catch(() => []),
     fetchAlerts(companyUid).catch(() => []),
     fetchPeople(companyUid).catch(() => []),
     policyId ? getPolicyById(policyId).catch(() => null) : Promise.resolve(null),
+    fetchProjectsByCompany(companyUid).catch(() => []),
+    fetchSupportAggregateForCompany(companyUid).catch(() => null),
   ]);
 
   if (!company) {
@@ -99,12 +106,21 @@ export async function POST(
     );
   }
 
+  const projectsVM = buildProjectAggregateVM(rawProjects);
+
   // ── Summary Policy の設定を適用 ─────────────────────────────────────────
+  // inlineFocus が指定されている場合は summary_focus だけをオーバーライドして使う（テスト用）
   const summaryPolicy = policyRecord?.summaryPolicy ?? null;
-  const systemPrompt = buildSummaryPolicySystemPrompt(summaryPolicy);
+  const effectivePolicy = inlineFocus
+    ? { ...(summaryPolicy ?? {}), summary_focus: inlineFocus }
+    : summaryPolicy;
+  const systemPrompt = buildSummaryPolicySystemPrompt(effectivePolicy);
 
   // ── プロンプト構築 & OpenAI 呼び出し ────────────────────────────────────
-  const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people);
+  const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people, {
+    projects: projectsVM,
+    support:  supportAgg ?? undefined,
+  });
 
   const comp = await openai.chat.completions.create({
     model:    summaryPolicy?.model ?? model,
@@ -124,14 +140,22 @@ export async function POST(
   const generatedAt = new Date().toISOString();
 
   return NextResponse.json({
-    company_uid:    companyUid,
-    model:          comp.model,
-    generated_at:   generatedAt,
-    evidence_count: evidence.length,
-    alert_count:    alerts.length,
-    people_count:   people.length,
-    // Summary Policy が適用された場合はメタを追加
-    ...(summaryPolicy ? { applied_policy_id: policyId, applied_policy_name: policyRecord?.name } : {}),
+    company_uid:         companyUid,
+    model:               comp.model,
+    generated_at:        generatedAt,
+    evidence_count:      evidence.length,
+    alert_count:         alerts.length,
+    people_count:        people.length,
+    project_count:       projectsVM.total,
+    open_support_count:  supportAgg
+      ? supportAgg.openIntercomCount + supportAgg.openCseCount
+      : undefined,
+    // Summary Policy が適用された場合はメタを追加（UI tooltip 用に summary_focus も含める）
+    ...(summaryPolicy ? {
+      applied_policy_id:            policyId,
+      applied_policy_name:          policyRecord?.name,
+      applied_policy_summary_focus: summaryPolicy.summary_focus ?? null,
+    } : {}),
     ...result,
   });
 }

@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { Home } from "@/components/pages/home";
 
 export default function RootPage() {
-  redirect("/console");
+  return <Home />;
 }

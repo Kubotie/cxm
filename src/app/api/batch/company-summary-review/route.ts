@@ -185,8 +185,21 @@ async function reviewCompany(
 
   try {
     // company_uid + summary_type でレコードを取得
-    const where = `(company_uid,eq,${company.id})~and(summary_type,eq,${summaryType})`;
-    const list  = await nocoFetch<RawCompanySummaryState>(tableId, { where, limit: '1' });
+    // summary_type=null のレコードも 'default' として扱う（eq は null にマッチしないため blank も含む）
+    const typeFilter = summaryType === 'default'
+      ? `(summary_type,eq,default)~or(summary_type,blank)`
+      : `(summary_type,eq,${summaryType})`;
+    const where = `(company_uid,eq,${company.id})~and(${typeFilter})`;
+    // approved を優先するため複数件取得
+    const list  = await nocoFetch<RawCompanySummaryState>(tableId, { where, limit: '5' });
+    // approved レコードを優先
+    if (list.length > 1) {
+      const approvedIdx = list.findIndex(r => r.human_review_status === 'approved');
+      if (approvedIdx > 0) {
+        const [approvedRecord] = list.splice(approvedIdx, 1);
+        list.unshift(approvedRecord);
+      }
+    }
 
     if (list.length === 0) {
       // resolveCompanySummaryTargets で missing 以外とされたが DB に見つからないケース

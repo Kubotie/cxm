@@ -39,6 +39,13 @@
 //   failed_count:     number,
 //   results:          StalenessRunnerResultItem[],
 // }
+//
+// ── イベント起因との使い分け / 将来の queue 化 ─────────────────────────────────
+// このエンドポイントは「時間経過 → stale」の時間起因バッチ。
+// Evidence 追加など単一イベントで即時再生成する場合は
+//   POST /api/batch/company-summary-event → triggerSummaryRefreshForCompany() を使うこと。
+// 将来 queue を導入する際の差し替え点は
+//   src/lib/summary/event-trigger.ts の triggerSummaryRefreshForCompany() 本体。
 
 import { NextRequest, NextResponse }    from 'next/server';
 import { checkCronOrBatchAuth }          from '@/lib/batch/auth';
@@ -88,7 +95,7 @@ export async function POST(req: NextRequest) {
       success_count:   result.generated_count,
       partial_count:   0,
       failed_count:    result.failed_count,
-      skipped_count:   result.skipped_count,
+      skipped_count:   result.skipped_count + result.approved_skipped_count,
       failure_details: JSON.stringify(
         result.results.filter(r => r.status === 'failed').map(r => ({
           company_uid:  r.company_uid,
