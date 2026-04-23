@@ -123,3 +123,39 @@ export async function fetchBothPhasesByUids(companyUids: string[]): Promise<{
   ]);
   return { csmMap, crmMap };
 }
+
+// ── フェーズ履歴（変化検知用）────────────────────────────────────────────────
+
+export interface CsmPhaseWithHistory {
+  current:  AppCsmPhase;
+  previous: AppCsmPhase | null;
+}
+
+/**
+ * 複数企業の CSM フェーズを「最新2件」取得し、フェーズ変化を検知できるようにする。
+ * - rows[0] = 最新（current）
+ * - rows[1] = 直前（previous）— 存在しない場合は null
+ *
+ * 返り値: Map<company_uid, CsmPhaseWithHistory>
+ */
+export async function fetchCsmPhasesWithHistoryByUids(
+  companyUids: string[],
+): Promise<Map<string, CsmPhaseWithHistory>> {
+  const tableId = TABLE_IDS.csm_customer_phase;
+  if (!tableId || companyUids.length === 0) return new Map();
+  // 2件/社 必要なので limit を uids × 2 で要求（上限 1000）
+  const limit = String(Math.min(companyUids.length * 2, 1000));
+  const rawMap = await nocoFetchByUids<RawCsmPhase>(tableId, companyUids, {
+    sort: '-stat_date',
+    limit,
+  });
+  const result = new Map<string, CsmPhaseWithHistory>();
+  for (const [uid, rows] of rawMap) {
+    if (rows.length === 0) continue;
+    result.set(uid, {
+      current:  toAppCsmPhase(rows[0]),
+      previous: rows.length > 1 ? toAppCsmPhase(rows[1]) : null,
+    });
+  }
+  return result;
+}

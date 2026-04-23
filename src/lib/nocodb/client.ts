@@ -46,6 +46,10 @@ export const TABLE_IDS = {
   log_chatwork:                process.env.NOCODB_LOG_CHATWORK_TABLE_ID                ?? '',
   log_slack:                   process.env.NOCODB_LOG_SLACK_TABLE_ID                   ?? '',
   log_notion_minutes:          process.env.NOCODB_LOG_NOTION_MINUTES_TABLE_ID          ?? '',
+  // ── Company: daily snapshot（変動コックピット用履歴）─────────────────────────
+  // 日次バッチ（/api/batch/company-snapshot）で書き込む。
+  // 未設定の場合はスナップショット機能が無効になるが、他の機能には影響しない。
+  company_daily_snapshot:      process.env.NOCODB_COMPANY_DAILY_SNAPSHOT_TABLE_ID ?? '',
   // ── Ops: 監査ログ ──────────────────────────────────────────────────────────
   // 未設定の場合は writeBatchRunLog が console.log fallback になる
   audit_logs:                  process.env.NOCODB_AUDIT_LOGS_TABLE_ID                  ?? '',
@@ -85,14 +89,19 @@ function buildNocoQuery(params: Record<string, string>): string {
   return parts.length > 0 ? `?${parts.join('&')}` : '';
 }
 
+/** デフォルト TTL: 5 分。mutate 系 API（POST/PATCH/DELETE）後は revalidateTag で無効化する */
+export const NOCO_DEFAULT_TTL = 300;
+
 /**
  * NocoDB v2 REST API からテーブルレコードを取得する汎用関数。
  * @param tableId  対象テーブルID
  * @param params   クエリパラメータ (where/sort/limit/offset 等)
+ * @param ttl      キャッシュ秒数（デフォルト 300s）。false で no-store
  */
 export async function nocoFetch<T>(
   tableId: string,
   params: Record<string, string> = {},
+  ttl: number | false = NOCO_DEFAULT_TTL,
 ): Promise<T[]> {
   if (!API_TOKEN) {
     throw new Error(
@@ -101,13 +110,15 @@ export async function nocoFetch<T>(
   }
 
   const urlString = `${BASE_URL}/api/v2/tables/${tableId}/records${buildNocoQuery(params)}`;
+  const cacheOption: RequestInit = ttl === false
+    ? { cache: 'no-store' }
+    : { next: { revalidate: ttl, tags: [`noco:${tableId}`] } };
 
   const res = await fetch(urlString, {
     headers: {
       'xc-token': API_TOKEN,
     },
-    // Next.js キャッシュ: デフォルト force-cache を無効化して常に最新を取得
-    cache: 'no-store',
+    ...cacheOption,
   });
 
   if (!res.ok) {
@@ -176,7 +187,7 @@ export async function nocoCount(
   const urlString = `${BASE_URL}/api/v2/tables/${tableId}/records${query}`;
   const res = await fetch(urlString, {
     headers: { 'xc-token': API_TOKEN },
-    cache: 'no-store',
+    next: { revalidate: NOCO_DEFAULT_TTL, tags: [`noco:${tableId}`] },
   });
   if (!res.ok) return -1;
   const json: NocoDBResponse<unknown> = await res.json();

@@ -76,6 +76,22 @@ export interface CompanyListItemVM extends CompanySummaryListItemViewModel {
     unused:  number;
   };
 
+  // ── MRR / Renewal ─────────────────────────────────────────────────────────
+  /** Metabase CSV から集計した企業の MRR 合計（円）。取得不可時は null */
+  mrr:             number | null;
+  /** 更新予定日（CSM target_renewal_date > CRM contract_end_date > MRR order_end_date 優先順） */
+  renewalDate:     string | null;  // "YYYY-MM-DD"
+  /** 更新日まで何日か。過去の場合は負値 */
+  renewalDaysLeft: number | null;
+  /** 更新日ウィンドウ（Home シグナル分類用） */
+  renewalBucket:   '0-30' | '31-90' | '91-180' | '180+' | 'expired' | null;
+
+  // ── Phase Change ─────────────────────────────────────────────────────────
+  /** 直前レコードからフェーズが変化したか（CSM M-Phase 履歴2件を比較）*/
+  phaseChanged:    boolean;
+  /** 直前の M-Phase 値（null = 履歴なし or CSM 担当なし） */
+  previousMPhase:  string | null;
+
   // ── Basic ───────────────────────────────────────────────────────────────
   owner:       string;
   lastContact: string;

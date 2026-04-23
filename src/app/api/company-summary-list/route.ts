@@ -20,19 +20,25 @@
 // }
 //
 // ── 認証 ────────────────────────────────────────────────────────────────────
-// SUPPORT_BATCH_SECRET による Bearer 認証（未設定時は警告のみ）
+// このルートは UI（ブラウザ）から直接呼ばれる。
+// /api/company/[companyUid] と同様に UI ルートとして扱い、Bearer 認証は行わない。
+// サーバー間専用のバッチ処理には /api/batch/company-summary を使うこと。
 
-import { NextRequest, NextResponse }        from 'next/server';
-import { checkBatchAuth }                    from '@/lib/batch/auth';
-import { resolveCompanySummaryTargets }      from '@/lib/batch/company-summary-targets';
+import { NextRequest, NextResponse } from 'next/server';
+import { resolveCompanySummaryTargets } from '@/lib/batch/company-summary-targets';
 import type {
   SummaryFreshnessStatus,
   SummaryHumanReviewStatus,
 } from '@/lib/company/company-summary-state-policy';
 
 // ── Phase / Communication / Project / Support / People bulk helpers ───────────
-import { fetchBothPhasesByUids }              from '@/lib/nocodb/phases';
+import {
+  fetchCsmPhasesWithHistoryByUids,
+  fetchCrmPhasesByUids,
+  type CsmPhaseWithHistory,
+} from '@/lib/nocodb/phases';
 import { fetchProjectsByUids }               from '@/lib/nocodb/project-info';
+import { fetchProjectMrrMap }                from '@/lib/metabase/mrr';
 import { fetchLatestCommunicationDatesByUids } from '@/lib/nocodb/communication-logs';
 import { fetchSupportCountsByUids }           from '@/lib/nocodb/support-by-company';
 import { fetchPeopleSignalsByUids, fetchStaleDmSignalsByUids } from '@/lib/nocodb/people';
@@ -64,13 +70,32 @@ import type { OverallHealth }                 from '@/lib/company/badges';
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT     = 500;
 
+// ── Renewal 計算ヘルパー ──────────────────────────────────────────────────────
+
+type RenewalBucket = '0-30' | '31-90' | '91-180' | '180+' | 'expired';
+
+function computeRenewal(dateStr: string | null): {
+  daysLeft: number | null;
+  bucket:   RenewalBucket | null;
+} {
+  if (!dateStr) return { daysLeft: null, bucket: null };
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const renewal = new Date(dateStr);
+  const daysLeft = Math.floor((renewal.getTime() - today.getTime()) / 86_400_000);
+  let bucket: RenewalBucket;
+  if      (daysLeft < 0)   bucket = 'expired';
+  else if (daysLeft <= 30)  bucket = '0-30';
+  else if (daysLeft <= 90)  bucket = '31-90';
+  else if (daysLeft <= 180) bucket = '91-180';
+  else                      bucket = '180+';
+  return { daysLeft, bucket };
+}
+
 const VALID_FRESHNESS = new Set<string>(['missing', 'stale', 'fresh', 'locked']);
 const VALID_REVIEW    = new Set<string>(['pending', 'reviewed', 'corrected', 'approved', 'null']);
 
 export async function GET(req: NextRequest) {
-  const authError = checkBatchAuth(req);
-  if (authError) return authError;
-
   const { searchParams } = req.nextUrl;
 
   // ── パラメータ解析 ────────────────────────────────────────────────────────
@@ -110,7 +135,12 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[company-summary-list] 対象取得失敗:', err);
-    return NextResponse.json({ error: `取得エラー: ${msg}` }, { status: 500 });
+    const isNetworkError = msg.includes('fetch failed') || msg.includes('ConnectTimeout') || msg.includes('ECONNREFUSED');
+    const status = isNetworkError ? 503 : 500;
+    return NextResponse.json(
+      { error: isNetworkError ? `データベース接続エラー。しばらく待ってから再試行してください。(${msg.slice(0, 80)})` : `取得エラー: ${msg}` },
+      { status },
+    );
   }
 
   if (targets.length === 0) {
@@ -124,14 +154,17 @@ export async function GET(req: NextRequest) {
   // ── Step 2: 全企業 UID を収集して bulk fetch ───────────────────────────────
   const allUids = targets.map(t => t.company.id);
 
-  const [bothPhases, projectMap, commDateMap, supportMap, peopleSignalMap, overdueActionMap, staleDmMap] = await Promise.all([
-    fetchBothPhasesByUids(allUids).catch(() => ({
-      csmMap: new Map() as Map<string, import('@/lib/nocodb/types').AppCsmPhase>,
-      crmMap: new Map() as Map<string, import('@/lib/nocodb/types').AppCrmPhase>,
-    })),
+  const [csmPhaseHistoryMap, crmMap, projectMap, mrrMap, commDateMap, supportMap, peopleSignalMap, overdueActionMap, staleDmMap] = await Promise.all([
+    fetchCsmPhasesWithHistoryByUids(allUids).catch(
+      () => new Map<string, CsmPhaseWithHistory>(),
+    ),
+    fetchCrmPhasesByUids(allUids).catch(
+      () => new Map() as Map<string, import('@/lib/nocodb/types').AppCrmPhase>,
+    ),
     fetchProjectsByUids(allUids).catch(() =>
       new Map(allUids.map(u => [u, [] as import('@/lib/nocodb/types').AppProjectInfo[]])),
     ),
+    fetchProjectMrrMap().catch(() => new Map()),
     fetchLatestCommunicationDatesByUids(allUids).catch(() =>
       new Map<string, import('@/lib/nocodb/communication-logs').LatestCommunicationDate>(),
     ),
@@ -145,7 +178,10 @@ export async function GET(req: NextRequest) {
     // Stale DM signal: NOCODB_COMPANY_PEOPLE_TABLE_ID 未設定時は空 Map（graceful degradation）
     fetchStaleDmSignalsByUids(allUids).catch(() => new Map<string, boolean>()),
   ]);
-  const { csmMap, crmMap } = bothPhases;
+  // csmPhaseHistoryMap から current のみ抽出して既存の csmMap 互換で使う
+  const csmMap = new Map(
+    [...csmPhaseHistoryMap.entries()].map(([uid, h]) => [uid, h.current]),
+  );
 
   // ── Step 3: 各企業の VM を構築 ────────────────────────────────────────────
   const items: CompanyListItemVM[] = targets.map(({ company, listVM }) => {
@@ -159,6 +195,43 @@ export async function GET(req: NextRequest) {
 
     const projList  = projectMap.get(uid) ?? [];
     const projectVM = projList.length > 0 ? buildProjectAggregateVM(projList) : EMPTY_PROJECT_AGGREGATE;
+
+    // ── MRR / Renewal 計算 ──────────────────────────────────────────────────
+    // 契約終了日の取得元（優先順）:
+    //   1. project_info.latestOrderEndDate（NocoDB 直取得 — 最も信頼性が高い）
+    //   2. Metabase CSV の orderEndDate（project_id join が成立した場合のみ）
+    // → 2つを比べて最も早い（直近の）日付をその企業の renewal 候補とする
+    let totalMrr = 0;
+    let earliestProjectEndDate: string | null = null;
+    for (const p of projList) {
+      // MRR 金額は Metabase CSV から
+      const mrrData = mrrMap.get(p.id);
+      if (mrrData) totalMrr += mrrData.mrr;
+
+      // 終了日: project_info.latestOrderEndDate を優先し、なければ CSV にフォールバック
+      const endDate = p.latestOrderEndDate ?? mrrData?.orderEndDate ?? null;
+      if (endDate) {
+        if (!earliestProjectEndDate || endDate < earliestProjectEndDate) {
+          earliestProjectEndDate = endDate;
+        }
+      }
+    }
+    // CSM target → CRM contract → project end の優先順で renewal 日を決める
+    const csmPhase = csmMap.get(uid) ?? null;
+    const crmPhase = crmMap.get(uid) ?? null;
+    const renewalDate =
+      csmPhase?.targetRenewalDate ??
+      crmPhase?.contractEndDate   ??
+      earliestProjectEndDate      ?? null;
+    const { daysLeft: renewalDaysLeft, bucket: renewalBucket } = computeRenewal(renewalDate);
+
+    // ── Phase 変化検知 ───────────────────────────────────────────────────────
+    const phaseHistory = csmPhaseHistoryMap.get(uid);
+    const previousMPhase = phaseHistory?.previous?.mPhase ?? null;
+    const phaseChanged =
+      phaseHistory !== undefined &&
+      phaseHistory.previous !== null &&
+      phaseHistory.current.mPhase !== previousMPhase;
 
     const commDate  = commDateMap.get(uid) ?? { latestDate: null, blankDays: null };
     const blankDays = commDate.blankDays;
@@ -246,6 +319,16 @@ export async function GET(req: NextRequest) {
         stalled: projectVM.stalled,
         unused:  projectVM.unused,
       },
+
+      // ── MRR / Renewal ─────────────────────────────────────────────────────
+      mrr:             totalMrr > 0 ? totalMrr : null,
+      renewalDate,
+      renewalDaysLeft,
+      renewalBucket,
+
+      // ── Phase Change ──────────────────────────────────────────────────────
+      phaseChanged,
+      previousMPhase,
 
       // ── Basic ─────────────────────────────────────────────────────────────
       owner:       company.owner,
