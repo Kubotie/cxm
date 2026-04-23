@@ -18,6 +18,7 @@ import {
   RefreshCw, AlertTriangle,
   Headphones, TrendingUp, ArrowRight,
   Building2, Calendar, ArrowUpDown,
+  TrendingDown, GitBranch,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -126,6 +127,151 @@ function buildSignals(all: CompanyListItemVM[]): SignalGroup[] {
       segment: "expanding",
     },
   ];
+}
+
+// ── Snapshot 差分グループ定義 ─────────────────────────────────────────────────
+
+interface DiffGroup {
+  id:               string;
+  label:            string;
+  icon:             React.ReactNode;
+  count:            number;
+  items:            CompanyListItemVM[];
+  segment:          string;
+  iconColor:        string;
+  bgClass:          string;
+  borderColor:      string;
+  accentColor:      string;
+  renderDetail:     (item: CompanyListItemVM) => string | null;
+}
+
+function buildDiffGroups(all: CompanyListItemVM[]): DiffGroup[] {
+  const phaseChg    = all.filter(i => i.snapshotDiff?.phaseChanged === true);
+  const entered30   = all.filter(i => i.snapshotDiff?.renewalEnteredThirty === true);
+  const entered90   = all.filter(i => i.snapshotDiff?.renewalEnteredNinety === true);
+  const suppInc     = all.filter(i => i.snapshotDiff?.supportIncreased === true);
+  const mrrDec      = all.filter(i => i.snapshotDiff?.mrrDecreased === true);
+  const mrrInc      = all.filter(i => i.snapshotDiff?.mrrIncreased === true);
+
+  return [
+    {
+      id: "diffPhase", label: "フェーズ変化",
+      icon: <GitBranch className="w-3.5 h-3.5" />,
+      count: phaseChg.length, items: phaseChg.slice(0, 3), segment: "phase_changed",
+      iconColor: "text-violet-600", bgClass: "bg-violet-50",
+      borderColor: "border-violet-200", accentColor: "border-l-violet-500",
+      renderDetail: i => {
+        const prev = i.snapshotDiff?.previousMPhase;
+        return prev ? `${prev} → ${i.activePhaseLabel ?? "?"}` : null;
+      },
+    },
+    {
+      id: "diffRenewal30", label: "更新30日入り",
+      icon: <Calendar className="w-3.5 h-3.5" />,
+      count: entered30.length, items: entered30.slice(0, 3), segment: "renewal_entered_30",
+      iconColor: "text-rose-600", bgClass: "bg-rose-50",
+      borderColor: "border-rose-200", accentColor: "border-l-rose-500",
+      renderDetail: i => i.renewalDaysLeft != null ? `あと${i.renewalDaysLeft}日` : null,
+    },
+    {
+      id: "diffRenewal90", label: "更新90日入り",
+      icon: <Calendar className="w-3.5 h-3.5" />,
+      count: entered90.length, items: entered90.slice(0, 3), segment: "renewal_entered_90",
+      iconColor: "text-orange-500", bgClass: "bg-orange-50",
+      borderColor: "border-orange-200", accentColor: "border-l-orange-400",
+      renderDetail: i => i.renewalDaysLeft != null ? `あと${i.renewalDaysLeft}日` : null,
+    },
+    {
+      id: "diffSupport", label: "サポート増加",
+      icon: <Headphones className="w-3.5 h-3.5" />,
+      count: suppInc.length, items: suppInc.slice(0, 3), segment: "support_increased",
+      iconColor: "text-amber-600", bgClass: "bg-amber-50",
+      borderColor: "border-amber-200", accentColor: "border-l-amber-500",
+      renderDetail: i => {
+        const d = i.snapshotDiff?.supportDelta;
+        return d != null && d > 0 ? `+${d}件` : null;
+      },
+    },
+    {
+      id: "diffMrrDec", label: "MRR 減少",
+      icon: <TrendingDown className="w-3.5 h-3.5" />,
+      count: mrrDec.length, items: mrrDec.slice(0, 3), segment: "mrr_decreased",
+      iconColor: "text-red-600", bgClass: "bg-red-50",
+      borderColor: "border-red-200", accentColor: "border-l-red-500",
+      renderDetail: i => {
+        const d = i.snapshotDiff?.mrrDelta;
+        return d != null && d < 0 ? `-${formatMrr(Math.abs(d))}` : null;
+      },
+    },
+    {
+      id: "diffMrrInc", label: "MRR 増加",
+      icon: <TrendingUp className="w-3.5 h-3.5" />,
+      count: mrrInc.length, items: mrrInc.slice(0, 3), segment: "mrr_increased",
+      iconColor: "text-emerald-600", bgClass: "bg-emerald-50",
+      borderColor: "border-emerald-200", accentColor: "border-l-emerald-500",
+      renderDetail: i => {
+        const d = i.snapshotDiff?.mrrDelta;
+        return d != null && d > 0 ? `+${formatMrr(d)}` : null;
+      },
+    },
+  ];
+}
+
+// ── DiffTile ──────────────────────────────────────────────────────────────────
+
+function DiffTile({ group }: { group: DiffGroup }) {
+  const hasData = group.count > 0;
+  const containerCls = hasData
+    ? `${group.bgClass} ${group.borderColor} border-l-[3px] ${group.accentColor}`
+    : "bg-white border-slate-100";
+
+  return (
+    <div className={`flex flex-col gap-1.5 p-3 rounded-xl border transition-all ${containerCls}`}>
+      <div className="flex items-center justify-between gap-1">
+        <Link
+          href={listUrl(group.segment)}
+          className={`flex items-center gap-1 hover:opacity-75 transition-opacity min-w-0 ${hasData ? group.iconColor : "text-slate-400"}`}
+        >
+          {group.icon}
+          <span className="text-[11px] font-semibold text-slate-700 truncate">{group.label}</span>
+          {hasData && <ArrowRight className="w-2.5 h-2.5 opacity-40 flex-shrink-0" />}
+        </Link>
+        <Link
+          href={listUrl(group.segment)}
+          className={`text-lg font-bold leading-none tabular-nums flex-shrink-0 hover:opacity-75 ${hasData ? group.iconColor : "text-slate-200"}`}
+        >
+          {group.count}
+        </Link>
+      </div>
+
+      <div className="flex flex-col gap-0.5 min-h-[36px] justify-end">
+        {hasData ? (
+          <>
+            {group.items.map(item => {
+              const detail = group.renderDetail(item);
+              return (
+                <Link
+                  key={item.companyUid}
+                  href={`/companies/${item.companyUid}`}
+                  className="text-[10px] text-slate-600 truncate hover:text-slate-900 hover:underline leading-snug"
+                >
+                  · {item.companyName}
+                  {detail && <span className={`ml-1 font-medium ${group.iconColor}`}>{detail}</span>}
+                </Link>
+              );
+            })}
+            {group.count > 3 && (
+              <Link href={listUrl(group.segment)} className="text-[10px] text-slate-400 hover:text-slate-600 mt-0.5">
+                他 {group.count - 3} 社 →
+              </Link>
+            )}
+          </>
+        ) : (
+          <span className="text-[10px] text-slate-300">変化なし</span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ── SignalTile ────────────────────────────────────────────────────────────────
@@ -391,9 +537,12 @@ export function Home() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const signals  = buildSignals(items);
-  const topItems = items.slice(0, 7);
-  const total    = items.length;
+  const signals    = buildSignals(items);
+  const diffGroups = buildDiffGroups(items);
+  const topItems   = items.slice(0, 7);
+  const total      = items.length;
+  const hasDiffData = diffGroups.some(g => g.count > 0);
+  const hasSnapshotDiff = items.some(i => i.snapshotDiff !== undefined);
 
   // ── 健全度集計 ──────────────────────────────────────────────────────────────
   const critical  = items.filter(i => i.overallHealth === "critical").length;
@@ -478,6 +627,29 @@ export function Home() {
 
           {error && <AlertBox variant="error" className="mb-4">{error}</AlertBox>}
 
+          {/* ── Section DIFF: 前日比 差分 ───────────────────────────────── */}
+          <div className="mb-6">
+            <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-3">
+              前日比 差分
+              <span className="ml-2 normal-case font-normal text-slate-300">
+                — スナップショット前日比 / 件数・ラベルで一覧へ / 企業名で詳細へ
+              </span>
+            </p>
+            {loading ? (
+              <div className="grid grid-cols-6 gap-3">
+                {[0,1,2,3,4,5].map(i => <Skeleton key={i} className="h-28 rounded-xl" />)}
+              </div>
+            ) : !hasSnapshotDiff ? (
+              <div className="bg-white border border-slate-100 rounded-xl px-4 py-3 text-[11px] text-slate-400">
+                差分データなし — スナップショット蓄積後（翌日以降）から表示されます
+              </div>
+            ) : (
+              <div className="grid grid-cols-6 gap-3">
+                {diffGroups.map(g => <DiffTile key={g.id} group={g} />)}
+              </div>
+            )}
+          </div>
+
           {/* ── Section A: 変動シグナル ─────────────────────────────────── */}
           <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-3">
             今週の変動シグナル
@@ -493,25 +665,6 @@ export function Home() {
               {signals.map(signal => (
                 <SignalTile key={signal.id} signal={signal} />
               ))}
-            </div>
-          )}
-
-          {/* ── Section D: バーチャート ─────────────────────────────────── */}
-          {loading ? (
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              {[0,1,2].map(i => <Skeleton key={i} className="h-52 rounded-xl" />)}
-            </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <ChartCard title="健全度分布" hint="クリックで絞り込み">
-                <HealthBarChart data={healthChartData} onNavigate={navigateToList} />
-              </ChartCard>
-              <ChartCard title="フェーズ分布">
-                <PhaseBarChart data={phaseChartData} />
-              </ChartCard>
-              <ChartCard title="更新ウィンドウ" hint="クリックで絞り込み">
-                <RenewalBarChart data={renewalChartData} onNavigate={navigateToList} />
-              </ChartCard>
             </div>
           )}
 
@@ -653,6 +806,31 @@ export function Home() {
               )}
             </div>
           </div>
+
+          {/* ── Section D: 分布チャート（補助）──────────────────────────── */}
+          {loading ? (
+            <div className="grid grid-cols-3 gap-4 mt-6">
+              {[0,1,2].map(i => <Skeleton key={i} className="h-52 rounded-xl" />)}
+            </div>
+          ) : (
+            <div className="mt-6">
+              <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-3">
+                分布（補助）
+                <span className="ml-2 normal-case font-normal text-slate-300">— クリックで絞り込み</span>
+              </p>
+              <div className="grid grid-cols-3 gap-4">
+                <ChartCard title="健全度分布" hint="クリックで絞り込み">
+                  <HealthBarChart data={healthChartData} onNavigate={navigateToList} />
+                </ChartCard>
+                <ChartCard title="フェーズ分布">
+                  <PhaseBarChart data={phaseChartData} />
+                </ChartCard>
+                <ChartCard title="更新ウィンドウ" hint="クリックで絞り込み">
+                  <RenewalBarChart data={renewalChartData} onNavigate={navigateToList} />
+                </ChartCard>
+              </div>
+            </div>
+          )}
 
         </main>
       </div>

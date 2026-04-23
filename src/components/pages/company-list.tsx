@@ -70,7 +70,14 @@ type SegmentKey =
   | 'critical'
   | 'at_risk'
   | 'support_high'
-  | 'summary_stale';
+  | 'summary_stale'
+  // ── snapshot 差分ベース ──────────────────────────────────────────────────
+  | 'phase_changed'
+  | 'renewal_entered_30'
+  | 'renewal_entered_90'
+  | 'support_increased'
+  | 'mrr_increased'
+  | 'mrr_decreased';
 
 interface Segment {
   key:    SegmentKey;
@@ -133,6 +140,43 @@ const SEGMENTS: Segment[] = [
     label:  'Summary要更新',
     filter: i => i.freshnessStatus === 'missing' || i.freshnessStatus === 'stale',
     color:  'border-violet-500 text-violet-700 bg-violet-50',
+  },
+  // ── snapshot 差分ベース ────────────────────────────────────────────────────
+  {
+    key:    'phase_changed',
+    label:  'フェーズ変化',
+    filter: i => i.snapshotDiff?.phaseChanged === true,
+    color:  'border-violet-500 text-violet-700 bg-violet-50',
+  },
+  {
+    key:    'renewal_entered_30',
+    label:  '更新30日入り',
+    filter: i => i.snapshotDiff?.renewalEnteredThirty === true,
+    color:  'border-rose-500 text-rose-700 bg-rose-50',
+  },
+  {
+    key:    'renewal_entered_90',
+    label:  '更新90日入り',
+    filter: i => i.snapshotDiff?.renewalEnteredNinety === true,
+    color:  'border-orange-500 text-orange-700 bg-orange-50',
+  },
+  {
+    key:    'support_increased',
+    label:  'サポート増加',
+    filter: i => i.snapshotDiff?.supportIncreased === true,
+    color:  'border-amber-500 text-amber-700 bg-amber-50',
+  },
+  {
+    key:    'mrr_increased',
+    label:  'MRR増加',
+    filter: i => i.snapshotDiff?.mrrIncreased === true,
+    color:  'border-emerald-500 text-emerald-700 bg-emerald-50',
+  },
+  {
+    key:    'mrr_decreased',
+    label:  'MRR減少',
+    filter: i => i.snapshotDiff?.mrrDecreased === true,
+    color:  'border-red-500 text-red-700 bg-red-50',
   },
 ];
 
@@ -352,6 +396,8 @@ export function CompanyList() {
   const VALID_SEGMENTS = new Set<SegmentKey>([
     'all','renewal_30','renewal_90','arr_at_risk',
     'expanding','critical','at_risk','support_high','summary_stale',
+    'phase_changed','renewal_entered_30','renewal_entered_90',
+    'support_increased','mrr_increased','mrr_decreased',
   ]);
 
   const initSegment = ((): SegmentKey => {

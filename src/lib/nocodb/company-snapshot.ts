@@ -133,3 +133,38 @@ export function yesterdayDateStr(): string {
 export function todayDateStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+/**
+ * 複数企業の「前日スナップショット」を一括取得する。
+ * 今日より前（snapshot_date < today）の最新1件を返す。
+ * 差分計算（前日比）用。
+ *
+ * @returns Map<company_uid, CompanyDailySnapshot>
+ */
+export async function fetchPreviousSnapshotsByUids(
+  companyUids: string[],
+): Promise<Map<string, CompanyDailySnapshot>> {
+  const tableId = TABLE_IDS.company_daily_snapshot;
+  if (!tableId || companyUids.length === 0) return new Map();
+
+  const today = todayDateStr();
+  // NocoDB フィルタ: company_uid が対象リストに含まれ、かつ snapshot_date < today
+  const where = `(company_uid,in,${companyUids.join(',')})~and(snapshot_date,lt,${today})`;
+  // 1社あたり最大2件取得して最新を選ぶ（同日に複数行がある場合の保険）
+  const limit = String(Math.min(companyUids.length * 2, 1000));
+
+  const rows = await nocoFetch<CompanyDailySnapshot>(tableId, {
+    where,
+    sort:  '-snapshot_date',
+    limit,
+  }).catch(() => [] as CompanyDailySnapshot[]);
+
+  const result = new Map<string, CompanyDailySnapshot>();
+  for (const row of rows) {
+    const uid = row.company_uid;
+    if (!uid) continue;
+    // sort 済みで先着1件 = 最新の前日スナップ
+    if (!result.has(uid)) result.set(uid, row);
+  }
+  return result;
+}

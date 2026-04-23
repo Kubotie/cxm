@@ -92,6 +92,32 @@ export interface CompanyListItemVM extends CompanySummaryListItemViewModel {
   /** 直前の M-Phase 値（null = 履歴なし or CSM 担当なし） */
   previousMPhase:  string | null;
 
+  // ── Snapshot Diff（前日スナップショット比較）────────────────────────────
+  /**
+   * 前日スナップショットとの差分。
+   * スナップショット未蓄積（初日）または table 未設定時は undefined。
+   */
+  snapshotDiff?: {
+    /** フェーズが昨日から変化したか */
+    phaseChanged:         boolean;
+    /** 昨日の M-Phase */
+    previousMPhase:       string | null;
+    /** サポート件数の前日差（正=増加、負=減少） */
+    supportDelta:         number | null;
+    /** サポート件数が増加したか */
+    supportIncreased:     boolean;
+    /** 更新バケットが 0-30 に入った（昨日は 0-30 以外だった） */
+    renewalEnteredThirty: boolean;
+    /** 更新バケットが 31-90 に入った（昨日は 91-180 以上だった） */
+    renewalEnteredNinety: boolean;
+    /** MRR の前日差（正=増加、負=減少、null=いずれか null） */
+    mrrDelta:             number | null;
+    /** MRR が増加したか */
+    mrrIncreased:         boolean;
+    /** MRR が減少したか */
+    mrrDecreased:         boolean;
+  };
+
   // ── Basic ───────────────────────────────────────────────────────────────
   owner:       string;
   lastContact: string;

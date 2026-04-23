@@ -43,6 +43,7 @@ import { fetchLatestCommunicationDatesByUids } from '@/lib/nocodb/communication-
 import { fetchSupportCountsByUids }           from '@/lib/nocodb/support-by-company';
 import { fetchPeopleSignalsByUids, fetchStaleDmSignalsByUids } from '@/lib/nocodb/people';
 import { fetchOverdueActionSignalsByUids }    from '@/lib/nocodb/company-actions';
+import { fetchPreviousSnapshotsByUids }       from '@/lib/nocodb/company-snapshot';
 import type { PeopleActionSignal }            from '@/lib/company/company-people-risk';
 
 // ── VM builders ───────────────────────────────────────────────────────────────
@@ -154,7 +155,7 @@ export async function GET(req: NextRequest) {
   // ── Step 2: 全企業 UID を収集して bulk fetch ───────────────────────────────
   const allUids = targets.map(t => t.company.id);
 
-  const [csmPhaseHistoryMap, crmMap, projectMap, mrrMap, commDateMap, supportMap, peopleSignalMap, overdueActionMap, staleDmMap] = await Promise.all([
+  const [csmPhaseHistoryMap, crmMap, projectMap, mrrMap, commDateMap, supportMap, peopleSignalMap, overdueActionMap, staleDmMap, prevSnapshotMap] = await Promise.all([
     fetchCsmPhasesWithHistoryByUids(allUids).catch(
       () => new Map<string, CsmPhaseWithHistory>(),
     ),
@@ -177,6 +178,8 @@ export async function GET(req: NextRequest) {
     fetchOverdueActionSignalsByUids(allUids).catch(() => new Map<string, boolean>()),
     // Stale DM signal: NOCODB_COMPANY_PEOPLE_TABLE_ID 未設定時は空 Map（graceful degradation）
     fetchStaleDmSignalsByUids(allUids).catch(() => new Map<string, boolean>()),
+    // 前日スナップショット: company_daily_snapshot 未設定 or 未蓄積時は空 Map（graceful degradation）
+    fetchPreviousSnapshotsByUids(allUids).catch(() => new Map<string, import('@/lib/nocodb/company-snapshot').CompanyDailySnapshot>()),
   ]);
   // csmPhaseHistoryMap から current のみ抽出して既存の csmMap 互換で使う
   const csmMap = new Map(
@@ -277,6 +280,32 @@ export async function GET(req: NextRequest) {
       keyContactCount:    peopleSignal?.dmCount ?? 0,
     };
 
+    // ── Snapshot 差分計算 ────────────────────────────────────────────────────
+    const prevSnap = prevSnapshotMap.get(uid) ?? null;
+    let snapshotDiff: import('@/lib/company/company-vm').CompanyListItemVM['snapshotDiff'];
+    if (prevSnap) {
+      const currentMPhase   = csmPhase?.mPhase ?? null;
+      const snapshotSupport = prevSnap.open_support_count ?? 0;
+      const supportDelta    = supportCounts.openCount - snapshotSupport;
+      const snapshotMrr     = prevSnap.mrr;
+      const currentMrr_     = totalMrr > 0 ? totalMrr : null;
+      const mrrDelta        = currentMrr_ !== null && snapshotMrr !== null
+        ? currentMrr_ - snapshotMrr : null;
+      const snapshotBucket  = prevSnap.renewal_bucket as import('@/lib/company/company-vm').CompanyListItemVM['renewalBucket'];
+
+      snapshotDiff = {
+        phaseChanged:         currentMPhase !== null && prevSnap.m_phase !== null && currentMPhase !== prevSnap.m_phase,
+        previousMPhase:       prevSnap.m_phase,
+        supportDelta,
+        supportIncreased:     supportDelta > 0,
+        renewalEnteredThirty: snapshotBucket !== '0-30' && renewalBucket === '0-30',
+        renewalEnteredNinety: (snapshotBucket === '91-180' || snapshotBucket === '180+' || snapshotBucket === null) && renewalBucket === '31-90',
+        mrrDelta,
+        mrrIncreased:         mrrDelta !== null && mrrDelta > 0,
+        mrrDecreased:         mrrDelta !== null && mrrDelta < 0,
+      };
+    }
+
     const { score, breakdown } = calcPriorityScore({
       healthVM,
       freshnessStatus:        listVM.freshnessStatus,
@@ -329,6 +358,9 @@ export async function GET(req: NextRequest) {
       // ── Phase Change ──────────────────────────────────────────────────────
       phaseChanged,
       previousMPhase,
+
+      // ── Snapshot Diff ─────────────────────────────────────────────────────
+      snapshotDiff,
 
       // ── Basic ─────────────────────────────────────────────────────────────
       owner:       company.owner,
