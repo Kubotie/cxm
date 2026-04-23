@@ -26,6 +26,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AlertBox } from "@/components/ui/alert-box";
 import {
   RefreshCw, CheckSquare, AlertTriangle, Lock,
   FileQuestion, Clock, Check, X, Loader2, ChevronDown, ChevronUp,
@@ -197,6 +198,17 @@ export function CompanySummaryOps() {
   const [showAllResults, setShowAllResults] = useState(false);
   const [copied,         setCopied]         = useState(false);
 
+  // ── バッチ実行ログ ────────────────────────────────────────────────────────
+  interface BatchLogSummary {
+    started_at:    string;
+    success_count: number;
+    skipped_count: number;
+    failed_count:  number;
+  }
+  const [batchLogStaleness,      setBatchLogStaleness]      = useState<BatchLogSummary | 'unavailable' | null>(null);
+  const [batchLogEvent,          setBatchLogEvent]          = useState<BatchLogSummary | 'unavailable' | null>(null);
+  const [activeOnEventPolicies,  setActiveOnEventPolicies]  = useState<{ name: string; policyId: string }[]>([]);
+
   // ── 一覧フェッチ ──────────────────────────────────────────────────────────
 
   const fetchList = useCallback(async () => {
@@ -223,6 +235,40 @@ export function CompanySummaryOps() {
   }, [freshness, review, limit, uidsInput]);
 
   useEffect(() => { fetchList(); }, [fetchList]);
+
+  // ── バッチ実行ログ & Policy 取得（初回のみ）─────────────────────────────
+  useEffect(() => {
+    async function fetchBatchStatus() {
+      // staleness ログ
+      const rsS = await apiFetch('/ops/batch-logs?batch_type=company-summary-staleness&limit=1').catch(() => null);
+      if (rsS?.ok) {
+        const d = await rsS.json() as { available: boolean; items?: BatchLogSummary[] };
+        setBatchLogStaleness(d.available && d.items?.length ? d.items[0] : 'unavailable');
+      } else {
+        setBatchLogStaleness('unavailable');
+      }
+
+      // event ログ
+      const rsE = await apiFetch('/ops/batch-logs?batch_type=company-summary-event&limit=1').catch(() => null);
+      if (rsE?.ok) {
+        const d = await rsE.json() as { available: boolean; items?: BatchLogSummary[] };
+        setBatchLogEvent(d.available && d.items?.length ? d.items[0] : 'unavailable');
+      } else {
+        setBatchLogEvent('unavailable');
+      }
+
+      // on_event policy 競合チェック
+      const rsP = await apiFetch('/ops/policies?type=summary').catch(() => null);
+      if (rsP?.ok) {
+        const d = await rsP.json() as { items?: { policyId: string; name: string; status: string; summaryPolicy?: { generation_trigger?: string } }[] };
+        const active = (d.items ?? []).filter(
+          p => p.status === 'active' && p.summaryPolicy?.generation_trigger === 'on_event',
+        );
+        setActiveOnEventPolicies(active.map(p => ({ name: p.name, policyId: p.policyId })));
+      }
+    }
+    fetchBatchStatus();
+  }, []);
 
   // ── クイックスタット（items から派生） ────────────────────────────────────
 
@@ -382,6 +428,62 @@ export function CompanySummaryOps() {
             />
           </div>
 
+          {/* ── バッチ実行状況 ───────────────────────────────────────────── */}
+          <div className="mb-4 flex flex-col gap-2">
+            {/* on_event 複数 active 警告 */}
+            {activeOnEventPolicies.length > 1 && (
+              <AlertBox variant="warning" size="sm">
+                on_event（自動）policy が {activeOnEventPolicies.length} 件 active になっています。
+                先着 1 件（<strong>{activeOnEventPolicies[0].name}</strong>）のみ使用されます。
+                推奨: active は 1 件に絞ってください。
+              </AlertBox>
+            )}
+
+            {/* 実行ログ */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3 rounded-md bg-white border border-slate-200 text-xs">
+                <div className="flex items-center gap-1.5 mb-1.5 text-slate-600 font-medium">
+                  <Clock className="w-3.5 h-3.5" />
+                  定期バッチ（on_staleness）
+                </div>
+                {batchLogStaleness === null ? (
+                  <span className="text-slate-400">読み込み中...</span>
+                ) : batchLogStaleness === 'unavailable' ? (
+                  <span className="text-slate-400">— 履歴なし</span>
+                ) : (
+                  <>
+                    <p className="text-slate-500">最終実行: <span className="text-slate-700 font-medium">{fmtDate(batchLogStaleness.started_at)}</span></p>
+                    <p className="text-slate-500 mt-0.5">
+                      生成: <span className="text-teal-600 font-medium">{batchLogStaleness.success_count}</span>
+                      &nbsp;/ skip: <span className="text-slate-500">{batchLogStaleness.skipped_count}</span>
+                      &nbsp;/ 失敗: <span className={batchLogStaleness.failed_count > 0 ? 'text-red-600 font-medium' : 'text-slate-400'}>{batchLogStaleness.failed_count}</span>
+                    </p>
+                  </>
+                )}
+              </div>
+              <div className="p-3 rounded-md bg-white border border-slate-200 text-xs">
+                <div className="flex items-center gap-1.5 mb-1.5 text-slate-600 font-medium">
+                  <History className="w-3.5 h-3.5" />
+                  イベントトリガー（on_event）
+                </div>
+                {batchLogEvent === null ? (
+                  <span className="text-slate-400">読み込み中...</span>
+                ) : batchLogEvent === 'unavailable' ? (
+                  <span className="text-slate-400">— 履歴なし</span>
+                ) : (
+                  <>
+                    <p className="text-slate-500">最終受信: <span className="text-slate-700 font-medium">{fmtDate(batchLogEvent.started_at)}</span></p>
+                    <p className="text-slate-500 mt-0.5">
+                      生成: <span className="text-teal-600 font-medium">{batchLogEvent.success_count}</span>
+                      &nbsp;/ skip: <span className="text-slate-500">{batchLogEvent.skipped_count}</span>
+                      &nbsp;/ 失敗: <span className={batchLogEvent.failed_count > 0 ? 'text-red-600 font-medium' : 'text-slate-400'}>{batchLogEvent.failed_count}</span>
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* ── フィルタバー ─────────────────────────────────────────────── */}
           <Card className="mb-4 border-slate-200">
             <CardContent className="p-4">
@@ -520,18 +622,19 @@ export function CompanySummaryOps() {
 
           {/* ── エラー表示 ────────────────────────────────────────────────── */}
           {error && (
-            <div className="mb-4 p-3 rounded-md bg-red-50 border border-red-200 text-sm text-red-700 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <span>{error}</span>
-                {error.includes('Invalid option') && (
-                  <p className="mt-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                    💡 <strong>NocoDB スキーマ不整合:</strong> overall_health カラムが SingleSelect（選択肢なし）になっています。NocoDB 管理画面でカラム型を <strong>Text</strong> に変更してください。
-                  </p>
-                )}
+            <AlertBox variant="error" className="mb-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <span>{error}</span>
+                  {error.includes('Invalid option') && (
+                    <AlertBox variant="warning" size="sm" className="mt-2">
+                      💡 <strong>NocoDB スキーマ不整合:</strong> overall_health カラムが SingleSelect（選択肢なし）になっています。NocoDB 管理画面でカラム型を <strong>Text</strong> に変更してください。
+                    </AlertBox>
+                  )}
+                </div>
+                <button onClick={() => setError(null)} className="flex-shrink-0"><X className="w-4 h-4" /></button>
               </div>
-              <button onClick={() => setError(null)} className="ml-auto flex-shrink-0"><X className="w-4 h-4" /></button>
-            </div>
+            </AlertBox>
           )}
 
           {/* ── テーブル ─────────────────────────────────────────────────── */}

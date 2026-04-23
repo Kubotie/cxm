@@ -23,6 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -31,7 +32,7 @@ import {
   Plus, Copy, SlidersHorizontal, Sparkles,
   Play, Pause, Trash2, ChevronDown, ChevronUp,
   Loader2, AlertTriangle, CheckCircle, Eye, X, Info,
-  FileText, Database, TrendingUp, Target,
+  FileText, Database, TrendingUp, Target, Pencil,
 } from "lucide-react";
 import {
   ALERT_POLICY_TEMPLATES,
@@ -141,6 +142,46 @@ function StatusBadge({ status }: { status: PolicyStatus }) {
   if (status === "paused")  return <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]">Paused</Badge>;
   return <Badge className="bg-slate-100 text-slate-600 border-slate-200 text-[10px]">Draft</Badge>;
 }
+
+// ── Summary Policy 用途マップ ─────────────────────────────────────────────────
+// テンプレート ID → 用途ラベル・使いどころ・バッジ色
+
+interface SummaryUsageMeta {
+  label:      string;
+  icon:       string;
+  when:       string;
+  colorClass: string;
+  isDefault?: boolean;
+}
+
+const SUMMARY_USAGE: Record<string, SummaryUsageMeta> = {
+  tmpl_company_summary_default: {
+    label: "標準",  icon: "📋",
+    when:  "通常の顧客全般に適用。迷ったらこれ。変化 → 機会 → リスク → 次の一手の順で生成",
+    colorClass: "bg-green-100 text-green-700 border-green-200",
+    isDefault: true,
+  },
+  tmpl_company_summary_expansion: {
+    label: "攻略・拡大型", icon: "🚀",
+    when:  "expanding 企業・active プロジェクト多い・upsell を検討したい時",
+    colorClass: "bg-blue-100 text-blue-700 border-blue-200",
+  },
+  tmpl_company_summary_risk_watch: {
+    label: "リスク監視型", icon: "🔍",
+    when:  "at_risk / critical 企業・チャーン懸念あり・サポート逼迫が続いている時",
+    colorClass: "bg-amber-100 text-amber-700 border-amber-200",
+  },
+  tmpl_company_summary_report: {
+    label: "マネージャー報告用", icon: "📊",
+    when:  "上長への報告・会議資料・200字以内の簡潔なスナップショットが必要な時",
+    colorClass: "bg-slate-100 text-slate-600 border-slate-200",
+  },
+  tmpl_company_summary_weekly: {
+    label: "週次自動", icon: "🔄",
+    when:  "毎週月曜に自動再生成。直近30日の変化トレンドを週次で把握",
+    colorClass: "bg-violet-100 text-violet-700 border-violet-200",
+  },
+};
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: "bg-red-100 text-red-700 border-red-200",
@@ -731,65 +772,405 @@ function CreateAlertPolicyDialog({ open, onClose, onCreated, saving }: {
   );
 }
 
-// ── Summary Policy Card ───────────────────────────────────────────────────────
+// ── Summary Policy Edit Sheet ─────────────────────────────────────────────────
+//
+// 保存済み Summary Policy を編集する右 Sheet。
+// - テンプレートから複製して保存したもの / ユーザー作成ポリシーの両方を対象
+// - フィールド: name / description / status / summary_focus /
+//              generation_trigger / input_scope / freshness_rule
 
-function SummaryPolicyCard({ policy, expanded, onExpand }: {
-  policy:    Partial<SummaryPolicy> & { id: string; name: string; description?: string; _isTemplate?: boolean };
-  expanded?: boolean;
-  onExpand?: () => void;
+interface DraftSummaryPolicy {
+  name:                string;
+  description:         string;
+  status:              'draft' | 'active' | 'paused';
+  summary_focus:       string;
+  generation_trigger:  string;
+  input_scope:         string;
+  stale_after_days:    number;
+  auto_regenerate:     boolean;
+  force_on_critical:   boolean;
+}
+
+function policyToDraft(p: AppPolicy): DraftSummaryPolicy {
+  const sp = p.summaryPolicy;
+  return {
+    name:               p.name,
+    description:        p.description ?? '',
+    status:             p.status,
+    summary_focus:      sp?.summary_focus ?? '',
+    generation_trigger: sp?.generation_trigger ?? 'manual',
+    input_scope:        sp?.input_scope ?? 'all_evidence',
+    stale_after_days:   sp?.freshness_rule?.stale_after_days ?? 7,
+    auto_regenerate:    sp?.freshness_rule?.auto_regenerate_on_stale ?? false,
+    force_on_critical:  sp?.freshness_rule?.force_on_critical_alert ?? false,
+  };
+}
+
+const STATUS_CONFIG: Record<'draft' | 'active' | 'paused', { label: string; color: string; desc: string }> = {
+  draft:  { label: '試作中',  color: 'bg-slate-100 text-slate-600 border-slate-200',   desc: '保存済みだがまだ本番利用しない' },
+  active: { label: '使用中',  color: 'bg-green-100 text-green-700 border-green-200',   desc: 'Company Detail のセレクタに表示される' },
+  paused: { label: '停止中',  color: 'bg-amber-100 text-amber-700 border-amber-200',   desc: 'セレクタに表示されない（保存は維持）' },
+};
+
+function SummaryPolicyEditSheet({
+  policy,
+  open,
+  onClose,
+  onSaved,
+}: {
+  policy:   AppPolicy | null;
+  open:     boolean;
+  onClose:  () => void;
+  onSaved:  (updated: AppPolicy) => void;
 }) {
+  const [draft,   setDraft]   = useState<DraftSummaryPolicy | null>(null);
+  const [saving,  setSaving]  = useState(false);
+  const [error,   setError]   = useState<string | null>(null);
+  const [saved,   setSaved]   = useState(false);
+
+  // policy が変わるたびに draft をリセット
+  useEffect(() => {
+    if (policy) { setDraft(policyToDraft(policy)); setSaved(false); setError(null); }
+  }, [policy]);
+
+  if (!draft) return null;
+
+  const patch = (p: Partial<DraftSummaryPolicy>) => setDraft(d => d ? { ...d, ...p } : d);
+
+  async function handleSave() {
+    if (!policy || !draft) return;
+    setSaving(true); setError(null); setSaved(false);
+    const now = new Date().toISOString();
+    const payload = {
+      name:               draft.name,
+      description:        draft.description || undefined,
+      status:             draft.status,
+      summary_focus:      draft.summary_focus,
+      generation_trigger: draft.generation_trigger,
+      input_scope:        draft.input_scope,
+      freshness_rule:     JSON.stringify({
+        stale_after_days:         draft.stale_after_days,
+        auto_regenerate_on_stale: draft.auto_regenerate,
+        force_on_critical_alert:  draft.force_on_critical,
+      }),
+      updated_at: now,
+    };
+    try {
+      const res = await fetch(`/api/ops/policies/${policy.policyId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? '更新エラー');
+      setSaved(true);
+      onSaved(data as AppPolicy);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const statusCfg = STATUS_CONFIG[draft.status];
+
   return (
-    <Card className="border border-slate-200 bg-white">
-      <CardHeader className="py-3 px-4">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex flex-col gap-1 min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="font-medium text-sm text-slate-900">{policy.name}</span>
-              {policy._isTemplate && <Badge className="bg-violet-100 text-violet-700 border-violet-200 text-[10px]">テンプレート</Badge>}
-              {policy.status && <StatusBadge status={policy.status} />}
+    <Sheet open={open} onOpenChange={v => !v && onClose()}>
+      <SheetContent side="right" className="w-[520px] sm:max-w-[520px] flex flex-col overflow-hidden">
+        <SheetHeader className="flex-shrink-0">
+          <SheetTitle className="flex items-center gap-2">
+            <SlidersHorizontal className="w-4 h-4 text-violet-500" />
+            Summary Policy 編集
+          </SheetTitle>
+          <SheetDescription className="text-xs text-slate-500">
+            {policy?.policyId}
+          </SheetDescription>
+        </SheetHeader>
+
+        <ScrollArea className="flex-1 min-h-0 mt-4">
+          <div className="space-y-5 px-1 pb-6">
+
+            {/* ── ステータス ── */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">ステータス</label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(Object.entries(STATUS_CONFIG) as [typeof draft.status, typeof statusCfg][]).map(([key, cfg]) => (
+                  <button key={key}
+                    onClick={() => patch({ status: key })}
+                    className={`rounded-lg border-2 p-2.5 text-left transition-all ${draft.status === key ? `${cfg.color} border-current` : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}
+                  >
+                    <p className="text-xs font-semibold">{cfg.label}</p>
+                    <p className="text-[10px] mt-0.5 leading-snug opacity-80">{cfg.desc}</p>
+                  </button>
+                ))}
+              </div>
+              {draft.status === 'active' && (
+                <p className="text-[10px] text-green-600 flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3" />
+                  Company Detail のポリシーセレクタに表示されます
+                </p>
+              )}
             </div>
-            <div className="flex items-center gap-1 flex-wrap">
-              {policy.target              && <Badge variant="outline" className="text-[10px] text-slate-500">{policy.target}</Badge>}
-              {policy.generation_trigger  && <Badge variant="outline" className="text-[10px] text-slate-500">{policy.generation_trigger}</Badge>}
-              {policy.approval_rule       && <Badge variant="outline" className="text-[10px] text-slate-500">{policy.approval_rule}</Badge>}
+
+            <Separator />
+
+            {/* ── 基本情報 ── */}
+            <div className="space-y-3">
+              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">基本情報</label>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">ポリシー名</label>
+                <Input className="h-8 text-sm" value={draft.name} onChange={e => patch({ name: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">説明（セレクタのサブテキストに表示）</label>
+                <Input className="h-8 text-sm" placeholder="例: at_risk 企業向けのリスク重点分析" value={draft.description} onChange={e => patch({ description: e.target.value })} />
+              </div>
             </div>
-            {policy.description && <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{policy.description}</p>}
+
+            <Separator />
+
+            {/* ── summary_focus ── */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Summary Focus</label>
+                <span className="text-[10px] text-slate-400">{draft.summary_focus.length}字</span>
+              </div>
+              <p className="text-[11px] text-slate-400">AI に渡すフォーカス指示文。どの観点を重点的に分析するかを記述します。</p>
+              <Textarea
+                rows={8}
+                className="text-xs resize-none font-mono leading-relaxed"
+                value={draft.summary_focus}
+                onChange={e => patch({ summary_focus: e.target.value })}
+                placeholder="例: チャーンリスク・サポート逼迫・コミュニケーション断絶を重点的に分析する。"
+              />
+            </div>
+
+            <Separator />
+
+            {/* ── 生成設定 ── */}
+            <div className="space-y-3">
+              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">生成設定</label>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">生成トリガー</label>
+                  <Select value={draft.generation_trigger} onValueChange={v => patch({ generation_trigger: v })}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="manual"      className="text-xs">manual — 手動のみ</SelectItem>
+                      <SelectItem value="scheduled"   className="text-xs">scheduled — 定期自動</SelectItem>
+                      <SelectItem value="on_staleness" className="text-xs">on_staleness — 鮮度切れ時</SelectItem>
+                      <SelectItem value="on_event"    className="text-xs">on_event — イベント発火時</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500 block mb-1">入力スコープ</label>
+                  <Select value={draft.input_scope} onValueChange={v => patch({ input_scope: v })}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all_evidence"     className="text-xs">all_evidence — 全件</SelectItem>
+                      <SelectItem value="recent_only"      className="text-xs">recent_only — 直近のみ</SelectItem>
+                      <SelectItem value="high_signal_only" className="text-xs">high_signal_only — 高スコアのみ</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* ── 鮮度ルール ── */}
+            <div className="space-y-3">
+              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">鮮度ルール</label>
+              <div>
+                <label className="text-xs text-slate-500 block mb-1">Stale 判定（日数）</label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number" min={1} max={365}
+                    className="h-8 text-sm w-24"
+                    value={draft.stale_after_days}
+                    onChange={e => patch({ stale_after_days: Math.max(1, parseInt(e.target.value) || 7) })}
+                  />
+                  <span className="text-xs text-slate-400">日後に stale 表示</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {[
+                  { key: 'auto_regenerate' as const,  label: 'Stale になったら自動再生成する' },
+                  { key: 'force_on_critical' as const, label: 'Critical アラートがある場合は即時再生成' },
+                ].map(item => (
+                  <label key={item.key} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="rounded border-slate-300 accent-violet-600"
+                      checked={draft[item.key]}
+                      onChange={e => patch({ [item.key]: e.target.checked })}
+                    />
+                    <span className="text-xs text-slate-600">{item.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* ── エラー / 保存完了 ── */}
+            {error && (
+              <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-md text-xs text-red-700">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />{error}
+              </div>
+            )}
+            {saved && (
+              <div className="flex items-center gap-2 p-2.5 bg-green-50 border border-green-200 rounded-md text-xs text-green-700">
+                <CheckCircle className="w-3.5 h-3.5" />保存しました。Company Detail のセレクタに反映されます。
+              </div>
+            )}
           </div>
-          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 flex-shrink-0" onClick={onExpand}>
-            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+        </ScrollArea>
+
+        {/* Footer */}
+        <div className="flex-shrink-0 border-t pt-3 flex justify-between items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onClose}>閉じる</Button>
+          <Button
+            size="sm"
+            className="bg-violet-600 hover:bg-violet-700 text-white gap-1.5"
+            onClick={handleSave}
+            disabled={saving || !draft.name.trim()}
+          >
+            {saving ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />保存中...</> : <><Database className="w-3.5 h-3.5" />保存</>}
           </Button>
         </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ── Summary Policy Card ───────────────────────────────────────────────────────
+
+function SummaryPolicyCard({
+  policy,
+  expanded,
+  onExpand,
+  onSaveAsPolicy,
+  isSaving,
+  onEdit,
+}: {
+  policy:           Partial<SummaryPolicy> & { id: string; name: string; description?: string; _isTemplate?: boolean };
+  expanded?:        boolean;
+  onExpand?:        () => void;
+  onSaveAsPolicy?:  () => void;
+  isSaving?:        boolean;
+  onEdit?:          () => void;
+}) {
+  const usage = SUMMARY_USAGE[policy.id];
+
+  // output_schema から opp/risk の件数上限を読み取る
+  const oppSchema  = policy.output_schema?.find(f => f.key === "key_opportunities");
+  const riskSchema = policy.output_schema?.find(f => f.key === "key_risks");
+  const actionSchema = policy.output_schema?.find(f => f.key === "recommended_next_action");
+  const summarySchema = policy.output_schema?.find(f => f.key === "summary");
+
+  return (
+    <Card className={`border bg-white ${usage?.isDefault ? "border-green-300 shadow-sm" : "border-slate-200"}`}>
+      <CardHeader className="py-3 px-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex flex-col gap-1.5 min-w-0">
+            {/* 名前 + バッジ行 */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {usage && <span className="text-base leading-none">{usage.icon}</span>}
+              <span className="font-medium text-sm text-slate-900">{policy.name}</span>
+              {usage && (
+                <Badge className={`text-[10px] ${usage.colorClass}`}>{usage.label}</Badge>
+              )}
+              {usage?.isDefault && (
+                <Badge className="bg-green-600 text-white text-[10px]">推奨</Badge>
+              )}
+              {policy._isTemplate && !policy.status && (
+                <Badge className="bg-violet-100 text-violet-700 border-violet-200 text-[10px]">テンプレート</Badge>
+              )}
+              {policy.status && <StatusBadge status={policy.status} />}
+            </div>
+
+            {/* 使いどころ */}
+            {usage && (
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                <span className="font-medium text-slate-600">使いどころ: </span>{usage.when}
+              </p>
+            )}
+
+            {/* メタバッジ */}
+            <div className="flex items-center gap-1 flex-wrap">
+              {policy.generation_trigger  && <Badge variant="outline" className="text-[10px] text-slate-400">{policy.generation_trigger}</Badge>}
+              {policy.approval_rule       && <Badge variant="outline" className="text-[10px] text-slate-400">{policy.approval_rule}</Badge>}
+              {summarySchema?.max_length  && <Badge variant="outline" className="text-[10px] text-slate-400">summary≤{summarySchema.max_length}字</Badge>}
+              {actionSchema?.max_length   && <Badge variant="outline" className="text-[10px] text-slate-400">action≤{actionSchema.max_length}字</Badge>}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {onSaveAsPolicy && (
+              <Button
+                variant="outline" size="sm"
+                className="h-7 text-xs px-2 gap-1 border-violet-200 text-violet-700 hover:bg-violet-50"
+                onClick={onSaveAsPolicy}
+                disabled={isSaving}
+              >
+                {isSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                保存して使う
+              </Button>
+            )}
+            {onEdit && (
+              <Button
+                variant="ghost" size="sm"
+                className="h-7 w-7 p-0 text-slate-400 hover:text-violet-600"
+                onClick={onEdit}
+                title="編集"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onExpand}>
+              {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </Button>
+          </div>
+        </div>
       </CardHeader>
+
       {expanded && (
         <CardContent className="px-4 pb-4 pt-0">
           <Separator className="mb-3" />
-          <div className="space-y-2.5 text-xs">
-            {policy.summary_focus && (
-              <div><p className="text-[11px] font-medium text-slate-500 uppercase tracking-wide mb-1">フォーカス</p><p className="text-slate-700">{policy.summary_focus}</p></div>
-            )}
-            {(policy.output_schema?.length ?? 0) > 0 && (
-              <div>
-                <p className="text-[11px] font-medium text-slate-500 uppercase tracking-wide mb-1">出力スキーマ</p>
-                <div className="space-y-1">
-                  {policy.output_schema!.map(f => (
-                    <div key={f.key} className="flex items-center gap-1.5">
-                      <code className="bg-slate-100 rounded px-1 py-px text-[11px]">{f.key}</code>
-                      <Badge variant="outline" className="text-[10px]">{f.type}</Badge>
-                      {f.required && <Badge className="bg-blue-50 text-blue-600 border-blue-200 text-[10px]">required</Badge>}
-                      {f.max_length && <span className="text-slate-400">max:{f.max_length}</span>}
-                    </div>
-                  ))}
-                </div>
+          <div className="space-y-3 text-xs">
+
+            {/* 出力傾向サマリー */}
+            {(oppSchema || riskSchema) && (
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: "機会",   val: oppSchema?.required    ? "必須" : "任意",    sub: oppSchema?.instruction?.match(/最大(\d+)件|(\d+)件まで/)?.[0] ?? "", color: "text-blue-600" },
+                  { label: "リスク", val: riskSchema?.required    ? "必須" : "任意",    sub: riskSchema?.instruction?.match(/最大(\d+)件|(\d+)件まで/)?.[0] ?? "", color: "text-amber-600" },
+                  { label: "アクション", val: actionSchema?.max_length ? `${actionSchema.max_length}字以内` : "標準", sub: "", color: "text-slate-600" },
+                ].map(item => (
+                  <div key={item.label} className="bg-slate-50 border border-slate-200 rounded p-2 text-center">
+                    <p className={`text-xs font-semibold ${item.color}`}>{item.val}</p>
+                    <p className="text-[10px] text-slate-500 mt-0.5">{item.label}</p>
+                    {item.sub && <p className="text-[10px] text-slate-400">{item.sub}</p>}
+                  </div>
+                ))}
               </div>
             )}
+
+            {/* フォーカス */}
+            {policy.summary_focus && (
+              <div>
+                <p className="text-[11px] font-medium text-slate-500 uppercase tracking-wide mb-1">分析フォーカス</p>
+                <p className="text-slate-700 leading-relaxed bg-slate-50 rounded p-2">{policy.summary_focus}</p>
+              </div>
+            )}
+
+            {/* フレッシュネス */}
             {policy.freshness_rule && (
-              <div className="bg-slate-50 rounded p-2">
-                <p className="text-[11px] font-medium text-slate-500 mb-1">フレッシュネスルール</p>
-                <p className="text-slate-700">
-                  {policy.freshness_rule.stale_after_days}日後に stale
-                  {policy.freshness_rule.auto_regenerate_on_stale && " / stale 時に自動再生成"}
-                  {policy.freshness_rule.force_on_critical_alert && " / critical アラート時即時再生成"}
-                </p>
+              <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                <span className="font-medium">Stale:</span>
+                <span>{policy.freshness_rule.stale_after_days}日後</span>
+                {policy.freshness_rule.auto_regenerate_on_stale && <Badge className="bg-blue-50 text-blue-600 border-blue-100 text-[10px]">自動再生成</Badge>}
+                {policy.freshness_rule.force_on_critical_alert  && <Badge className="bg-red-50 text-red-600 border-red-100 text-[10px]">critical 時即時</Badge>}
               </div>
             )}
           </div>
@@ -809,12 +1190,19 @@ export function PoliciesPage() {
   const [persistWarning,  setPersistWarning]   = useState<string | null>(null);
   const [savingNew,       setSavingNew]        = useState(false);
 
+  // ── Summary policies state ────────────────────────────────────────────────
+  const [summarySaved,    setSummarySaved]    = useState<AppPolicy[]>([]);
+  const [loadingSummary,  setLoadingSummary]  = useState(true);
+  const [savingSummaryId, setSavingSummaryId] = useState<string | null>(null);
+  const [editingPolicy,   setEditingPolicy]   = useState<AppPolicy | null>(null);
+  const [duplicatingId,   setDuplicatingId]   = useState<string | null>(null);
+
   // ── UI state ──────────────────────────────────────────────────────────────
   const [expandedIds,  setExpandedIds]  = useState<Set<string>>(new Set());
   const [createOpen,   setCreateOpen]   = useState(false);
   const [previewPolicy, setPreviewPolicy] = useState<Partial<AlertPolicy> | null>(null);
 
-  // ── Load ──────────────────────────────────────────────────────────────────
+  // ── Load alert policies ───────────────────────────────────────────────────
   useEffect(() => {
     setLoadingList(true);
     apiFetchPolicies("alert")
@@ -824,6 +1212,15 @@ export function PoliciesPage() {
       })
       .catch(e => setListError(e.message))
       .finally(() => setLoadingList(false));
+  }, []);
+
+  // ── Load summary policies ─────────────────────────────────────────────────
+  useEffect(() => {
+    setLoadingSummary(true);
+    apiFetchPolicies("summary")
+      .then(({ items }) => setSummarySaved(items))
+      .catch(() => {})
+      .finally(() => setLoadingSummary(false));
   }, []);
 
   // ── Toggle expand ─────────────────────────────────────────────────────────
@@ -915,6 +1312,79 @@ export function PoliciesPage() {
     } catch {
       // Revert
       setAlertPolicies(prev => [policy, ...prev]);
+    }
+  }
+
+  // ── Save summary policy from template ────────────────────────────────────
+  async function handleSaveSummaryPolicy(tmplId: string) {
+    const tmpl = SUMMARY_POLICY_TEMPLATES.find(t => t.id === tmplId);
+    if (!tmpl) return;
+    setSavingSummaryId(tmplId);
+    const now = new Date().toISOString();
+    const sp = tmpl.policy as Partial<SummaryPolicy>;
+    const payload: Partial<PolicyWritePayload> = {
+      policy_type:        "summary",
+      name:               tmpl.name,
+      description:        tmpl.description,
+      status:             "active",
+      version:            1,
+      summary_focus:      sp.summary_focus      ?? undefined,
+      output_schema:      sp.output_schema      ? JSON.stringify(sp.output_schema)  : undefined,
+      freshness_rule:     sp.freshness_rule     ? JSON.stringify(sp.freshness_rule) : undefined,
+      approval_rule:      sp.approval_rule      ?? undefined,
+      generation_trigger: sp.generation_trigger ?? undefined,
+      created_at:         now,
+      updated_at:         now,
+    };
+    try {
+      const created = await apiCreatePolicy(payload);
+      setSummarySaved(prev => [created, ...prev]);
+    } catch (e) {
+      alert(`保存エラー: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingSummaryId(null);
+    }
+  }
+
+  // ── Delete summary policy ─────────────────────────────────────────────────
+  async function handleDeleteSummary(policy: AppPolicy) {
+    setSummarySaved(prev => prev.filter(p => p.policyId !== policy.policyId));
+    try {
+      await apiDeletePolicy(policy.policyId);
+    } catch {
+      setSummarySaved(prev => [policy, ...prev]);
+    }
+  }
+
+  // ── Duplicate template → open Edit Sheet ─────────────────────────────────
+  async function handleDuplicateAndEdit(tmplId: string) {
+    const tmpl = SUMMARY_POLICY_TEMPLATES.find(t => t.id === tmplId);
+    if (!tmpl) return;
+    setDuplicatingId(tmplId);
+    const now = new Date().toISOString();
+    const sp = tmpl.policy as Partial<SummaryPolicy>;
+    const payload: Partial<PolicyWritePayload> = {
+      policy_type:        "summary",
+      name:               `${tmpl.name} (複製)`,
+      description:        tmpl.description,
+      status:             "draft",
+      version:            1,
+      summary_focus:      sp.summary_focus      ?? undefined,
+      output_schema:      sp.output_schema      ? JSON.stringify(sp.output_schema)  : undefined,
+      freshness_rule:     sp.freshness_rule     ? JSON.stringify(sp.freshness_rule) : undefined,
+      approval_rule:      sp.approval_rule      ?? undefined,
+      generation_trigger: sp.generation_trigger ?? undefined,
+      created_at:         now,
+      updated_at:         now,
+    };
+    try {
+      const created = await apiCreatePolicy(payload);
+      setSummarySaved(prev => [created, ...prev]);
+      setEditingPolicy(created);
+    } catch (e) {
+      alert(`複製エラー: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDuplicatingId(null);
     }
   }
 
@@ -1022,14 +1492,207 @@ export function PoliciesPage() {
               </TabsContent>
 
               {/* ── Summary tab ── */}
-              <TabsContent value="summary">
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-3">組み込みテンプレート</p>
-                  {templateSummaryPolicies.map(p => (
-                    <SummaryPolicyCard key={p.id} policy={p}
-                      expanded={expandedIds.has(p.id)} onExpand={() => toggleExpand(p.id)} />
-                  ))}
-                </div>
+              <TabsContent value="summary" className="space-y-8">
+
+                {/* ── Section 1: カスタムポリシー ── */}
+                <section>
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">カスタムポリシー</p>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        保存・編集済みのポリシー。<span className="font-medium text-green-600">active</span> のものが Company Detail のセレクタに表示されます。
+                      </p>
+                    </div>
+                  </div>
+
+                  {loadingSummary ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-[72px] w-full" />
+                      <Skeleton className="h-[72px] w-full" />
+                    </div>
+                  ) : summarySaved.length === 0 ? (
+                    <div className="border border-dashed border-slate-200 rounded-xl px-6 py-10 text-center bg-slate-50/50">
+                      <p className="text-sm text-slate-500 font-medium">まだカスタムポリシーがありません</p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        下のテンプレートカタログから「保存して使う」または「複製して編集」してください
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {[...summarySaved]
+                        .sort((a, b) => {
+                          const ord: Record<string, number> = { active: 0, draft: 1, paused: 2 };
+                          return (ord[a.status] ?? 3) - (ord[b.status] ?? 3);
+                        })
+                        .map(p => {
+                          const sp = p.summaryPolicy;
+                          return (
+                            <div
+                              key={p.policyId}
+                              className={`flex items-center gap-4 bg-white rounded-xl border px-5 py-4 hover:shadow-sm transition-all ${
+                                p.status === "active"
+                                  ? "border-slate-200 border-l-[3px] border-l-indigo-400"
+                                  : "border-slate-200"
+                              }`}
+                            >
+                              {/* 名前・説明 */}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="font-semibold text-sm text-slate-800">{p.name}</span>
+                                  <StatusBadge status={p.status} />
+                                </div>
+                                {p.description && (
+                                  <p className="text-xs text-slate-500 leading-relaxed mb-2">{p.description}</p>
+                                )}
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {sp?.generation_trigger && (
+                                    <span className="text-[10px] bg-slate-50 border border-slate-100 rounded px-1.5 py-0.5 text-slate-400">
+                                      {sp.generation_trigger}
+                                    </span>
+                                  )}
+                                  {sp?.freshness_rule?.stale_after_days != null && (
+                                    <span className="text-[10px] bg-slate-50 border border-slate-100 rounded px-1.5 py-0.5 text-slate-400">
+                                      stale {sp.freshness_rule.stale_after_days}日
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              {/* アクション */}
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <Button
+                                  variant="outline" size="sm"
+                                  className="h-8 text-xs gap-1.5 border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                                  onClick={() => setEditingPolicy(p)}
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />編集
+                                </Button>
+                                <Button
+                                  variant="ghost" size="sm"
+                                  className="h-8 w-8 p-0 text-slate-300 hover:text-red-500 transition-colors"
+                                  onClick={() => handleDeleteSummary(p)}
+                                  title="削除"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+                </section>
+
+                {/* ── Section 2: テンプレートカタログ ── */}
+                <section>
+                  <div className="mb-3">
+                    <p className="text-sm font-semibold text-slate-800">テンプレートカタログ</p>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      目的別のひな型。そのまま保存するか、複製して自分用にカスタマイズできます。
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 overflow-hidden divide-y divide-slate-100">
+                    {templateSummaryPolicies.map(p => {
+                      const usage = SUMMARY_USAGE[p.id];
+                      const alreadySaved = summarySaved.some(s => s.name === p.name);
+                      const oppSchema    = (p as Partial<SummaryPolicy>).output_schema?.find(f => f.key === "key_opportunities");
+                      const riskSchema   = (p as Partial<SummaryPolicy>).output_schema?.find(f => f.key === "key_risks");
+                      const actionSchema = (p as Partial<SummaryPolicy>).output_schema?.find(f => f.key === "recommended_next_action");
+
+                      return (
+                        <div
+                          key={p.id}
+                          className={`flex items-center gap-5 px-5 py-4 transition-colors ${
+                            alreadySaved ? "bg-slate-50/60 hover:bg-slate-50" : "bg-white hover:bg-slate-50/50"
+                          }`}
+                        >
+                          {/* アイコン */}
+                          <span className="text-xl flex-shrink-0">{usage?.icon ?? "📋"}</span>
+
+                          {/* 名前・用途・特徴バッジ */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                              <span className={`font-semibold text-sm ${alreadySaved ? "text-slate-500" : "text-slate-800"}`}>
+                                {usage?.label ?? p.name}
+                              </span>
+                              {usage?.isDefault && (
+                                <Badge className="bg-green-600 text-white text-[9px] px-1.5 py-0">推奨</Badge>
+                              )}
+                              {alreadySaved && (
+                                <Badge className="bg-indigo-50 text-indigo-500 border-indigo-100 text-[9px] px-1.5 py-0">
+                                  <CheckCircle className="w-2.5 h-2.5 mr-0.5 inline" />保存済み
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500 leading-relaxed mb-2">{usage?.when}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {oppSchema && (
+                                <span className={`text-[10px] rounded-md px-1.5 py-0.5 border font-medium ${
+                                  oppSchema.required
+                                    ? "bg-blue-50 text-blue-600 border-blue-100"
+                                    : "bg-slate-50 text-slate-400 border-slate-100"
+                                }`}>
+                                  機会 {oppSchema.required ? "必須" : "任意"}
+                                </span>
+                              )}
+                              {riskSchema && (
+                                <span className={`text-[10px] rounded-md px-1.5 py-0.5 border font-medium ${
+                                  riskSchema.required
+                                    ? "bg-amber-50 text-amber-600 border-amber-100"
+                                    : "bg-slate-50 text-slate-400 border-slate-100"
+                                }`}>
+                                  リスク {riskSchema.required ? "必須" : "任意"}
+                                </span>
+                              )}
+                              {actionSchema?.max_length && (
+                                <span className="text-[10px] rounded-md px-1.5 py-0.5 border bg-slate-50 text-slate-400 border-slate-100">
+                                  action ≤{actionSchema.max_length}字
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* CTA */}
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            {!alreadySaved ? (
+                              <Button
+                                size="sm"
+                                className="h-8 text-xs gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+                                onClick={() => handleSaveSummaryPolicy(p.id)}
+                                disabled={savingSummaryId === p.id}
+                              >
+                                {savingSummaryId === p.id
+                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  : <Plus className="w-3.5 h-3.5" />}
+                                保存して使う
+                              </Button>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 flex items-center gap-1 px-2">
+                                <CheckCircle className="w-3.5 h-3.5 text-indigo-400" />使用中
+                              </span>
+                            )}
+                            <Button
+                              variant="outline" size="sm"
+                              className="h-8 text-xs gap-1.5 text-slate-600 border-slate-200 hover:border-indigo-300 hover:text-indigo-700 hover:bg-indigo-50"
+                              onClick={() => handleDuplicateAndEdit(p.id)}
+                              disabled={duplicatingId === p.id}
+                            >
+                              {duplicatingId === p.id
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <Copy className="w-3.5 h-3.5" />}
+                              複製して編集
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 mt-2 px-1">
+                    複製して編集すると draft として保存され、編集 Sheet が開きます。内容を確認後 active にすると Company Detail に反映されます。
+                  </p>
+                </section>
+
               </TabsContent>
             </Tabs>
           </div>
@@ -1047,6 +1710,13 @@ export function PoliciesPage() {
         open={previewPolicy !== null}
         onClose={() => setPreviewPolicy(null)}
         policy={previewPolicy}
+      />
+
+      <SummaryPolicyEditSheet
+        policy={editingPolicy}
+        open={editingPolicy !== null}
+        onClose={() => setEditingPolicy(null)}
+        onSaved={updated => setSummarySaved(prev => prev.map(p => p.policyId === updated.policyId ? updated : p))}
       />
     </div>
   );

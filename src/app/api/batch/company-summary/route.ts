@@ -47,6 +47,12 @@
 // - dry_run=true で対象確認後に本実行できる（dry_run 時も regeneratePriority 降順で表示）
 // - 1社失敗しても全体が止まらない（per-company エラーハンドリング）
 // - results は regeneratePriority 降順（missing=4 > stale=3 > fresh=2 > locked=1）
+//
+// ── イベント起因の生成との使い分け ────────────────────────────────────────────
+// このエンドポイントは「全社一括」または「指定 UID 一括」向け。
+// Evidence 追加など単一イベントで1社だけ再生成する場合は
+//   src/lib/summary/event-trigger.ts の triggerSummaryRefreshForCompany() を使うこと。
+// 将来 queue を入れる場合も event-trigger.ts の差し替えで完結し、このエンドポイントは変更不要。
 
 import { NextRequest, NextResponse }     from 'next/server';
 import { checkBatchAuth }                from '@/lib/batch/auth';
@@ -55,6 +61,9 @@ import { resolveCompanySummaryTargets }  from '@/lib/batch/company-summary-targe
 import { fetchEvidence }                 from '@/lib/nocodb/evidence';
 import { fetchAlerts }                   from '@/lib/nocodb/alerts';
 import { fetchPeople }                   from '@/lib/nocodb/people';
+import { fetchProjectsByCompany }        from '@/lib/nocodb/project-info';
+import { buildProjectAggregateVM }       from '@/lib/company/project-aggregate';
+import { fetchSupportAggregateForCompany } from '@/lib/nocodb/support-by-company';
 import { getOpenAIClient, getOpenAIModel } from '@/lib/openai/client';
 import {
   COMPANY_EVIDENCE_SUMMARY_JSON_SCHEMA,
@@ -130,11 +139,15 @@ async function processCompany(
 
   try {
     // 入力データ取得（失敗時は空配列にフォールバック）
-    const [evidence, alerts, people] = await Promise.all([
+    const [evidence, alerts, people, rawProjects, supportAgg] = await Promise.all([
       fetchEvidence(company.id).catch(() => []),
       fetchAlerts(company.id).catch(()  => []),
       fetchPeople(company.id).catch(()  => []),
+      fetchProjectsByCompany(company.id).catch(() => []),
+      fetchSupportAggregateForCompany(company.id).catch(() => null),
     ]);
+
+    const projectsVM = buildProjectAggregateVM(rawProjects);
 
     // Summary Policy を適用（指定なし → ベースプロンプトをそのまま使用）
     const summaryPolicy  = policyRecord?.summaryPolicy ?? null;
@@ -142,7 +155,10 @@ async function processCompany(
     const effectiveModel = summaryPolicy?.model ?? model;
 
     // OpenAI 呼び出し
-    const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people);
+    const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people, {
+      projects: projectsVM,
+      support:  supportAgg ?? undefined,
+    });
     const comp = await openai.chat.completions.create({
       model:   effectiveModel,
       messages: [

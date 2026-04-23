@@ -25,6 +25,7 @@ import { getDecisionRecommendation, resolveEffectiveState } from "@/lib/support/
 import { getAiFreshnessStatus, AI_FRESHNESS_LABELS, REVIEW_STATUS_DESCRIPTIONS } from "@/lib/support/support-ai-state-policy";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { GlobalHeader } from "@/components/layout/global-header";
+import { AlertBox } from "@/components/ui/alert-box";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -867,7 +868,7 @@ export function SupportDetail() {
                   )}
                   {!summaryLoading && summaryError && (
                     <CardContent className="space-y-3">
-                      <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3 break-all">⚠ {summaryError}</div>
+                      <AlertBox variant="error" size="sm">{summaryError}</AlertBox>
                       <Button size="sm" variant="outline" onClick={() => generateSummary(false)}>
                         <RefreshCw className="w-3 h-3 mr-1.5" />再試行
                       </Button>
@@ -876,9 +877,7 @@ export function SupportDetail() {
                   {!summaryLoading && summaryResult && (
                     <CardContent className="space-y-4">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Badge className={summaryResult.severity === 'high' ? 'bg-red-600 text-white text-xs' : summaryResult.severity === 'medium' ? 'bg-amber-500 text-white text-xs' : 'bg-slate-400 text-white text-xs'}>
-                          {summaryResult.severity.toUpperCase()}
-                        </Badge>
+                        <SeverityBadge severity={summaryResult.severity} />
                         <Badge variant="outline" className="text-xs bg-blue-100 border-blue-300 text-blue-800">{summaryResult.product_area}</Badge>
                       </div>
                       <div>
@@ -953,16 +952,14 @@ export function SupportDetail() {
                   )}
                   {!triageLoading && triageError && (
                     <CardContent className="space-y-3">
-                      <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3 break-all">⚠ {triageError}</div>
+                      <AlertBox variant="error" size="sm">{triageError}</AlertBox>
                       <Button size="sm" variant="outline" onClick={() => generateTriage(false)}><RefreshCw className="w-3 h-3 mr-1.5" />再試行</Button>
                     </CardContent>
                   )}
                   {!triageLoading && triageResult && (
                     <CardContent className="space-y-4">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Badge className={triageResult.severity === 'high' ? 'bg-red-600 text-white text-xs' : triageResult.severity === 'medium' ? 'bg-amber-500 text-white text-xs' : 'bg-slate-400 text-white text-xs'}>
-                          {triageResult.severity.toUpperCase()}
-                        </Badge>
+                        <SeverityBadge severity={triageResult.severity} />
                         <Badge variant="outline" className="text-xs bg-violet-100 border-violet-300 text-violet-800">→ {triageResult.suggested_team}</Badge>
                         <Badge variant="outline" className="text-xs bg-slate-100 border-slate-300 text-slate-700">{triageResult.category}</Badge>
                         {triageResult.escalation_needed && (
@@ -1032,7 +1029,7 @@ export function SupportDetail() {
                   )}
                   {!draftLoading && draftError && (
                     <CardContent className="space-y-3">
-                      <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3 break-all">⚠ {draftError}</div>
+                      <AlertBox variant="error" size="sm">{draftError}</AlertBox>
                       <Button size="sm" variant="outline" onClick={() => generateDraftReply(false)}><RefreshCw className="w-3 h-3 mr-1.5" />再試行</Button>
                     </CardContent>
                   )}
@@ -1101,7 +1098,7 @@ export function SupportDetail() {
                   )}
                   {!alertLoading && alertError && (
                     <CardContent className="space-y-3">
-                      <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3 break-all">⚠ {alertError}</div>
+                      <AlertBox variant="error" size="sm">{alertError}</AlertBox>
                       <Button size="sm" variant="outline" onClick={() => generateAlert(false)}><RefreshCw className="w-3 h-3 mr-1.5" />再試行</Button>
                     </CardContent>
                   )}

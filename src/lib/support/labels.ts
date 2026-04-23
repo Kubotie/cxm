@@ -33,6 +33,24 @@ export function routingColor(status: string): string {
   return ROUTING_STATUS_COLOR[status] ?? 'bg-slate-100 text-slate-700';
 }
 
+/**
+ * Company Detail など日本語表示が必要な画面向けのローカライズラベル。
+ * support-queue / support-detail では英語の routingLabel() を使うこと。
+ */
+export const ROUTING_STATUS_LABEL_JA: Record<string, string> = {
+  unassigned:            '未割当',
+  triaged:               'トリアージ済',
+  assigned:              '担当者割当',
+  'in progress':         '対応中',
+  'waiting on customer': '顧客確認待',
+  'waiting on cse':      'CSE待ち',
+  resolved_like:         '解決済',
+};
+
+export function routingLabelJa(status: string): string {
+  return ROUTING_STATUS_LABEL_JA[(status ?? '').toLowerCase()] ?? status;
+}
+
 // ── Source Status ─────────────────────────────────────────────────────────────
 
 export const SOURCE_STATUS_LABEL: Record<string, string> = {

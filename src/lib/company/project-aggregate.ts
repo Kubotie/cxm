@@ -47,6 +47,14 @@ export interface ProjectAggregateVM {
 
   /** 全プロジェクトの detail VM */
   projects: ProjectItemVM[];
+
+  // ── AI / 利用状況集計フィールド ──────────────────────────────────────────
+  /** 有償（PTI-PAID / PTX-PAID）かつ active なプロジェクト数 */
+  paidActiveCount:  number;
+  /** FREE プランで unused なプロジェクト数（有償転換・利活用支援の余地） */
+  freeUnusedCount:  number;
+  /** 企業全体の過去30日アクティブイベント合計（l30_active の総和） */
+  totalL30Active:   number;
 }
 
 export interface ProjectRiskSignal {
@@ -135,9 +143,10 @@ export function buildProjectAggregateVM(
   const riskSignals: ProjectRiskSignal[] = [];
 
   if (total > 0 && active === 0) {
+    // 1件のみなら medium（単体で at_risk を引き起こさない）、2件以上なら high
     riskSignals.push({
       type:        'no_active_projects',
-      severity:    'high',
+      severity:    total >= 2 ? 'high' : 'medium',
       description: `全 ${total} プロジェクトが非アクティブです`,
     });
   } else if (total > 0 && (stalled + unused) / total > 0.5) {
@@ -175,6 +184,19 @@ export function buildProjectAggregateVM(
     });
   }
 
+  // ── 利用状況集計 ─────────────────────────────────────────────────────────
+  const paidActiveCount = projectVMs.filter(p => {
+    const paid = (p.paidType ?? '').toUpperCase();
+    return p.derivedStatus === 'active' && (paid === 'PTI-PAID' || paid === 'PTX-PAID');
+  }).length;
+
+  const freeUnusedCount = projectVMs.filter(p => {
+    const paid = (p.paidType ?? '').toUpperCase();
+    return p.derivedStatus === 'unused' && paid === 'FREE';
+  }).length;
+
+  const totalL30Active = projectVMs.reduce((sum, p) => sum + (p.l30Active ?? 0), 0);
+
   return {
     total,
     active,
@@ -185,6 +207,9 @@ export function buildProjectAggregateVM(
     riskSignals,
     opportunitySignals,
     projects: projectVMs,
+    paidActiveCount,
+    freeUnusedCount,
+    totalL30Active,
   };
 }
 
@@ -200,4 +225,54 @@ export const EMPTY_PROJECT_AGGREGATE: ProjectAggregateVM = {
   riskSignals:        [],
   opportunitySignals: [],
   projects:           [],
+  paidActiveCount:    0,
+  freeUnusedCount:    0,
+  totalL30Active:     0,
 };
+
+// ── AI 向けテキスト要約 ────────────────────────────────────────────────────────
+//
+// buildCompanyEvidenceSummaryPrompt に渡す Project セクションを生成する。
+// 情報は「数字中心・シグナル先行」で構造化し、AI が key_risks / key_opportunities に
+// 反映しやすい形式にする。
+
+export function buildProjectAISummary(vm: ProjectAggregateVM): string {
+  if (vm.total === 0) return '（プロジェクトなし）';
+
+  const lines: string[] = [];
+
+  // ── 集計サマリー ──────────────────────────────────────────────────────────
+  lines.push(
+    `合計 ${vm.total}件 | Active: ${vm.active} | 停滞: ${vm.stalled} | 未活用: ${vm.unused}` +
+    ` | 有償Active: ${vm.paidActiveCount} | FREE未活用: ${vm.freeUnusedCount}` +
+    ` | 30日活動イベント合計: ${vm.totalL30Active}`,
+  );
+
+  // ── リスクシグナル ────────────────────────────────────────────────────────
+  vm.riskSignals.forEach(s => {
+    lines.push(`[RISK/${s.severity.toUpperCase()}] ${s.description}`);
+  });
+
+  // ── オポチュニティシグナル ─────────────────────────────────────────────────
+  vm.opportunitySignals.forEach(s => {
+    lines.push(`[OPP] ${s.description}`);
+  });
+
+  // ── プロジェクト詳細（上位10件）──────────────────────────────────────────
+  const top = vm.projects.slice(0, 10);
+  if (top.length > 0) {
+    lines.push('');
+    top.forEach(p => {
+      const paid     = p.paidType ? `[${p.paidType.replace('-PAID', '')}]` : '[不明]';
+      const activity = p.l30Active != null ? `L30活動=${p.l30Active}` : '活動不明';
+      const habStr   = p.habituationStatus === true ? '活用済' : p.habituationStatus === false ? '未活用' : '';
+      const stall    = p.stalledDays && p.stalledDays >= 60 ? ` 停滞${p.stalledDays}d` : '';
+      const orderEnd = p.latestOrderEndDate ? ` 契約終了=${p.latestOrderEndDate}` : '';
+      lines.push(
+        `- ${p.name} (${p.derivedStatus}${stall}) ${paid} ${activity}${habStr ? ' ' + habStr : ''}${orderEnd}`,
+      );
+    });
+  }
+
+  return lines.join('\n');
+}

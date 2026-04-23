@@ -85,7 +85,17 @@ export async function GET(
   }
 
   // ── company 基本情報（これが取れなければ 404）────────────────────────────
-  const company = await fetchCompanyByUid(companyUid).catch(() => null);
+  let company;
+  try {
+    company = await fetchCompanyByUid(companyUid);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[company detail] DB 取得エラー:', { companyUid, msg });
+    return NextResponse.json(
+      { error: `データベース接続エラー。しばらく待ってから再試行してください。(${msg.slice(0, 80)})` },
+      { status: 503 },
+    );
+  }
   if (!company) {
     return NextResponse.json({ error: `企業が見つかりません: ${companyUid}` }, { status: 404 });
   }
