@@ -1,236 +1,163 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+
+// ─── Company List ─────────────────────────────────────────────────────────────
+// Layer 2: Priority Exploration
+// 優先顧客を探索し、「なぜ優先か」を理解し、Company Detail に入るための面。
+//
+// Section A: クイックセグメント（上部タブ）
+// Section B: フィルタバー（折り畳み）+ 検索
+// Section C: カード一覧（1行 + 2行目 reason）
+//
+// データソース: /api/company-summary-list?limit=500&sort=priority_desc
+// Home から ?health=critical 等のクエリパラメータを受け取る。
+
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { SidebarNav } from "@/components/layout/sidebar-nav";
-import { GlobalHeader } from "@/components/layout/global-header";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Building,
-  RefreshCw,
-  ArrowRight,
-  ChevronUp,
-  ChevronDown,
-  ChevronsUpDown,
-  AlertTriangle,
-  MessageSquare,
-  Ticket,
-  FolderOpen,
-  User,
-  Calendar,
-  Search,
-  X,
-  Filter,
-  TrendingUp,
+  RefreshCw, Search, X, Filter,
+  ArrowRight, ChevronDown, ChevronUp, Headphones,
+  Sparkles, Building2, Plus,
 } from "lucide-react";
-import type { CompanyListItemVM } from "@/lib/company/company-vm";
+import { SidebarNav }     from "@/components/layout/sidebar-nav";
+import { GlobalHeader }   from "@/components/layout/global-header";
+import { Badge }          from "@/components/ui/badge";
+import { Button }         from "@/components/ui/button";
+import { Input }          from "@/components/ui/input";
+import { Skeleton }       from "@/components/ui/skeleton";
+import { AlertBox }       from "@/components/ui/alert-box";
 import {
-  getHealthBadge,
-  FRESHNESS_SHORT_LABEL,
-  COMMUNICATION_RISK_BADGE,
-} from "@/lib/company/badges";
+  Select, SelectContent, SelectItem,
+  SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import { getHealthBadge, getFreshnessBadge } from "@/lib/company/badges";
+import { orderedReasons } from "@/lib/company/priority-reason";
+import { ActionCreateDialog } from "@/components/company/action-create-dialog";
+import type { CompanyListItemVM } from "@/lib/company/company-vm";
 
-// ── 型定義 ────────────────────────────────────────────────────────────────────
+// /api/company-summary-list は UI ルート（認証不要）
+function apiFetch(path: string) {
+  return fetch(path, { headers: { 'Content-Type': 'application/json' } });
+}
 
-type SortKey =
-  | "priorityScore"
-  | "companyName"
-  | "lastContact"
-  | "communicationBlankDays"
-  | "openSupportCount";
+// ── 型 ────────────────────────────────────────────────────────────────────────
+
+type SortKey = 'priority' | 'name' | 'commBlank' | 'support';
 
 interface Filters {
-  search:          string;
-  freshness:       string;   // '' | 'missing' | 'stale' | 'fresh' | 'locked'
-  review:          string;   // '' | 'pending' | 'reviewed' | 'corrected' | 'approved'
-  health:          string;   // '' | 'critical' | 'at_risk' | 'healthy' | 'expanding'
-  phaseGap:        string;   // '' | 'yes' | 'no'
-  commBlank:       string;   // '' | 'warning' | 'risk'
-  supportCritical: string;   // '' | 'yes'
-  csAssigned:      string;   // '' | 'yes' | 'no'
+  search:         string;
+  health:         string;   // '' | 'critical' | 'at_risk' | 'healthy' | 'expanding'
+  phase:          string;   // '' | any phaseLabel
+  owner:          string;   // '' | any owner name
+  supportCrit:    string;   // '' | 'yes'
+  freshness:      string;   // '' | 'missing' | 'stale' | 'fresh' | 'locked'
+  commBlank:      string;   // '' | 'warning' | 'risk'
 }
 
 const DEFAULT_FILTERS: Filters = {
-  search:          '',
-  freshness:       '',
-  review:          '',
-  health:          '',
-  phaseGap:        '',
-  commBlank:       '',
-  supportCritical: '',
-  csAssigned:      '',
+  search: '', health: '', phase: '', owner: '',
+  supportCrit: '', freshness: '', commBlank: '',
 };
 
-// ── ソートヘルパー ──────────────────────────────────────────────────────────────
+// ── クイックセグメント定義 ────────────────────────────────────────────────────
 
-function SortableHead({
-  label,
-  sortK,
-  currentKey,
-  currentDir,
-  onSort,
-  className,
-}: {
-  label:      string;
-  sortK:      SortKey;
-  currentKey: SortKey;
-  currentDir: "asc" | "desc";
-  onSort:     (k: SortKey) => void;
-  className?: string;
-}) {
-  const active = currentKey === sortK;
-  return (
-    <TableHead className={className}>
-      <button
-        onClick={() => onSort(sortK)}
-        className="flex items-center gap-1 hover:text-slate-900 whitespace-nowrap"
-      >
-        {label}
-        {active
-          ? currentDir === "asc"
-            ? <ChevronUp className="w-3 h-3" />
-            : <ChevronDown className="w-3 h-3" />
-          : <ChevronsUpDown className="w-3 h-3 text-slate-300" />
-        }
-      </button>
-    </TableHead>
-  );
+type SegmentKey =
+  | 'all'
+  | 'renewal_30'
+  | 'renewal_90'
+  | 'arr_at_risk'
+  | 'expanding'
+  | 'critical'
+  | 'at_risk'
+  | 'support_high'
+  | 'summary_stale';
+
+interface Segment {
+  key:    SegmentKey;
+  label:  string;
+  filter: (item: CompanyListItemVM) => boolean;
+  color:  string;  // active 時の色クラス
 }
 
-// ── Badge helpers ──────────────────────────────────────────────────────────────
+const SEGMENTS: Segment[] = [
+  {
+    key:    'all',
+    label:  'すべて',
+    filter: () => true,
+    color:  'border-slate-700 text-slate-700 bg-slate-50',
+  },
+  {
+    key:    'renewal_30',
+    label:  '更新30日',
+    filter: i => i.renewalBucket === '0-30',
+    color:  'border-rose-500 text-rose-700 bg-rose-50',
+  },
+  {
+    key:    'renewal_90',
+    label:  '更新90日',
+    filter: i => i.renewalBucket === '31-90',
+    color:  'border-orange-500 text-orange-700 bg-orange-50',
+  },
+  {
+    key:    'arr_at_risk',
+    label:  'ARR リスク',
+    filter: i => (i.mrr ?? 0) > 0 && (i.overallHealth === 'critical' || i.overallHealth === 'at_risk'),
+    color:  'border-red-500 text-red-700 bg-red-50',
+  },
+  {
+    key:    'expanding',
+    label:  '拡大中',
+    filter: i => i.overallHealth === 'expanding',
+    color:  'border-indigo-500 text-indigo-700 bg-indigo-50',
+  },
+  {
+    key:    'critical',
+    label:  'Critical',
+    filter: i => i.overallHealth === 'critical',
+    color:  'border-red-500 text-red-700 bg-red-50',
+  },
+  {
+    key:    'at_risk',
+    label:  'At Risk',
+    filter: i => i.overallHealth === 'at_risk',
+    color:  'border-amber-500 text-amber-700 bg-amber-50',
+  },
+  {
+    key:    'support_high',
+    label:  'Support高',
+    filter: i => (i.criticalSupportCount ?? 0) > 0 || (i.openSupportCount ?? 0) >= 5,
+    color:  'border-orange-500 text-orange-700 bg-orange-50',
+  },
+  {
+    key:    'summary_stale',
+    label:  'Summary要更新',
+    filter: i => i.freshnessStatus === 'missing' || i.freshnessStatus === 'stale',
+    color:  'border-violet-500 text-violet-700 bg-violet-50',
+  },
+];
 
-function FreshnessBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    missing: "bg-red-100 text-red-700 border-red-200",
-    stale:   "bg-amber-100 text-amber-700 border-amber-200",
-    fresh:   "bg-green-100 text-green-700 border-green-200",
-    locked:  "bg-blue-100 text-blue-700 border-blue-200",
-  };
-  const label = FRESHNESS_SHORT_LABEL[status] ?? status;
-  const cls   = map[status] ?? "bg-gray-100 text-gray-500 border-gray-200";
-  return (
-    <Badge variant="outline" className={`text-xs ${cls}`}>
-      {label}
-    </Badge>
-  );
-}
+// ── フィルタ適用 ──────────────────────────────────────────────────────────────
 
-function ReviewBadge({ status }: { status: string | null }) {
-  if (!status || status === "pending") {
-    return <span className="text-xs text-amber-600">未確認</span>;
-  }
-  const map: Record<string, { label: string; cls: string }> = {
-    reviewed:  { label: "確認済",  cls: "bg-sky-100 text-sky-700 border-sky-200" },
-    corrected: { label: "補正済",  cls: "bg-violet-100 text-violet-700 border-violet-200" },
-    approved:  { label: "承認済",  cls: "bg-green-100 text-green-700 border-green-200" },
-  };
-  const cfg = map[status];
-  if (!cfg) return null;
-  return (
-    <Badge variant="outline" className={`text-xs ${cfg.cls}`}>
-      {cfg.label}
-    </Badge>
-  );
-}
-
-function PhaseSourceBadge({ source }: { source: "CSM" | "CRM" | null }) {
-  if (!source) return null;
-  const cls = source === "CSM"
-    ? "bg-indigo-50 text-indigo-600 border-indigo-200"
-    : "bg-purple-50 text-purple-600 border-purple-200";
-  return (
-    <Badge variant="outline" className={`text-[10px] py-0 ${cls}`}>
-      {source}
-    </Badge>
-  );
-}
-
-function CommBlankCell({ blankDays, riskLevel }: { blankDays: number | null; riskLevel: string }) {
-  if (blankDays === null) return <span className="text-slate-400">—</span>;
-  const badge = COMMUNICATION_RISK_BADGE[riskLevel as keyof typeof COMMUNICATION_RISK_BADGE];
-  if (riskLevel === "none") {
-    return <span className="text-xs text-slate-600">{blankDays}d</span>;
-  }
-  return (
-    <span className={`text-xs font-medium ${riskLevel === "risk" ? "text-red-600" : "text-amber-600"}`}>
-      {blankDays}d {badge?.label ? `(${badge.label})` : ""}
-    </span>
-  );
-}
-
-function PriorityScoreCell({ score, breakdown }: { score: number; breakdown: { reason: string; weight: number }[] }) {
-  return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className={`text-sm font-semibold tabular-nums cursor-default ${
-            score >= 40 ? "text-red-600" :
-            score >= 20 ? "text-amber-600" :
-            "text-slate-600"
-          }`}>
-            {score}
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="right" className="text-xs max-w-[200px]">
-          {breakdown.length === 0
-            ? <p className="text-slate-500">シグナルなし</p>
-            : breakdown.map((b, i) => (
-                <div key={i} className="flex justify-between gap-4">
-                  <span>{b.reason}</span>
-                  <span className="font-medium">+{b.weight}</span>
-                </div>
-              ))
-          }
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
-
-// ── フィルタ適用 ───────────────────────────────────────────────────────────────
-
-function applyFilters(items: CompanyListItemVM[], f: Filters): CompanyListItemVM[] {
+function applyFilters(
+  items:   CompanyListItemVM[],
+  f:       Filters,
+  segment: SegmentKey,
+): CompanyListItemVM[] {
+  const seg = SEGMENTS.find(s => s.key === segment) ?? SEGMENTS[0];
   return items.filter(item => {
+    if (!seg.filter(item)) return false;
     if (f.search) {
       const q = f.search.toLowerCase();
-      if (!item.companyName.toLowerCase().includes(q) && !item.companyUid.toLowerCase().includes(q)) return false;
+      if (!item.companyName.toLowerCase().includes(q) &&
+          !item.companyUid.toLowerCase().includes(q)) return false;
     }
+    if (f.health    && item.overallHealth !== f.health) return false;
+    if (f.phase     && item.activePhaseLabel !== f.phase) return false;
+    if (f.owner     && item.owner !== f.owner) return false;
     if (f.freshness && item.freshnessStatus !== f.freshness) return false;
-    if (f.review) {
-      const rev = item.humanReviewStatus ?? "pending";
-      if (rev !== f.review) return false;
-    }
-    if (f.health && item.overallHealth !== f.health) return false;
-    if (f.phaseGap === "yes" && !item.phaseGap) return false;
-    if (f.phaseGap === "no"  && item.phaseGap)  return false;
-    if (f.commBlank === "warning" && item.communicationRiskLevel === "none") return false;
-    if (f.commBlank === "risk"    && item.communicationRiskLevel !== "risk")  return false;
-    if (f.supportCritical === "yes" && item.criticalSupportCount === 0)       return false;
-    if (f.csAssigned === "yes" && !item.owner) return false;
-    if (f.csAssigned === "no"  && !!item.owner) return false;
+    if (f.supportCrit === 'yes' && (item.criticalSupportCount ?? 0) === 0) return false;
+    if (f.commBlank === 'warning' && item.communicationRiskLevel === 'none') return false;
+    if (f.commBlank === 'risk'    && item.communicationRiskLevel !== 'risk')  return false;
     return true;
   });
 }
@@ -239,95 +166,287 @@ function applyFilters(items: CompanyListItemVM[], f: Filters): CompanyListItemVM
 
 function applySort(
   items: CompanyListItemVM[],
-  key: SortKey,
-  dir: "asc" | "desc",
+  key:   SortKey,
+  dir:   'asc' | 'desc',
 ): CompanyListItemVM[] {
-  const sorted = [...items].sort((a, b) => {
+  return [...items].sort((a, b) => {
     let diff = 0;
-    switch (key) {
-      case "priorityScore":
-        diff = (a.priorityScore ?? 0) - (b.priorityScore ?? 0);
-        break;
-      case "companyName":
-        diff = a.companyName.localeCompare(b.companyName, "ja");
-        break;
-      case "lastContact":
-        diff = (a.lastContact ?? "").localeCompare(b.lastContact ?? "");
-        break;
-      case "communicationBlankDays":
-        diff = (a.communicationBlankDays ?? -1) - (b.communicationBlankDays ?? -1);
-        break;
-      case "openSupportCount":
-        diff = (a.openSupportCount ?? 0) - (b.openSupportCount ?? 0);
-        break;
-    }
-    return dir === "asc" ? diff : -diff;
+    if (key === 'priority')   diff = (a.priorityScore ?? 0) - (b.priorityScore ?? 0);
+    if (key === 'name')       diff = a.companyName.localeCompare(b.companyName, 'ja');
+    if (key === 'commBlank')  diff = (a.communicationBlankDays ?? -1) - (b.communicationBlankDays ?? -1);
+    if (key === 'support')    diff = (a.openSupportCount ?? 0) - (b.openSupportCount ?? 0);
+    return dir === 'asc' ? diff : -diff;
   });
-  return sorted;
 }
 
-// ── メインコンポーネント ────────────────────────────────────────────────────────
+// ── ユニーク選択肢抽出 ────────────────────────────────────────────────────────
+
+function uniqueValues(items: CompanyListItemVM[], key: keyof CompanyListItemVM): string[] {
+  const set = new Set<string>();
+  items.forEach(i => {
+    const v = i[key];
+    if (v && typeof v === 'string') set.add(v);
+  });
+  return [...set].sort((a, b) => a.localeCompare(b, 'ja'));
+}
+
+// ── 推奨アクション候補 ─────────────────────────────────────────────────────────
+
+function getNextActionCandidate(item: CompanyListItemVM): string | null {
+  const bd = item.priorityBreakdown ?? [];
+  if (!bd.length) return null;
+  const top = bd[0].reason;
+  if (top === 'health: critical')               return '緊急対応ミーティングを設定する';
+  if (top === 'health: at_risk')                return 'リスク確認のコンタクトを取る';
+  if (top === 'support: critical case')         return 'サポートケースを確認する';
+  if (top === 'health: expanding')              return 'upsell 提案を準備する';
+  if (top === 'phase: stagnation')              return 'フェーズ進捗を確認する';
+  if (top === 'phase: gap')                     return 'フェーズをすり合わせる';
+  if (top.startsWith('communication blank:'))   return 'コンタクトを取る';
+  if (top === 'people: 意思決定者未登録')        return '意思決定者を登録する';
+  if (top === 'people: 意思決定者 90d+ 未接触') return '意思決定者にコンタクトを取る';
+  if (top === 'action: 期限切れあり')           return '期限切れアクションを確認する';
+  return null;
+}
+
+// ── Summary freshness badge ───────────────────────────────────────────────────
+
+function FreshnessBadge({ status }: { status: string }) {
+  const b = getFreshnessBadge(status);
+  return (
+    <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${b.className}`}>
+      {b.label}
+    </Badge>
+  );
+}
+
+// ── Company カード ────────────────────────────────────────────────────────────
+
+function CompanyCard({ item }: { item: CompanyListItemVM }) {
+  const [actionOpen, setActionOpen] = useState(false);
+
+  const health     = getHealthBadge(item.overallHealth);
+  const reasons    = orderedReasons(item, item.priorityBreakdown ?? []);
+  const nextAction = getNextActionCandidate(item);
+
+  // 機会 vs リスク理由を分離
+  const isExpanding = item.overallHealth === 'expanding';
+  const oppReason   = isExpanding && reasons.length > 0 ? reasons[0] : null;
+  const riskReasons = isExpanding ? reasons.slice(1) : reasons;
+
+  const commCls = item.communicationRiskLevel === 'risk'    ? 'text-red-500'
+                : item.communicationRiskLevel === 'warning' ? 'text-amber-500'
+                : 'text-slate-400';
+  const commLabel = item.communicationBlankDays != null
+    ? `${item.communicationBlankDays}日前` : '—';
+
+  const hasRow2 = reasons.length > 0 || !!nextAction;
+
+  return (
+    <>
+      <div className="bg-white border border-slate-200 rounded-lg hover:border-slate-300 hover:shadow-sm transition-all group">
+        {/* 1行目: 主要情報 */}
+        <div className={`flex items-center gap-2 px-4 pt-3 min-w-0 ${hasRow2 ? 'pb-1' : 'pb-3'}`}>
+          <Badge
+            variant="outline"
+            className={`text-[10px] px-1.5 py-0 flex-shrink-0 font-medium ${health.className}`}
+          >
+            {health.label}
+          </Badge>
+
+          <Link
+            href={`/companies/${item.companyUid}`}
+            className="text-sm font-medium text-slate-800 flex-1 truncate hover:text-slate-900 hover:underline"
+          >
+            {item.companyName}
+          </Link>
+
+          {item.activePhaseLabel && (
+            <span className="text-[11px] text-slate-400 flex-shrink-0 hidden sm:block">
+              {item.activePhaseLabel}
+              {item.phaseGap && (
+                <span className="ml-1 text-amber-500" title={item.phaseGapDescription ?? undefined}>⚠</span>
+              )}
+            </span>
+          )}
+
+          <span className={`text-[11px] flex-shrink-0 ${commCls}`}>{commLabel}</span>
+
+          {(item.criticalSupportCount ?? 0) > 0 ? (
+            <span className="flex-shrink-0 flex items-center gap-0.5 text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0">
+              <Headphones className="w-3 h-3" /> C:{item.criticalSupportCount}
+            </span>
+          ) : (item.openSupportCount ?? 0) >= 5 ? (
+            <span className="flex-shrink-0 flex items-center gap-0.5 text-[11px] text-orange-600 bg-orange-50 border border-orange-200 rounded px-1.5 py-0">
+              <Headphones className="w-3 h-3" /> {item.openSupportCount}
+            </span>
+          ) : null}
+
+          {(item.freshnessStatus === 'missing' || item.freshnessStatus === 'stale') && (
+            <FreshnessBadge status={item.freshnessStatus} />
+          )}
+
+          {/* アクション作成ボタン（hover 時に表示） */}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 text-[11px] gap-1 flex-shrink-0 px-2 border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={e => { e.preventDefault(); e.stopPropagation(); setActionOpen(true); }}
+          >
+            <Plus className="w-3 h-3" />アクション
+          </Button>
+
+          <Link href={`/companies/${item.companyUid}`} className="flex-shrink-0">
+            <ArrowRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 transition-colors" />
+          </Link>
+        </div>
+
+        {/* 2行目: 機会 / リスク理由 + 推奨アクション */}
+        {hasRow2 && (
+          <div className="flex items-center flex-wrap gap-x-3 gap-y-0.5 px-4 pb-3 pt-0 pl-[calc(52px+16px)]">
+            {oppReason && (
+              <span className="text-[11px] text-indigo-500 truncate">↑ {oppReason}</span>
+            )}
+            {riskReasons.slice(0, oppReason ? 1 : 2).map((r, i) => (
+              <span key={i} className="text-[11px] text-slate-400 truncate">→ {r}</span>
+            ))}
+            {nextAction && (
+              <span className="text-[11px] text-slate-400 ml-auto flex-shrink-0">
+                <span className="text-[10px] text-slate-300 mr-1">推奨:</span>
+                {nextAction}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      <ActionCreateDialog
+        open={actionOpen}
+        onOpenChange={setActionOpen}
+        companyUid={item.companyUid}
+        companyName={item.companyName}
+        prefillTitle={nextAction ?? ''}
+        sourceType="signal"
+        createdFrom="manual"
+      />
+    </>
+  );
+}
+
+// ── メインコンポーネント ──────────────────────────────────────────────────────
 
 export function CompanyList() {
-  const [items, setItems]         = useState<CompanyListItemVM[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [filters, setFilters]     = useState<Filters>(DEFAULT_FILTERS);
-  const [showFilters, setShowFilters] = useState(false);
-  const [sortKey, setSortKey]     = useState<SortKey>("priorityScore");
-  const [sortDir, setSortDir]     = useState<"asc" | "desc">("desc");
+  const searchParams = useSearchParams();
+  const router       = useRouter();
+  const pathname     = usePathname();
 
+  // ── データ ──────────────────────────────────────────────────────────────────
+  const [items,       setItems]       = useState<CompanyListItemVM[] | null>(null);
+  const [loadError,   setLoadError]   = useState<string | null>(null);
+  const [refreshing,  setRefreshing]  = useState(false);
+  const [lastFetched, setLastFetched] = useState<string | null>(null);
+
+  // ── URL クエリ → 初期セグメント解決 ────────────────────────────────────────
+  // ?segment=renewal_30 / renewal_90 / arr_at_risk / expanding / support_high 等を受け取る
+  // ?health=critical 等の旧パラメータも引き続きサポート
+  const VALID_SEGMENTS = new Set<SegmentKey>([
+    'all','renewal_30','renewal_90','arr_at_risk',
+    'expanding','critical','at_risk','support_high','summary_stale',
+  ]);
+
+  const initSegment = ((): SegmentKey => {
+    const seg = searchParams.get('segment') as SegmentKey | null;
+    if (seg && VALID_SEGMENTS.has(seg)) return seg;
+    const h = searchParams.get('health') ?? '';
+    if (h === 'critical') return 'critical';
+    if (h === 'at_risk')  return 'at_risk';
+    if (h === 'expanding') return 'expanding';
+    return 'all';
+  })();
+
+  const initSegmentLabel = ((): string | null => {
+    const seg = searchParams.get('segment');
+    const found = SEGMENTS.find(s => s.key === initSegment);
+    return seg && found && found.key !== 'all' ? found.label : null;
+  })();
+
+  const [segment,      setSegment]      = useState<SegmentKey>(initSegment);
+  const [fromHome,     setFromHome]     = useState<string | null>(initSegmentLabel);
+  const [filters,      setFilters]      = useState<Filters>(DEFAULT_FILTERS);
+  const [showFilters,  setShowFilters]  = useState(false);
+  const [sortKey,      setSortKey]      = useState<SortKey>('priority');
+  const [sortDir,      setSortDir]      = useState<'asc' | 'desc'>('desc');
+
+  // クエリパラメータ適用は初回のみ（以降は内部状態で管理）
+  const initDone = useRef(false);
+  useEffect(() => {
+    if (initDone.current) return;
+    initDone.current = true;
+    // 適用後はクエリパラメータをクリア（ブラウザバックで再適用しないよう）
+    if (searchParams.get('segment') || searchParams.get('health')) {
+      router.replace(pathname, { scroll: false });
+    }
+  }, [searchParams, router, pathname]);
+
+  // ── データ取得 ──────────────────────────────────────────────────────────────
   const load = useCallback((refresh = false) => {
     if (refresh) setRefreshing(true);
     setLoadError(null);
-    fetch("/api/company-summary-list?limit=500&sort=priority_desc")
-      .then(r => r.ok ? r.json() : r.json().then((e: { error?: string }) => Promise.reject(e.error ?? "取得エラー")))
+    apiFetch('/api/company-summary-list?limit=500&sort=priority_desc')
+      .then(r => r.ok ? r.json() : r.json().then((e: {error?:string}) => Promise.reject(e.error ?? '取得エラー')))
       .then((data: { items: CompanyListItemVM[] }) => {
         setItems(data.items ?? []);
+        setLastFetched(new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }));
       })
-      .catch((err: unknown) => {
-        console.warn("[CompanyList] fetch failed:", err);
-        setLoadError(String(err));
-      })
+      .catch((err: unknown) => setLoadError(String(err)))
       .finally(() => setRefreshing(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  function handleSort(key: SortKey) {
-    if (sortKey === key) {
-      setSortDir(d => d === "asc" ? "desc" : "asc");
-    } else {
-      setSortKey(key);
-      setSortDir("desc");
-    }
-  }
-
+  // ── フィルタ helpers ─────────────────────────────────────────────────────────
   function setFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
     setFilters(f => ({ ...f, [key]: value }));
   }
-
   function resetFilters() {
     setFilters(DEFAULT_FILTERS);
+    setSegment('all');
+    setFromHome(null);
+  }
+  function handleSort(key: SortKey) {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(key); setSortDir('desc'); }
   }
 
-  const hasActiveFilters = Object.entries(filters).some(([k, v]) => k !== "search" && v !== "");
+  const hasActiveFilters = Object.entries(filters).some(([k, v]) => k !== 'search' && v !== '');
+  const activeFilterCount = Object.entries(filters).filter(([k, v]) => k !== 'search' && v !== '').length;
 
+  // ── 集計（セグメント件数）───────────────────────────────────────────────────
+  const segmentCounts = SEGMENTS.reduce((acc, seg) => {
+    acc[seg.key] = (items ?? []).filter(seg.filter).length;
+    return acc;
+  }, {} as Record<SegmentKey, number>);
+
+  // ── 表示データ ───────────────────────────────────────────────────────────────
   const displayed = items
-    ? applySort(applyFilters(items, filters), sortKey, sortDir)
+    ? applySort(applyFilters(items, filters, segment), sortKey, sortDir)
     : null;
 
-  // ── Skeleton ───────────────────────────────────────────────────────────────
+  // ── フェーズ・担当 選択肢 ────────────────────────────────────────────────────
+  const phaseOptions  = items ? uniqueValues(items, 'activePhaseLabel') : [];
+  const ownerOptions  = items ? uniqueValues(items, 'owner')            : [];
+
+  // ── ローディング ──────────────────────────────────────────────────────────────
   if (items === null && !loadError) {
     return (
-      <div className="flex min-h-screen bg-slate-50">
+      <div className="flex h-screen bg-slate-50 overflow-hidden">
         <SidebarNav />
-        <div className="flex-1 flex flex-col min-h-screen">
+        <div className="flex-1 flex flex-col overflow-hidden">
           <GlobalHeader />
           <main className="flex-1 p-6">
-            <div className="space-y-3">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full" />
+            <div className="space-y-2">
+              {Array.from({ length: 10 }).map((_, i) => (
+                <Skeleton key={i} className="h-14 rounded-lg" />
               ))}
             </div>
           </main>
@@ -337,20 +456,23 @@ export function CompanyList() {
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex h-screen bg-slate-50 overflow-hidden">
       <SidebarNav />
-      <div className="flex-1 flex flex-col min-h-screen overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden">
         <GlobalHeader />
+
         <main className="flex-1 flex flex-col overflow-hidden">
 
-          {/* ── ヘッダー ── */}
-          <div className="px-6 py-4 border-b border-slate-200 bg-white flex items-center justify-between gap-4">
+          {/* ── ページヘッダー ─────────────────────────────────────────── */}
+          <div className="px-6 py-4 border-b border-slate-200 bg-white flex items-center justify-between gap-4 flex-shrink-0">
             <div className="flex items-center gap-3">
-              <Building className="w-5 h-5 text-slate-500" />
-              <h1 className="text-base font-semibold text-slate-800">Company List</h1>
+              <Building2 className="w-4 h-4 text-slate-500" />
+              <h1 className="text-base font-semibold text-slate-800">Companies</h1>
               {displayed !== null && (
                 <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                  {displayed.length}{items && items.length !== displayed.length ? ` / ${items.length}` : ""} 社
+                  {displayed.length}
+                  {items && items.length !== displayed.length && ` / ${items.length}`}
+                  {' '}社
                 </span>
               )}
             </div>
@@ -360,15 +482,12 @@ export function CompanyList() {
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
                 <Input
                   value={filters.search}
-                  onChange={e => setFilter("search", e.target.value)}
+                  onChange={e => setFilter('search', e.target.value)}
                   placeholder="企業名で検索..."
-                  className="pl-8 h-8 text-sm w-52"
+                  className="pl-8 h-8 text-sm w-48"
                 />
                 {filters.search && (
-                  <button
-                    onClick={() => setFilter("search", "")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  >
+                  <button onClick={() => setFilter('search', '')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                     <X className="w-3 h-3" />
                   </button>
                 )}
@@ -376,78 +495,96 @@ export function CompanyList() {
 
               {/* フィルタ toggle */}
               <Button
-                variant="outline"
-                size="sm"
-                className={`h-8 text-xs gap-1.5 ${hasActiveFilters ? "border-indigo-300 text-indigo-700 bg-indigo-50" : ""}`}
+                variant="outline" size="sm"
+                className={`h-8 text-xs gap-1.5 ${hasActiveFilters ? 'border-blue-300 text-blue-700 bg-blue-50' : ''}`}
                 onClick={() => setShowFilters(v => !v)}
               >
                 <Filter className="w-3.5 h-3.5" />
                 フィルタ
-                {hasActiveFilters && (
-                  <span className="bg-indigo-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold">
-                    {Object.values(filters).filter((v, i) => Object.keys(filters)[i] !== "search" && v !== "").length}
+                {activeFilterCount > 0 && (
+                  <span className="bg-blue-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold">
+                    {activeFilterCount}
                   </span>
                 )}
+                {showFilters ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
               </Button>
 
-              {/* 更新 */}
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs gap-1.5"
-                onClick={() => load(true)}
-                disabled={refreshing}
+              {/* 並び順 */}
+              <Select
+                value={`${sortKey}_${sortDir}`}
+                onValueChange={v => {
+                  const [k, d] = v.split('_') as [SortKey, 'asc' | 'desc'];
+                  setSortKey(k); setSortDir(d);
+                }}
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
-                更新
+                <SelectTrigger className="h-8 text-xs w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="priority_desc" className="text-xs">優先度（高い順）</SelectItem>
+                  <SelectItem value="commBlank_desc" className="text-xs">空白日数（長い順）</SelectItem>
+                  <SelectItem value="support_desc" className="text-xs">サポート（多い順）</SelectItem>
+                  <SelectItem value="name_asc" className="text-xs">企業名（昇順）</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* 更新 */}
+              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => load(true)} disabled={refreshing}>
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
               </Button>
+              {lastFetched && <span className="text-[11px] text-slate-400">{lastFetched}</span>}
             </div>
           </div>
 
-          {/* ── フィルタパネル ── */}
-          {showFilters && (
-            <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center gap-3">
-              {/* Freshness */}
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-500 whitespace-nowrap">鮮度</span>
-                <Select value={filters.freshness || "__all__"} onValueChange={v => setFilter("freshness", v === "__all__" ? "" : v)}>
-                  <SelectTrigger className="h-7 text-xs w-28">
-                    <SelectValue placeholder="すべて" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">すべて</SelectItem>
-                    <SelectItem value="missing">未生成</SelectItem>
-                    <SelectItem value="stale">要更新</SelectItem>
-                    <SelectItem value="fresh">最新</SelectItem>
-                    <SelectItem value="locked">承認済</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+          {/* ── Home からのコンテキストバナー ─────────────────────────── */}
+          {fromHome && (
+            <div className="px-6 py-2 bg-indigo-50 border-b border-indigo-100 flex items-center justify-between flex-shrink-0">
+              <span className="text-xs text-indigo-700 flex items-center gap-1.5">
+                <ArrowRight className="w-3.5 h-3.5 rotate-180" />
+                変動コックピットから：<span className="font-semibold">{fromHome}</span> で絞り込み中
+              </span>
+              <button
+                onClick={() => { setSegment('all'); setFromHome(null); }}
+                className="text-xs text-indigo-500 hover:text-indigo-700 flex items-center gap-1"
+              >
+                <X className="w-3 h-3" /> 解除
+              </button>
+            </div>
+          )}
 
-              {/* Review */}
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-500 whitespace-nowrap">レビュー</span>
-                <Select value={filters.review || "__all__"} onValueChange={v => setFilter("review", v === "__all__" ? "" : v)}>
-                  <SelectTrigger className="h-7 text-xs w-28">
-                    <SelectValue placeholder="すべて" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">すべて</SelectItem>
-                    <SelectItem value="pending">未確認</SelectItem>
-                    <SelectItem value="reviewed">確認済</SelectItem>
-                    <SelectItem value="corrected">補正済</SelectItem>
-                    <SelectItem value="approved">承認済</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+          {/* ── Section A: クイックセグメント ─────────────────────────── */}
+          <div className="px-6 py-2.5 border-b border-slate-100 bg-white flex items-center gap-1.5 flex-shrink-0 overflow-x-auto">
+            {SEGMENTS.map(seg => {
+              const count   = segmentCounts[seg.key];
+              const isActive = segment === seg.key;
+              return (
+                <button
+                  key={seg.key}
+                  onClick={() => setSegment(seg.key)}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-medium transition-all whitespace-nowrap flex-shrink-0 ${
+                    isActive
+                      ? seg.color
+                      : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700'
+                  }`}
+                >
+                  {seg.label}
+                  <span className={`${isActive ? 'opacity-70' : 'text-slate-400'} tabular-nums`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* ── Section B: フィルタバー ────────────────────────────────── */}
+          {showFilters && (
+            <div className="px-6 py-3 border-b border-slate-100 bg-slate-50 flex flex-wrap items-center gap-3 flex-shrink-0">
 
               {/* Health */}
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-500 whitespace-nowrap">Health</span>
-                <Select value={filters.health || "__all__"} onValueChange={v => setFilter("health", v === "__all__" ? "" : v)}>
-                  <SelectTrigger className="h-7 text-xs w-32">
-                    <SelectValue placeholder="すべて" />
-                  </SelectTrigger>
+                <span className="text-xs text-slate-500">Health</span>
+                <Select value={filters.health || '__all__'} onValueChange={v => setFilter('health', v === '__all__' ? '' : v)}>
+                  <SelectTrigger className="h-7 text-xs w-28"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">すべて</SelectItem>
                     <SelectItem value="critical">Critical</SelectItem>
@@ -458,28 +595,43 @@ export function CompanyList() {
                 </Select>
               </div>
 
-              {/* Phase gap */}
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-500 whitespace-nowrap">フェーズ差分</span>
-                <Select value={filters.phaseGap || "__all__"} onValueChange={v => setFilter("phaseGap", v === "__all__" ? "" : v)}>
-                  <SelectTrigger className="h-7 text-xs w-24">
-                    <SelectValue placeholder="すべて" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">すべて</SelectItem>
-                    <SelectItem value="yes">差分あり</SelectItem>
-                    <SelectItem value="no">一致</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              {/* フェーズ */}
+              {phaseOptions.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-slate-500">フェーズ</span>
+                  <Select value={filters.phase || '__all__'} onValueChange={v => setFilter('phase', v === '__all__' ? '' : v)}>
+                    <SelectTrigger className="h-7 text-xs w-32"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">すべて</SelectItem>
+                      {phaseOptions.map(p => (
+                        <SelectItem key={p} value={p} className="text-xs">{p}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
-              {/* Communication blank */}
+              {/* CSM担当 */}
+              {ownerOptions.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-slate-500">担当</span>
+                  <Select value={filters.owner || '__all__'} onValueChange={v => setFilter('owner', v === '__all__' ? '' : v)}>
+                    <SelectTrigger className="h-7 text-xs w-32"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">すべて</SelectItem>
+                      {ownerOptions.map(o => (
+                        <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {/* コミュニケーション空白 */}
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-500 whitespace-nowrap">コミュニケーション</span>
-                <Select value={filters.commBlank || "__all__"} onValueChange={v => setFilter("commBlank", v === "__all__" ? "" : v)}>
-                  <SelectTrigger className="h-7 text-xs w-28">
-                    <SelectValue placeholder="すべて" />
-                  </SelectTrigger>
+                <span className="text-xs text-slate-500">空白</span>
+                <Select value={filters.commBlank || '__all__'} onValueChange={v => setFilter('commBlank', v === '__all__' ? '' : v)}>
+                  <SelectTrigger className="h-7 text-xs w-28"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">すべて</SelectItem>
                     <SelectItem value="warning">30日以上</SelectItem>
@@ -488,254 +640,96 @@ export function CompanyList() {
                 </Select>
               </div>
 
-              {/* Support critical */}
+              {/* Summary */}
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-500 whitespace-nowrap">緊急サポート</span>
-                <Select value={filters.supportCritical || "__all__"} onValueChange={v => setFilter("supportCritical", v === "__all__" ? "" : v)}>
-                  <SelectTrigger className="h-7 text-xs w-24">
-                    <SelectValue placeholder="すべて" />
-                  </SelectTrigger>
+                <span className="text-xs text-slate-500 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" />Summary
+                </span>
+                <Select value={filters.freshness || '__all__'} onValueChange={v => setFilter('freshness', v === '__all__' ? '' : v)}>
+                  <SelectTrigger className="h-7 text-xs w-28"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">すべて</SelectItem>
-                    <SelectItem value="yes">Criticalあり</SelectItem>
+                    <SelectItem value="missing">未生成</SelectItem>
+                    <SelectItem value="stale">要更新</SelectItem>
+                    <SelectItem value="fresh">最新</SelectItem>
+                    <SelectItem value="locked">承認済</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
-              {/* CS担当 */}
+              {/* Support Critical */}
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-500 whitespace-nowrap">CS担当</span>
-                <Select value={filters.csAssigned || "__all__"} onValueChange={v => setFilter("csAssigned", v === "__all__" ? "" : v)}>
-                  <SelectTrigger className="h-7 text-xs w-24">
-                    <SelectValue placeholder="すべて" />
-                  </SelectTrigger>
+                <span className="text-xs text-slate-500 flex items-center gap-1">
+                  <Headphones className="w-3 h-3" />Support
+                </span>
+                <Select value={filters.supportCrit || '__all__'} onValueChange={v => setFilter('supportCrit', v === '__all__' ? '' : v)}>
+                  <SelectTrigger className="h-7 text-xs w-28"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all__">すべて</SelectItem>
-                    <SelectItem value="yes">担当あり</SelectItem>
-                    <SelectItem value="no">担当なし</SelectItem>
+                    <SelectItem value="yes">Critical あり</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               {hasActiveFilters && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs text-slate-500 gap-1"
-                  onClick={resetFilters}
-                >
-                  <X className="w-3 h-3" />
-                  リセット
+                <Button variant="ghost" size="sm" className="h-7 text-xs text-slate-500 gap-1" onClick={resetFilters}>
+                  <X className="w-3 h-3" />リセット
                 </Button>
               )}
             </div>
           )}
 
-          {/* ── エラー ── */}
+          {/* ── エラー ────────────────────────────────────────────────── */}
           {loadError && (
-            <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-              {loadError}
-              <Button variant="ghost" size="sm" className="ml-auto h-6 text-xs" onClick={() => load()}>
-                再試行
-              </Button>
-            </div>
+            <AlertBox variant="error" className="mx-6 mt-4 flex-shrink-0">
+              <span className="flex items-center justify-between gap-2 w-full">
+                {loadError}
+                <Button variant="ghost" size="sm" className="h-6 text-xs flex-shrink-0" onClick={() => load()}>再試行</Button>
+              </span>
+            </AlertBox>
           )}
 
-          {/* ── テーブル ── */}
-          <div className="flex-1 overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-slate-50 text-xs text-slate-500">
-                  <SortableHead label="スコア" sortK="priorityScore" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="w-16 text-right pr-3" />
-                  <SortableHead label="企業名" sortK="companyName"   currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="min-w-[160px]" />
-                  <TableHead className="w-32 text-xs">Health</TableHead>
-                  <TableHead className="w-36 text-xs">フェーズ</TableHead>
-                  <TableHead className="w-28 text-xs">Summary</TableHead>
-                  <SortableHead label="最終連絡" sortK="communicationBlankDays" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="w-24 text-xs" />
-                  <SortableHead label="Support" sortK="openSupportCount" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="w-20 text-xs" />
-                  <TableHead className="w-28 text-xs">Projects</TableHead>
-                  <SortableHead label="担当" sortK="companyName" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="w-28 text-xs" />
-                  <SortableHead label="最終接触" sortK="lastContact" currentKey={sortKey} currentDir={sortDir} onSort={handleSort} className="w-24 text-xs" />
-                  <TableHead className="w-10" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {displayed === null ? (
-                  // ローディング skeleton rows
-                  Array.from({ length: 10 }).map((_, i) => (
-                    <TableRow key={i}>
-                      {Array.from({ length: 11 }).map((__, j) => (
-                        <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                ) : displayed.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={11} className="text-center py-16 text-sm text-slate-400">
-                      条件に一致する企業がありません
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  displayed.map(item => (
-                    <CompanyRow key={item.companyUid} item={item} />
-                  ))
+          {/* ── Section C: カード一覧 ──────────────────────────────────── */}
+          <div className="flex-1 overflow-y-auto px-6 py-4">
+            {displayed === null ? (
+              <div className="space-y-2">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <Skeleton key={i} className="h-14 rounded-lg" />
+                ))}
+              </div>
+            ) : displayed.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <Building2 className="w-8 h-8 text-slate-300 mb-3" />
+                <p className="text-sm text-slate-500">
+                  {segment !== 'all' || hasActiveFilters
+                    ? '条件に一致する企業がありません'
+                    : '企業データがありません'}
+                </p>
+                {(segment !== 'all' || hasActiveFilters) && (
+                  <button
+                    className="mt-2 text-xs text-blue-500 hover:underline"
+                    onClick={() => { setSegment('all'); resetFilters(); }}
+                  >
+                    フィルタをリセット
+                  </button>
                 )}
-              </TableBody>
-            </Table>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {displayed.map(item => (
+                  <CompanyCard key={item.companyUid} item={item} />
+                ))}
+                {displayed.length >= 500 && (
+                  <p className="text-xs text-slate-400 text-center py-2">
+                    表示上限（500件）に達しています
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
         </main>
       </div>
     </div>
-  );
-}
-
-// ── 行コンポーネント ────────────────────────────────────────────────────────────
-
-function CompanyRow({ item }: { item: CompanyListItemVM }) {
-  const healthBadge = getHealthBadge(item.overallHealth);
-
-  // フェーズ差分表示
-  const hasGap = item.phaseGap;
-
-  // プロジェクト表示
-  const proj = item.projectSummary;
-
-  return (
-    <TableRow className="hover:bg-slate-50 cursor-pointer text-sm">
-      {/* スコア */}
-      <TableCell className="text-right pr-3">
-        <PriorityScoreCell score={item.priorityScore ?? 0} breakdown={item.priorityBreakdown ?? []} />
-      </TableCell>
-
-      {/* 企業名 */}
-      <TableCell>
-        <Link
-          href={`/companies/${item.companyUid}`}
-          className="font-medium text-slate-800 hover:text-indigo-600 hover:underline"
-        >
-          {item.companyName}
-        </Link>
-      </TableCell>
-
-      {/* Health */}
-      <TableCell>
-        <Badge variant="outline" className={`text-xs ${healthBadge.className}`}>
-          {healthBadge.label}
-        </Badge>
-      </TableCell>
-
-      {/* フェーズ */}
-      <TableCell>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {item.activePhaseLabel
-            ? <span className="text-xs text-slate-700">{item.activePhaseLabel}</span>
-            : <span className="text-slate-400 text-xs">—</span>
-          }
-          {item.activePhaseSource && (
-            <PhaseSourceBadge source={item.activePhaseSource} />
-          )}
-          {hasGap && (
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                </TooltipTrigger>
-                <TooltipContent className="text-xs">
-                  {item.phaseGapDescription ?? "フェーズ不整合あり"}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-          {item.phaseStagnationDays !== null && item.phaseStagnationDays >= 90 && (
-            <span className="text-[10px] text-red-500">{item.phaseStagnationDays}d停滞</span>
-          )}
-        </div>
-      </TableCell>
-
-      {/* Summary */}
-      <TableCell>
-        <div className="flex items-center gap-1 flex-wrap">
-          <FreshnessBadge status={item.freshnessStatus} />
-          <ReviewBadge status={item.humanReviewStatus} />
-        </div>
-      </TableCell>
-
-      {/* 最終連絡（blank days） */}
-      <TableCell>
-        <CommBlankCell blankDays={item.communicationBlankDays} riskLevel={item.communicationRiskLevel} />
-      </TableCell>
-
-      {/* Support */}
-      <TableCell>
-        {item.openSupportCount > 0 ? (
-          <div className="flex items-center gap-1">
-            <Ticket className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-xs tabular-nums">{item.openSupportCount}</span>
-            {item.criticalSupportCount > 0 && (
-              <span className="text-[10px] font-medium text-red-600 bg-red-50 px-1 rounded">
-                !{item.criticalSupportCount}
-              </span>
-            )}
-          </div>
-        ) : (
-          <span className="text-slate-400 text-xs">—</span>
-        )}
-      </TableCell>
-
-      {/* Projects */}
-      <TableCell>
-        {proj && proj.total > 0 ? (
-          <div className="flex items-center gap-1 text-xs text-slate-600">
-            <FolderOpen className="w-3.5 h-3.5 text-slate-400" />
-            <span className="tabular-nums">{proj.active}</span>
-            {proj.stalled > 0 && (
-              <span className="text-amber-600 tabular-nums">/{proj.stalled}停</span>
-            )}
-            {proj.unused > 0 && (
-              <span className="text-slate-400 tabular-nums">/{proj.unused}未</span>
-            )}
-          </div>
-        ) : (
-          <span className="text-slate-400 text-xs">—</span>
-        )}
-      </TableCell>
-
-      {/* 担当 */}
-      <TableCell>
-        {item.owner ? (
-          <div className="flex items-center gap-1 text-xs text-slate-600">
-            <User className="w-3 h-3 text-slate-400" />
-            <span className="truncate max-w-[88px]" title={item.owner}>{item.owner}</span>
-          </div>
-        ) : (
-          <span className="text-slate-400 text-xs">未設定</span>
-        )}
-      </TableCell>
-
-      {/* 最終接触 */}
-      <TableCell>
-        {item.lastContact ? (
-          <div className="flex items-center gap-1 text-xs text-slate-500">
-            <Calendar className="w-3 h-3 text-slate-400" />
-            {item.lastContact.slice(0, 10)}
-          </div>
-        ) : (
-          <span className="text-slate-400 text-xs">—</span>
-        )}
-      </TableCell>
-
-      {/* 詳細リンク */}
-      <TableCell>
-        <Link
-          href={`/companies/${item.companyUid}`}
-          className="text-slate-400 hover:text-indigo-600"
-          aria-label={`${item.companyName} の詳細`}
-        >
-          <ArrowRight className="w-4 h-4" />
-        </Link>
-      </TableCell>
-    </TableRow>
   );
 }
