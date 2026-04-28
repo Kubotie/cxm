@@ -70,7 +70,22 @@ type SegmentKey =
   | 'critical'
   | 'at_risk'
   | 'support_high'
-  | 'summary_stale';
+  | 'summary_stale'
+  // ── snapshot 差分ベース ──────────────────────────────────────────────────
+  | 'phase_changed'
+  | 'renewal_entered_30'
+  | 'renewal_entered_90'
+  | 'support_increased'
+  | 'mrr_increased'
+  | 'mrr_decreased'
+  | 'health_worsened'
+  | 'health_improved'
+  // ── 週次/月次傾向 ────────────────────────────────────────────────────────
+  | 'weekly_worsened'
+  | 'weekly_activated'
+  | 'monthly_renewal_entered'
+  | 'monthly_mrr_increased'
+  | 'monthly_mrr_decreased';
 
 interface Segment {
   key:    SegmentKey;
@@ -134,6 +149,86 @@ const SEGMENTS: Segment[] = [
     filter: i => i.freshnessStatus === 'missing' || i.freshnessStatus === 'stale',
     color:  'border-violet-500 text-violet-700 bg-violet-50',
   },
+  // ── snapshot 差分ベース ────────────────────────────────────────────────────
+  {
+    key:    'phase_changed',
+    label:  'フェーズ変化',
+    filter: i => i.snapshotDiff?.phaseChanged === true,
+    color:  'border-violet-500 text-violet-700 bg-violet-50',
+  },
+  {
+    key:    'renewal_entered_30',
+    label:  '更新30日入り',
+    filter: i => i.snapshotDiff?.renewalEnteredThirty === true,
+    color:  'border-rose-500 text-rose-700 bg-rose-50',
+  },
+  {
+    key:    'renewal_entered_90',
+    label:  '更新90日入り',
+    filter: i => i.snapshotDiff?.renewalEnteredNinety === true,
+    color:  'border-orange-500 text-orange-700 bg-orange-50',
+  },
+  {
+    key:    'support_increased',
+    label:  'サポート増加',
+    filter: i => i.snapshotDiff?.supportIncreased === true,
+    color:  'border-amber-500 text-amber-700 bg-amber-50',
+  },
+  {
+    key:    'mrr_increased',
+    label:  'MRR増加',
+    filter: i => i.snapshotDiff?.mrrIncreased === true,
+    color:  'border-emerald-500 text-emerald-700 bg-emerald-50',
+  },
+  {
+    key:    'mrr_decreased',
+    label:  'MRR減少',
+    filter: i => i.snapshotDiff?.mrrDecreased === true,
+    color:  'border-red-500 text-red-700 bg-red-50',
+  },
+  {
+    key:    'health_worsened',
+    label:  '健全度悪化',
+    filter: i => i.snapshotDiff?.healthWorsened === true,
+    color:  'border-red-500 text-red-700 bg-red-50',
+  },
+  {
+    key:    'health_improved',
+    label:  '健全度改善',
+    filter: i => i.snapshotDiff?.healthImproved === true,
+    color:  'border-emerald-500 text-emerald-700 bg-emerald-50',
+  },
+  // ── 週次/月次傾向 ────────────────────────────────────────────────────────
+  {
+    key:    'weekly_worsened',
+    label:  '悪化（週）',
+    filter: i => i.snapshotDiff?.weeklyHealthWorsened === true,
+    color:  'border-red-500 text-red-700 bg-red-50',
+  },
+  {
+    key:    'weekly_activated',
+    label:  '健全化（週）',
+    filter: i => i.snapshotDiff?.weeklyActivated === true,
+    color:  'border-emerald-500 text-emerald-700 bg-emerald-50',
+  },
+  {
+    key:    'monthly_renewal_entered',
+    label:  '更新接近（月）',
+    filter: i => i.snapshotDiff?.monthlyRenewalEntered === true,
+    color:  'border-orange-500 text-orange-700 bg-orange-50',
+  },
+  {
+    key:    'monthly_mrr_increased',
+    label:  'MRR増（月）',
+    filter: i => i.snapshotDiff?.monthlyMrrIncreased === true,
+    color:  'border-emerald-500 text-emerald-700 bg-emerald-50',
+  },
+  {
+    key:    'monthly_mrr_decreased',
+    label:  'MRR減（月）',
+    filter: i => i.snapshotDiff?.monthlyMrrDecreased === true,
+    color:  'border-red-500 text-red-700 bg-red-50',
+  },
 ];
 
 // ── フィルタ適用 ──────────────────────────────────────────────────────────────
@@ -190,6 +285,36 @@ function uniqueValues(items: CompanyListItemVM[], key: keyof CompanyListItemVM):
   return [...set].sort((a, b) => a.localeCompare(b, 'ja'));
 }
 
+// ── MRR フォーマット ─────────────────────────────────────────────────────────
+
+function formatMrr(yen: number): string {
+  if (yen >= 100_000_000) return `¥${(yen / 100_000_000).toFixed(1)}億`;
+  if (yen >= 10_000)      return `¥${Math.round(yen / 10_000).toLocaleString()}万`;
+  return `¥${yen.toLocaleString()}`;
+}
+
+// ── セグメント対応アクション prefill ─────────────────────────────────────────
+
+function getSegmentPrefill(segment: SegmentKey, item: CompanyListItemVM): string | null {
+  if (segment === 'renewal_30' || segment === 'renewal_entered_30' || segment === 'monthly_renewal_entered') {
+    const days = item.renewalDaysLeft;
+    return days != null ? `更新対応: ${item.companyName}（あと${days}日）` : `更新対応: ${item.companyName}`;
+  }
+  if (segment === 'support_high' || segment === 'support_increased') {
+    return `サポート確認: ${item.companyName}`;
+  }
+  if (segment === 'expanding' || segment === 'weekly_activated') {
+    return `upsell提案: ${item.companyName}`;
+  }
+  if (segment === 'health_worsened' || segment === 'weekly_worsened' || segment === 'critical' || segment === 'at_risk') {
+    return `健全度悪化確認: ${item.companyName}`;
+  }
+  if (segment === 'mrr_decreased' || segment === 'monthly_mrr_decreased') {
+    return `MRR減少確認: ${item.companyName}`;
+  }
+  return null;
+}
+
 // ── 推奨アクション候補 ─────────────────────────────────────────────────────────
 
 function getNextActionCandidate(item: CompanyListItemVM): string | null {
@@ -209,6 +334,24 @@ function getNextActionCandidate(item: CompanyListItemVM): string | null {
   return null;
 }
 
+// ── フェーズ短縮表示 ──────────────────────────────────────────────────────────
+//
+// 12文字超のフェーズ名を短縮して一覧の詰まりを解消する。
+// title 属性でネイティブ tooltip にフル名を残す。
+//
+// 例: "Active Expansion" → "Active Exp."
+//     "Implementation"   → "Implementa…"
+//     "Onboarding"       → "Onboarding" (10文字以内なのでそのまま)
+
+function abbreviatePhase(label: string): string {
+  if (label.length <= 12) return label;
+  const words = label.trim().split(/\s+/);
+  if (words.length === 1) return label.slice(0, 10) + '…';
+  // 2語以上: 1語目はそのまま、2語目以降を最初の4文字+'.'に短縮
+  const abbr = words.slice(1).map(w => (w.length <= 4 ? w : w.slice(0, 4) + '.')).join(' ');
+  return words[0] + ' ' + abbr;
+}
+
 // ── Summary freshness badge ───────────────────────────────────────────────────
 
 function FreshnessBadge({ status }: { status: string }) {
@@ -221,18 +364,20 @@ function FreshnessBadge({ status }: { status: string }) {
 }
 
 // ── Company カード ────────────────────────────────────────────────────────────
+//
+// Row 1 (固定列): health | 企業名 | フェーズ | 空白日数 | support | 更新[urgent] | アクション | →
+// Row 2 (理由):   ↑機会理由 → リスク理由 …  │  [推奨アクション ボタン]
 
-function CompanyCard({ item }: { item: CompanyListItemVM }) {
+function CompanyCard({ item, segment }: { item: CompanyListItemVM; segment: SegmentKey }) {
   const [actionOpen, setActionOpen] = useState(false);
 
   const health     = getHealthBadge(item.overallHealth);
   const reasons    = orderedReasons(item, item.priorityBreakdown ?? []);
-  const nextAction = getNextActionCandidate(item);
+  const nextAction = getSegmentPrefill(segment, item) ?? getNextActionCandidate(item);
 
-  // 機会 vs リスク理由を分離
   const isExpanding = item.overallHealth === 'expanding';
   const oppReason   = isExpanding && reasons.length > 0 ? reasons[0] : null;
-  const riskReasons = isExpanding ? reasons.slice(1) : reasons;
+  const riskReasons = (isExpanding ? reasons.slice(1) : reasons).slice(0, 2);
 
   const commCls = item.communicationRiskLevel === 'risk'    ? 'text-red-500'
                 : item.communicationRiskLevel === 'warning' ? 'text-amber-500'
@@ -240,81 +385,127 @@ function CompanyCard({ item }: { item: CompanyListItemVM }) {
   const commLabel = item.communicationBlankDays != null
     ? `${item.communicationBlankDays}日前` : '—';
 
+  // 更新日数: 0-30 or 31-90 の場合のみ表示（91日以上は混雑を避けて非表示）
+  const showRenewal = item.renewalBucket === '0-30' || item.renewalBucket === '31-90';
+  const renewalCls  = item.renewalBucket === '0-30' ? 'text-rose-600 font-medium' : 'text-orange-500';
+  const renewalLabel = item.renewalDaysLeft != null
+    ? (item.renewalDaysLeft >= 0 ? `更${item.renewalDaysLeft}日` : '超過')
+    : null;
+
   const hasRow2 = reasons.length > 0 || !!nextAction;
 
   return (
     <>
       <div className="bg-white border border-slate-200 rounded-lg hover:border-slate-300 hover:shadow-sm transition-all group">
-        {/* 1行目: 主要情報 */}
-        <div className={`flex items-center gap-2 px-4 pt-3 min-w-0 ${hasRow2 ? 'pb-1' : 'pb-3'}`}>
-          <Badge
-            variant="outline"
-            className={`text-[10px] px-1.5 py-0 flex-shrink-0 font-medium ${health.className}`}
-          >
-            {health.label}
-          </Badge>
 
+        {/* ── Row 1: 主要情報（固定列）───────────────────────────────────── */}
+        <div className={`flex items-center gap-0 px-3 pt-2.5 min-w-0 ${hasRow2 ? 'pb-1' : 'pb-2.5'}`}>
+
+          {/* Health badge（固定幅 52px） */}
+          <div className="w-[52px] flex-shrink-0">
+            <Badge
+              variant="outline"
+              className={`text-[10px] px-1.5 py-0 font-medium ${health.className}`}
+            >
+              {health.label}
+            </Badge>
+          </div>
+
+          {/* 企業名（flex-1, リンク） */}
           <Link
             href={`/companies/${item.companyUid}`}
-            className="text-sm font-medium text-slate-800 flex-1 truncate hover:text-slate-900 hover:underline"
+            className="flex-1 min-w-0 text-sm font-medium text-slate-800 truncate hover:text-indigo-700 hover:underline px-1"
           >
             {item.companyName}
           </Link>
 
-          {item.activePhaseLabel && (
-            <span className="text-[11px] text-slate-400 flex-shrink-0 hidden sm:block">
-              {item.activePhaseLabel}
-              {item.phaseGap && (
-                <span className="ml-1 text-amber-500" title={item.phaseGapDescription ?? undefined}>⚠</span>
-              )}
-            </span>
-          )}
+          {/* フェーズ（固定幅 88px, sm+）— 短縮表示 + title で full tooltip */}
+          <div className="w-[88px] flex-shrink-0 hidden sm:flex items-center gap-0.5 justify-end">
+            {item.activePhaseLabel ? (
+              <span
+                className="text-[11px] text-slate-400 truncate cursor-default"
+                title={item.activePhaseLabel}
+              >
+                {abbreviatePhase(item.activePhaseLabel)}
+                {item.phaseGap && (
+                  <span
+                    className="ml-0.5 text-amber-500"
+                    title={`フェーズ差異: ${item.phaseGapDescription ?? ''}`}
+                  >⚠</span>
+                )}
+              </span>
+            ) : (
+              <span className="text-[11px] text-slate-200">—</span>
+            )}
+          </div>
 
-          <span className={`text-[11px] flex-shrink-0 ${commCls}`}>{commLabel}</span>
+          {/* 空白日数（固定幅 44px） */}
+          <div className="w-11 flex-shrink-0 text-right">
+            <span className={`text-[11px] tabular-nums ${commCls}`}>{commLabel}</span>
+          </div>
 
-          {(item.criticalSupportCount ?? 0) > 0 ? (
-            <span className="flex-shrink-0 flex items-center gap-0.5 text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0">
-              <Headphones className="w-3 h-3" /> C:{item.criticalSupportCount}
-            </span>
-          ) : (item.openSupportCount ?? 0) >= 5 ? (
-            <span className="flex-shrink-0 flex items-center gap-0.5 text-[11px] text-orange-600 bg-orange-50 border border-orange-200 rounded px-1.5 py-0">
-              <Headphones className="w-3 h-3" /> {item.openSupportCount}
-            </span>
-          ) : null}
+          {/* Support badge（固定幅 40px） */}
+          <div className="w-10 flex-shrink-0 flex justify-end">
+            {(item.criticalSupportCount ?? 0) > 0 ? (
+              <span className="flex items-center gap-0.5 text-[10px] font-medium text-red-600 bg-red-50 border border-red-200 rounded px-1 py-0">
+                <Headphones className="w-2.5 h-2.5" />C:{item.criticalSupportCount}
+              </span>
+            ) : (item.openSupportCount ?? 0) >= 3 ? (
+              <span className="flex items-center gap-0.5 text-[10px] text-orange-600 bg-orange-50 border border-orange-200 rounded px-1 py-0">
+                <Headphones className="w-2.5 h-2.5" />{item.openSupportCount}
+              </span>
+            ) : null}
+          </div>
 
+          {/* 更新日数（urgent only, 固定幅 36px） */}
+          <div className="w-9 flex-shrink-0 text-right hidden md:block">
+            {showRenewal && renewalLabel ? (
+              <span className={`text-[10px] tabular-nums ${renewalCls}`}>{renewalLabel}</span>
+            ) : null}
+          </div>
+
+          {/* Summary staleness（条件付き） */}
           {(item.freshnessStatus === 'missing' || item.freshnessStatus === 'stale') && (
-            <FreshnessBadge status={item.freshnessStatus} />
+            <div className="flex-shrink-0 ml-1">
+              <FreshnessBadge status={item.freshnessStatus} />
+            </div>
           )}
 
-          {/* アクション作成ボタン（hover 時に表示） */}
+          {/* アクション作成ボタン（hover 表示） */}
           <Button
             size="sm"
             variant="outline"
-            className="h-6 text-[11px] gap-1 flex-shrink-0 px-2 border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="h-5 text-[10px] gap-0.5 flex-shrink-0 px-1.5 ml-1 border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity"
             onClick={e => { e.preventDefault(); e.stopPropagation(); setActionOpen(true); }}
           >
-            <Plus className="w-3 h-3" />アクション
+            <Plus className="w-2.5 h-2.5" />
           </Button>
 
-          <Link href={`/companies/${item.companyUid}`} className="flex-shrink-0">
-            <ArrowRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 transition-colors" />
+          <Link href={`/companies/${item.companyUid}`} className="flex-shrink-0 ml-1">
+            <ArrowRight className="w-3 h-3 text-slate-300 group-hover:text-slate-500 transition-colors" />
           </Link>
         </div>
 
-        {/* 2行目: 機会 / リスク理由 + 推奨アクション */}
+        {/* ── Row 2: 理由 + 推奨アクション ───────────────────────────────── */}
         {hasRow2 && (
-          <div className="flex items-center flex-wrap gap-x-3 gap-y-0.5 px-4 pb-3 pt-0 pl-[calc(52px+16px)]">
+          <div className="flex items-center gap-2 px-3 pb-2 pl-[calc(52px+12px)] min-w-0">
+            {/* 機会理由 */}
             {oppReason && (
-              <span className="text-[11px] text-indigo-500 truncate">↑ {oppReason}</span>
+              <span className="text-[11px] text-indigo-500 truncate min-w-0">↑ {oppReason}</span>
             )}
-            {riskReasons.slice(0, oppReason ? 1 : 2).map((r, i) => (
-              <span key={i} className="text-[11px] text-slate-400 truncate">→ {r}</span>
+            {/* リスク理由（最大2件） */}
+            {riskReasons.map((r, i) => (
+              <span key={i} className="text-[11px] text-slate-400 truncate min-w-0">→ {r}</span>
             ))}
+
+            {/* 推奨アクション（右端、クリックでダイアログ） */}
             {nextAction && (
-              <span className="text-[11px] text-slate-400 ml-auto flex-shrink-0">
-                <span className="text-[10px] text-slate-300 mr-1">推奨:</span>
+              <button
+                className="ml-auto flex-shrink-0 text-[10px] text-slate-500 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 hover:text-indigo-600 rounded px-2 py-0.5 transition-colors"
+                onClick={e => { e.preventDefault(); e.stopPropagation(); setActionOpen(true); }}
+              >
                 {nextAction}
-              </span>
+              </button>
             )}
           </div>
         )}
@@ -325,7 +516,7 @@ function CompanyCard({ item }: { item: CompanyListItemVM }) {
         onOpenChange={setActionOpen}
         companyUid={item.companyUid}
         companyName={item.companyName}
-        prefillTitle={nextAction ?? ''}
+        prefillTitle={nextAction ?? `${item.companyName} — アクション`}
         sourceType="signal"
         createdFrom="manual"
       />
@@ -345,6 +536,8 @@ export function CompanyList() {
   const [loadError,   setLoadError]   = useState<string | null>(null);
   const [refreshing,  setRefreshing]  = useState(false);
   const [lastFetched, setLastFetched] = useState<string | null>(null);
+  // ユーザースコープフィルタ（localStorage から読み込む）
+  const [ownerFilter, setOwnerFilter] = useState<string | null>(null);
 
   // ── URL クエリ → 初期セグメント解決 ────────────────────────────────────────
   // ?segment=renewal_30 / renewal_90 / arr_at_risk / expanding / support_high 等を受け取る
@@ -352,6 +545,11 @@ export function CompanyList() {
   const VALID_SEGMENTS = new Set<SegmentKey>([
     'all','renewal_30','renewal_90','arr_at_risk',
     'expanding','critical','at_risk','support_high','summary_stale',
+    'phase_changed','renewal_entered_30','renewal_entered_90',
+    'support_increased','mrr_increased','mrr_decreased',
+    'health_worsened','health_improved',
+    'weekly_worsened','weekly_activated',
+    'monthly_renewal_entered','monthly_mrr_increased','monthly_mrr_decreased',
   ]);
 
   const initSegment = ((): SegmentKey => {
@@ -389,10 +587,11 @@ export function CompanyList() {
   }, [searchParams, router, pathname]);
 
   // ── データ取得 ──────────────────────────────────────────────────────────────
-  const load = useCallback((refresh = false) => {
+  const load = useCallback((refresh = false, owner?: string | null) => {
     if (refresh) setRefreshing(true);
     setLoadError(null);
-    apiFetch('/api/company-summary-list?limit=500&sort=priority_desc')
+    const ownerParam = owner ? `&owner=${encodeURIComponent(owner)}` : '';
+    apiFetch(`/api/company-summary-list?limit=500&sort=priority_desc${ownerParam}`)
       .then(r => r.ok ? r.json() : r.json().then((e: {error?:string}) => Promise.reject(e.error ?? '取得エラー')))
       .then((data: { items: CompanyListItemVM[] }) => {
         setItems(data.items ?? []);
@@ -402,7 +601,27 @@ export function CompanyList() {
       .finally(() => setRefreshing(false));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // マウント時: ローカルストレージからユーザースコープを読んでフィルタ適用
+  useEffect(() => {
+    const resolveOwner = async (): Promise<string | null> => {
+      try {
+        const profileRes = await fetch('/api/user/profile');
+        if (!profileRes.ok) return null;
+        const profile = await profileRes.json() as { name2?: string };
+        if (!profile.name2) return null;
+        const prefsRaw = localStorage.getItem(`cxm_prefs_${profile.name2}`);
+        if (!prefsRaw) return null;
+        const prefs = JSON.parse(prefsRaw) as { default_home_scope?: string };
+        return prefs.default_home_scope === 'mine' ? (profile.name2 ?? null) : null;
+      } catch { return null; }
+    };
+
+    resolveOwner().then(owner => {
+      setOwnerFilter(owner);
+      load(false, owner);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // マウント時1回のみ
 
   // ── フィルタ helpers ─────────────────────────────────────────────────────────
   function setFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
@@ -529,10 +748,15 @@ export function CompanyList() {
               </Select>
 
               {/* 更新 */}
-              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => load(true)} disabled={refreshing}>
+              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => load(true, ownerFilter)} disabled={refreshing}>
                 <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
               </Button>
               {lastFetched && <span className="text-[11px] text-slate-400">{lastFetched}</span>}
+              {ownerFilter && (
+                <span className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                  {ownerFilter} 担当
+                </span>
+              )}
             </div>
           </div>
 
@@ -679,12 +903,61 @@ export function CompanyList() {
             </div>
           )}
 
+          {/* ── アクティブフィルターチップ ────────────────────────────── */}
+          {hasActiveFilters && (
+            <div className="px-6 py-2 border-b border-slate-100 bg-white flex flex-wrap items-center gap-1.5 flex-shrink-0">
+              <span className="text-[10px] text-slate-400 mr-1">絞り込み中:</span>
+              {filters.health && (
+                <span className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                  Health: {filters.health}
+                  <button onClick={() => setFilter('health', '')} className="hover:text-slate-900"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )}
+              {filters.phase && (
+                <span className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                  フェーズ: {filters.phase}
+                  <button onClick={() => setFilter('phase', '')} className="hover:text-slate-900"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )}
+              {filters.owner && (
+                <span className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                  担当: {filters.owner}
+                  <button onClick={() => setFilter('owner', '')} className="hover:text-slate-900"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )}
+              {filters.commBlank && (
+                <span className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                  空白: {filters.commBlank === 'warning' ? '30日以上' : '60日以上'}
+                  <button onClick={() => setFilter('commBlank', '')} className="hover:text-slate-900"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )}
+              {filters.freshness && (
+                <span className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                  Summary: {filters.freshness}
+                  <button onClick={() => setFilter('freshness', '')} className="hover:text-slate-900"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )}
+              {filters.supportCrit && (
+                <span className="flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5">
+                  Support: Critical あり
+                  <button onClick={() => setFilter('supportCrit', '')} className="hover:text-slate-900"><X className="w-2.5 h-2.5" /></button>
+                </span>
+              )}
+              <button
+                onClick={resetFilters}
+                className="text-[11px] text-slate-400 hover:text-slate-600 underline ml-1"
+              >
+                すべて解除
+              </button>
+            </div>
+          )}
+
           {/* ── エラー ────────────────────────────────────────────────── */}
           {loadError && (
             <AlertBox variant="error" className="mx-6 mt-4 flex-shrink-0">
               <span className="flex items-center justify-between gap-2 w-full">
                 {loadError}
-                <Button variant="ghost" size="sm" className="h-6 text-xs flex-shrink-0" onClick={() => load()}>再試行</Button>
+                <Button variant="ghost" size="sm" className="h-6 text-xs flex-shrink-0" onClick={() => load(false, ownerFilter)}>再試行</Button>
               </span>
             </AlertBox>
           )}
@@ -717,7 +990,7 @@ export function CompanyList() {
             ) : (
               <div className="space-y-1.5">
                 {displayed.map(item => (
-                  <CompanyCard key={item.companyUid} item={item} />
+                  <CompanyCard key={item.companyUid} item={item} segment={segment} />
                 ))}
                 {displayed.length >= 500 && (
                   <p className="text-xs text-slate-400 text-center py-2">

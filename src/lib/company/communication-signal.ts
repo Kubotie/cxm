@@ -21,6 +21,7 @@ import type {
   AppLogChatwork,
   AppLogSlack,
   AppLogNotionMinutes,
+  AppLogIntercomMail,
 } from '@/lib/nocodb/types';
 import {
   getCommunicationRiskLevel,
@@ -30,7 +31,7 @@ import {
 
 // ── 型定義 ────────────────────────────────────────────────────────────────────
 
-export type CommunicationSource = 'chatwork' | 'slack' | 'notion_minutes';
+export type CommunicationSource = 'chatwork' | 'slack' | 'notion_minutes' | 'intercom_mail';
 
 /** ソースを問わない統一エントリ型（Communication タブのタイムライン用） */
 export interface CommunicationEntry {
@@ -144,6 +145,20 @@ function notionToEntry(log: AppLogNotionMinutes): CommunicationEntry {
   };
 }
 
+function intercomMailToEntry(log: AppLogIntercomMail): CommunicationEntry {
+  return {
+    key:            `intercom_mail:${log.id}`,
+    source:         'intercom_mail',
+    companyUid:     log.companyUid,
+    dateStr:        log.sentAt ?? '',
+    title:          log.senderName
+                      ? `${log.senderName} / メール`
+                      : 'Intercom メール',
+    excerpt:        truncate(log.subject ?? log.body),
+    hasActionItems: false,
+  };
+}
+
 // ── タイムライン構築 ──────────────────────────────────────────────────────────
 
 /**
@@ -154,11 +169,13 @@ export function buildCommunicationTimeline(
   chatwork:      AppLogChatwork[],
   slack:         AppLogSlack[],
   notionMinutes: AppLogNotionMinutes[],
+  intercomMail:  AppLogIntercomMail[] = [],
 ): CommunicationEntry[] {
   const entries: CommunicationEntry[] = [
     ...chatwork.map(chatworkToEntry),
     ...slack.map(slackToEntry),
     ...notionMinutes.map(notionToEntry),
+    ...intercomMail.map(intercomMailToEntry),
   ];
 
   // dateStr 降順（新しい順）でソート
@@ -187,8 +204,9 @@ export function buildCommunicationSignalVM(
   slack:         AppLogSlack[],
   notionMinutes: AppLogNotionMinutes[],
   previewCount   = 5,
+  intercomMail:  AppLogIntercomMail[] = [],
 ): CommunicationSignalVM {
-  const allEntries = buildCommunicationTimeline(chatwork, slack, notionMinutes);
+  const allEntries = buildCommunicationTimeline(chatwork, slack, notionMinutes, intercomMail);
   const totalCount = allEntries.length;
 
   // 最終コミュニケーション日時（先頭エントリの dateStr）
@@ -204,6 +222,7 @@ export function buildCommunicationSignalVM(
   if (chatwork.length > 0)      activeSources.push('chatwork');
   if (slack.length > 0)         activeSources.push('slack');
   if (notionMinutes.length > 0) activeSources.push('notion_minutes');
+  if (intercomMail.length > 0)  activeSources.push('intercom_mail');
 
   return {
     lastContactDate,
@@ -234,4 +253,5 @@ export const COMMUNICATION_SOURCE_LABEL: Record<CommunicationSource, string> = {
   chatwork:      'Chatwork',
   slack:         'Slack',
   notion_minutes: 'Notion 議事録',
+  intercom_mail: 'メール',
 };

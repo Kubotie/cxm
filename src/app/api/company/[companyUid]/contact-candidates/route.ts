@@ -34,6 +34,7 @@ import {
   fetchChatworkLogs,
   fetchSlackLogs,
   fetchNotionMinutes,
+  fetchIntercomMailLogs,
 } from '@/lib/nocodb/communication-logs';
 import { fetchPeople } from '@/lib/nocodb/people';
 import type {
@@ -191,6 +192,35 @@ export async function POST(
         }
       }
       if (added === 0) emptySources.push('slack');
+    }
+  }
+
+  // ── Intercom Mail (★★★) — account_name（メール送信者）────────────────────────
+  // massage_type='mail' のレコードの account_name を送信者として抽出。
+  // Ptmind/PTmind ドメインのアカウントは社内ユーザーとしてスキップ。
+  if (!TABLE_IDS.log_intercom) {
+    skippedSources.push('intercom_mail');
+  } else {
+    const logs = await fetchIntercomMailLogs(companyUid, 200).catch(() => []);
+    if (logs.length === 0) {
+      emptySources.push('intercom_mail');
+    } else {
+      let added = 0;
+      for (const log of logs) {
+        if (log.senderName && isValidName(log.senderName)) {
+          const conf = calcConfidence(log.senderName);
+          rawCandidates.push({
+            name:       log.senderName,
+            source:     'intercom_mail',
+            sourceRef:  `メール ${log.sentAt?.slice(0, 10) ?? ''}`.trim(),
+            excerpt:    log.subject ?? (log.body ? log.body.slice(0, 80) : undefined),
+            confidence: conf,
+            whyPicked:  'Intercom メール送信者名（社内ユーザー除外済み）',
+          });
+          added++;
+        }
+      }
+      if (added === 0) emptySources.push('intercom_mail');
     }
   }
 

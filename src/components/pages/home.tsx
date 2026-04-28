@@ -3,21 +3,23 @@
 // ─── Home ページ（変動コックピット）────────────────────────────────────────────
 // 担当ポートフォリオの変動を把握し、今週の方針を決める画面
 //
-// Section A: 変動シグナル（6タイル）— タイル → ?segment= で Company List へ
-//                                    企業名 → Company Detail へ直接リンク
-// Section D: バーチャート 3本（健全度 / フェーズ分布 / 更新ウィンドウ）
-//            ← バーをクリックすると Company List に絞り込んで遷移
-// Section B: 優先アクションキュー（上位7件）— Company Detail へ直リンク
-// Section C: MRR サマリー
+// Section 1: 今週の優先アクション（ヒーロー） + MRR サマリー
+// Section 2: 変化サマリー 2段 × 4列
+//   Tier 1 — 今日の変化（前日差分ベース）: 健全度悪化 / サポート増加 / 更新30日入り / フェーズ変化
+//   Tier 2 — 今週の文脈（現況+週次）: 健全度リスク / 更新間近30日 / 週次悪化 / 拡大機会
+// Section 3: ポートフォリオ分布（補助）
 //
 // データソース: /api/company-summary-list?limit=500&sort=priority_desc
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import type { PackageEventSummary } from "@/lib/metabase/package-events";
+import type { AppUserProfile } from "@/lib/nocodb/user-profile";
 import Link from "next/link";
 import {
   RefreshCw, AlertTriangle,
   Headphones, TrendingUp, ArrowRight,
-  Building2, Calendar, ArrowUpDown,
+  Building2, Calendar,
+  TrendingDown, GitBranch,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -51,144 +53,226 @@ function listUrl(segment: string): string {
   return `/companies?segment=${segment}`;
 }
 
-// ── シグナル定義 ──────────────────────────────────────────────────────────────
+// ── Snapshot 差分グループ定義 ─────────────────────────────────────────────────
 
-interface SignalGroup {
-  id:          string;
-  label:       string;
-  icon:        React.ReactNode;
-  count:       number;
-  description: string;
-  items:       CompanyListItemVM[];
-  active:      boolean;
-  iconColor:   string;
-  bgClass:     string;
-  borderColor: string;
-  accentColor: string;
-  segment:     string;   // ?segment= に使うキー
+interface DiffGroup {
+  id:               string;
+  label:            string;
+  icon:             React.ReactNode;
+  count:            number;
+  items:            CompanyListItemVM[];
+  segment:          string;
+  iconColor:        string;
+  bgClass:          string;
+  borderColor:      string;
+  accentColor:      string;
+  renderDetail:     (item: CompanyListItemVM) => string | null;
 }
 
-function buildSignals(all: CompanyListItemVM[]): SignalGroup[] {
-  const renewal30 = all.filter(i => i.renewalBucket === "0-30");
-  const renewal90 = all.filter(i => i.renewalBucket === "31-90");
-  const risk      = all.filter(i => i.overallHealth === "critical" || i.overallHealth === "at_risk");
-  const phaseChg  = all.filter(i => i.phaseChanged === true);
-  const support   = all.filter(i => (i.criticalSupportCount ?? 0) > 0 || (i.openSupportCount ?? 0) >= 5);
-  const expand    = all.filter(i => i.overallHealth === "expanding");
-
+function buildTrendGroups(all: CompanyListItemVM[]): DiffGroup[] {
   return [
     {
-      id: "renewal30", label: "更新間近（30日）",
-      icon: <Calendar className="w-4 h-4" />,
-      count: renewal30.length, description: "30日以内に契約更新",
-      items: renewal30.slice(0, 3), active: renewal30.length > 0,
-      iconColor: "text-rose-600", bgClass: "bg-rose-50", borderColor: "border-rose-200", accentColor: "border-l-rose-500",
-      segment: "renewal_30",
+      id: "trendWeeklyWorsened", label: "健全度悪化（週）",
+      icon: <TrendingDown className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.weeklyHealthWorsened === true).length,
+      items: all.filter(i => i.snapshotDiff?.weeklyHealthWorsened === true).slice(0, 3),
+      segment: "weekly_worsened",
+      iconColor: "text-red-600", bgClass: "bg-red-50",
+      borderColor: "border-red-200", accentColor: "border-l-red-500",
+      renderDetail: i => i.snapshotDiff?.weeklyHealthTransition ?? null,
     },
     {
-      id: "renewal90", label: "更新間近（90日）",
-      icon: <Calendar className="w-4 h-4" />,
-      count: renewal90.length, description: "31〜90日以内に契約更新",
-      items: renewal90.slice(0, 3), active: renewal90.length > 0,
-      iconColor: "text-orange-500", bgClass: "bg-orange-50", borderColor: "border-orange-200", accentColor: "border-l-orange-400",
-      segment: "renewal_90",
+      id: "trendWeeklyActivated", label: "健全化（週）",
+      icon: <TrendingUp className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.weeklyActivated === true).length,
+      items: all.filter(i => i.snapshotDiff?.weeklyActivated === true).slice(0, 3),
+      segment: "weekly_activated",
+      iconColor: "text-emerald-600", bgClass: "bg-emerald-50",
+      borderColor: "border-emerald-200", accentColor: "border-l-emerald-500",
+      renderDetail: i => i.snapshotDiff?.weeklyHealthTransition ?? null,
     },
     {
-      id: "risk", label: "健全度リスク",
-      icon: <AlertTriangle className="w-4 h-4" />,
-      count: risk.length, description: "Critical / At Risk",
-      items: risk.slice(0, 3), active: risk.length > 0,
-      iconColor: "text-red-500", bgClass: "bg-red-50", borderColor: "border-red-200", accentColor: "border-l-red-400",
-      segment: "critical",
+      id: "trendMonthlyRenewal", label: "更新接近（月）",
+      icon: <Calendar className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.monthlyRenewalEntered === true).length,
+      items: all.filter(i => i.snapshotDiff?.monthlyRenewalEntered === true).slice(0, 3),
+      segment: "monthly_renewal_entered",
+      iconColor: "text-orange-600", bgClass: "bg-orange-50",
+      borderColor: "border-orange-200", accentColor: "border-l-orange-500",
+      renderDetail: i => i.renewalDaysLeft != null ? `あと${i.renewalDaysLeft}日` : null,
     },
     {
-      id: "phaseChg", label: "フェーズ変化",
-      icon: <ArrowUpDown className="w-4 h-4" />,
-      count: phaseChg.length, description: "前回からフェーズが変化",
-      items: phaseChg.slice(0, 3), active: phaseChg.length > 0,
-      iconColor: "text-violet-500", bgClass: "bg-violet-50", borderColor: "border-violet-200", accentColor: "border-l-violet-400",
-      segment: "all",
+      id: "trendMonthlyMrrInc", label: "MRR増加（月）",
+      icon: <TrendingUp className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.monthlyMrrIncreased === true).length,
+      items: all.filter(i => i.snapshotDiff?.monthlyMrrIncreased === true).slice(0, 3),
+      segment: "monthly_mrr_increased",
+      iconColor: "text-emerald-600", bgClass: "bg-emerald-50",
+      borderColor: "border-emerald-200", accentColor: "border-l-emerald-500",
+      renderDetail: i => {
+        const d = i.snapshotDiff?.monthlyMrrDelta;
+        return d != null && d > 0 ? `+${formatMrr(d)}` : null;
+      },
     },
     {
-      id: "support", label: "Support 急増",
-      icon: <Headphones className="w-4 h-4" />,
-      count: support.length, description: "Critical または 5件以上 Open",
-      items: support.slice(0, 3), active: support.length > 0,
-      iconColor: "text-amber-500", bgClass: "bg-amber-50", borderColor: "border-amber-200", accentColor: "border-l-amber-400",
-      segment: "support_high",
-    },
-    {
-      id: "expand", label: "拡大機会",
-      icon: <TrendingUp className="w-4 h-4" />,
-      count: expand.length, description: "Expanding — upsell チャンス",
-      items: expand.slice(0, 3), active: expand.length > 0,
-      iconColor: "text-indigo-500", bgClass: "bg-indigo-50", borderColor: "border-indigo-200", accentColor: "border-l-indigo-400",
-      segment: "expanding",
+      id: "trendMonthlyMrrDec", label: "MRR減少（月）",
+      icon: <TrendingDown className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.monthlyMrrDecreased === true).length,
+      items: all.filter(i => i.snapshotDiff?.monthlyMrrDecreased === true).slice(0, 3),
+      segment: "monthly_mrr_decreased",
+      iconColor: "text-red-600", bgClass: "bg-red-50",
+      borderColor: "border-red-200", accentColor: "border-l-red-500",
+      renderDetail: i => {
+        const d = i.snapshotDiff?.monthlyMrrDelta;
+        return d != null && d < 0 ? `-${formatMrr(Math.abs(d))}` : null;
+      },
     },
   ];
 }
 
-// ── SignalTile ────────────────────────────────────────────────────────────────
-// - タイル全体 → Company List（?segment=）
-// - 企業名 → Company Detail（直リンク）
+function buildDiffGroups(all: CompanyListItemVM[]): DiffGroup[] {
+  const phaseChg    = all.filter(i => i.snapshotDiff?.phaseChanged === true);
+  const entered30   = all.filter(i => i.snapshotDiff?.renewalEnteredThirty === true);
+  const entered90   = all.filter(i => i.snapshotDiff?.renewalEnteredNinety === true);
+  const suppInc     = all.filter(i => i.snapshotDiff?.supportIncreased === true);
+  const mrrDec      = all.filter(i => i.snapshotDiff?.mrrDecreased === true);
+  const mrrInc      = all.filter(i => i.snapshotDiff?.mrrIncreased === true);
 
-function SignalTile({ signal }: { signal: SignalGroup }) {
-  const containerCls = signal.active
-    ? `${signal.bgClass} ${signal.borderColor} border-l-[3px] ${signal.accentColor}`
-    : "bg-white border-slate-200";
+  return [
+    {
+      id: "diffPhase", label: "フェーズ変化",
+      icon: <GitBranch className="w-3.5 h-3.5" />,
+      count: phaseChg.length, items: phaseChg.slice(0, 3), segment: "phase_changed",
+      iconColor: "text-violet-600", bgClass: "bg-violet-50",
+      borderColor: "border-violet-200", accentColor: "border-l-violet-500",
+      renderDetail: i => {
+        const prev = i.snapshotDiff?.previousMPhase;
+        return prev ? `${prev} → ${i.activePhaseLabel ?? "?"}` : null;
+      },
+    },
+    {
+      id: "diffRenewal30", label: "更新30日入り",
+      icon: <Calendar className="w-3.5 h-3.5" />,
+      count: entered30.length, items: entered30.slice(0, 3), segment: "renewal_entered_30",
+      iconColor: "text-rose-600", bgClass: "bg-rose-50",
+      borderColor: "border-rose-200", accentColor: "border-l-rose-500",
+      renderDetail: i => i.renewalDaysLeft != null ? `あと${i.renewalDaysLeft}日` : null,
+    },
+    {
+      id: "diffRenewal90", label: "更新90日入り",
+      icon: <Calendar className="w-3.5 h-3.5" />,
+      count: entered90.length, items: entered90.slice(0, 3), segment: "renewal_entered_90",
+      iconColor: "text-orange-500", bgClass: "bg-orange-50",
+      borderColor: "border-orange-200", accentColor: "border-l-orange-400",
+      renderDetail: i => i.renewalDaysLeft != null ? `あと${i.renewalDaysLeft}日` : null,
+    },
+    {
+      id: "diffSupport", label: "サポート増加",
+      icon: <Headphones className="w-3.5 h-3.5" />,
+      count: suppInc.length, items: suppInc.slice(0, 3), segment: "support_increased",
+      iconColor: "text-amber-600", bgClass: "bg-amber-50",
+      borderColor: "border-amber-200", accentColor: "border-l-amber-500",
+      renderDetail: i => {
+        const d = i.snapshotDiff?.supportDelta;
+        return d != null && d > 0 ? `+${d}件` : null;
+      },
+    },
+    {
+      id: "diffMrrDec", label: "MRR 減少",
+      icon: <TrendingDown className="w-3.5 h-3.5" />,
+      count: mrrDec.length, items: mrrDec.slice(0, 3), segment: "mrr_decreased",
+      iconColor: "text-red-600", bgClass: "bg-red-50",
+      borderColor: "border-red-200", accentColor: "border-l-red-500",
+      renderDetail: i => {
+        const d = i.snapshotDiff?.mrrDelta;
+        return d != null && d < 0 ? `-${formatMrr(Math.abs(d))}` : null;
+      },
+    },
+    {
+      id: "diffMrrInc", label: "MRR 増加",
+      icon: <TrendingUp className="w-3.5 h-3.5" />,
+      count: mrrInc.length, items: mrrInc.slice(0, 3), segment: "mrr_increased",
+      iconColor: "text-emerald-600", bgClass: "bg-emerald-50",
+      borderColor: "border-emerald-200", accentColor: "border-l-emerald-500",
+      renderDetail: i => {
+        const d = i.snapshotDiff?.mrrDelta;
+        return d != null && d > 0 ? `+${formatMrr(d)}` : null;
+      },
+    },
+    {
+      id: "diffHealthDec", label: "健全度 悪化",
+      icon: <AlertTriangle className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.healthWorsened === true).length,
+      items: all.filter(i => i.snapshotDiff?.healthWorsened === true).slice(0, 3),
+      segment: "health_worsened",
+      iconColor: "text-red-600", bgClass: "bg-red-50",
+      borderColor: "border-red-200", accentColor: "border-l-red-500",
+      renderDetail: i => i.snapshotDiff?.healthTransition ?? null,
+    },
+    {
+      id: "diffHealthInc", label: "健全度 改善",
+      icon: <TrendingUp className="w-3.5 h-3.5" />,
+      count: all.filter(i => i.snapshotDiff?.healthImproved === true).length,
+      items: all.filter(i => i.snapshotDiff?.healthImproved === true).slice(0, 3),
+      segment: "health_improved",
+      iconColor: "text-emerald-600", bgClass: "bg-emerald-50",
+      borderColor: "border-emerald-200", accentColor: "border-l-emerald-500",
+      renderDetail: i => i.snapshotDiff?.healthTransition ?? null,
+    },
+  ];
+}
+
+// ── DiffTile ──────────────────────────────────────────────────────────────────
+
+function DiffTile({ group }: { group: DiffGroup }) {
+  const hasData = group.count > 0;
+  const containerCls = hasData
+    ? `${group.bgClass} ${group.borderColor} border-l-[3px] ${group.accentColor}`
+    : "bg-white border-slate-100";
 
   return (
-    <div className={`flex flex-col gap-2 p-4 rounded-xl border h-full transition-all ${containerCls}`}>
-      {/* ヘッダー行：タイル全体ではなくラベル部分をリンクに */}
-      <div className="flex items-start justify-between gap-2">
+    <div className={`flex flex-col gap-1.5 p-3 rounded-xl border transition-all ${containerCls}`}>
+      <div className="flex items-center justify-between gap-1">
         <Link
-          href={listUrl(signal.segment)}
-          className={`flex items-center gap-1.5 hover:opacity-75 transition-opacity ${signal.active ? signal.iconColor : "text-slate-400"}`}
+          href={listUrl(group.segment)}
+          className={`flex items-center gap-1 hover:opacity-75 transition-opacity min-w-0 ${hasData ? group.iconColor : "text-slate-400"}`}
         >
-          {signal.icon}
-          <span className="text-xs font-semibold text-slate-700">{signal.label}</span>
-          <ArrowRight className="w-3 h-3 opacity-40" />
+          {group.icon}
+          <span className="text-[11px] font-semibold text-slate-700 truncate">{group.label}</span>
+          {hasData && <ArrowRight className="w-2.5 h-2.5 opacity-40 flex-shrink-0" />}
         </Link>
         <Link
-          href={listUrl(signal.segment)}
-          className={`text-2xl font-bold leading-none tabular-nums hover:opacity-75 transition-opacity ${signal.active ? signal.iconColor : "text-slate-300"}`}
+          href={listUrl(group.segment)}
+          className={`text-lg font-bold leading-none tabular-nums flex-shrink-0 hover:opacity-75 ${hasData ? group.iconColor : "text-slate-200"}`}
         >
-          {signal.count}
+          {group.count}
         </Link>
       </div>
 
-      <p className="text-[11px] text-slate-500 leading-tight">{signal.description}</p>
-
-      {/* 企業名リスト：各社 → Detail への直リンク */}
-      <div className="flex-1 flex flex-col justify-end gap-1 min-h-[48px]">
-        {signal.active ? (
-          signal.items.map(item => (
-            <Link
-              key={item.companyUid}
-              href={`/companies/${item.companyUid}`}
-              className="text-[11px] text-slate-600 truncate leading-tight hover:text-slate-900 hover:underline"
-            >
-              · {item.companyName}
-              {signal.id === "renewal30" && item.renewalDaysLeft != null && (
-                <span className="text-rose-500 ml-1 font-medium">{item.renewalDaysLeft}日</span>
-              )}
-              {signal.id === "phaseChg" && item.previousMPhase && (
-                <span className="text-slate-400 ml-1">
-                  {item.previousMPhase} → {item.activePhaseLabel ?? "?"}
-                </span>
-              )}
-            </Link>
-          ))
+      <div className="flex flex-col gap-0.5 min-h-[36px] justify-end">
+        {hasData ? (
+          <>
+            {group.items.map(item => {
+              const detail = group.renderDetail(item);
+              return (
+                <Link
+                  key={item.companyUid}
+                  href={`/companies/${item.companyUid}`}
+                  className="text-[10px] text-slate-600 truncate hover:text-slate-900 hover:underline leading-snug"
+                >
+                  · {item.companyName}
+                  {detail && <span className={`ml-1 font-medium ${group.iconColor}`}>{detail}</span>}
+                </Link>
+              );
+            })}
+            {group.count > 3 && (
+              <Link href={listUrl(group.segment)} className="text-[10px] text-slate-400 hover:text-slate-600 mt-0.5">
+                他 {group.count - 3} 社 →
+              </Link>
+            )}
+          </>
         ) : (
-          <span className="text-[11px] text-slate-400">現在なし</span>
-        )}
-        {signal.active && signal.count > 3 && (
-          <Link
-            href={listUrl(signal.segment)}
-            className="text-[10px] text-slate-400 hover:text-slate-600 mt-0.5"
-          >
-            他 {signal.count - 3} 社を見る →
-          </Link>
+          <span className="text-[10px] text-slate-300">変化なし</span>
         )}
       </div>
     </div>
@@ -347,6 +431,65 @@ function RenewalBarChart({ data, onNavigate }: {
   );
 }
 
+// ── Chart 4: パッケージ変動バー（積み上げ）────────────────────────────────────
+
+interface PackageEventBarData {
+  month:    string;   // "YYYY-MM" → 短縮表示 "M月"
+  churn:    number;
+  downsell: number;
+  upsell:   number;
+  newEntry: number;
+}
+
+function PackageEventChart({ data, onNavigate }: { data: PackageEventBarData[]; onNavigate: (segment: string) => void }) {
+  if (data.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-[180px] text-sm text-slate-400">
+        データなし
+      </div>
+    );
+  }
+  return (
+    <ResponsiveContainer width="100%" height={180}>
+      <BarChart
+        data={data}
+        margin={{ top: 8, right: 8, left: -24, bottom: 0 }}
+        barSize={14}
+        onClick={(e) => {
+          const key = e?.activePayload?.[0]?.dataKey as string | undefined;
+          if (key === 'churn' || key === 'downsell') onNavigate('critical');
+          else if (key === 'upsell' || key === 'newEntry') onNavigate('expanding');
+        }}
+        style={{ cursor: 'pointer' }}
+      >
+        <CartesianGrid vertical={false} stroke="#f1f5f9" />
+        <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} allowDecimals={false} />
+        <Tooltip
+          content={({ active, payload, label }) => {
+            if (!active || !payload?.length) return null;
+            return (
+              <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs shadow-sm">
+                <p className="font-medium text-slate-700 mb-1">{label}</p>
+                {payload.map((p) => p.value ? (
+                  <p key={p.dataKey} style={{ color: p.fill as string }}>
+                    {p.name}: {p.value}件
+                  </p>
+                ) : null)}
+              </div>
+            );
+          }}
+          cursor={{ fill: "#f8fafc" }}
+        />
+        <Bar dataKey="churn"    name="Churn"    stackId="a" fill="#ef4444" radius={[0,0,0,0]} />
+        <Bar dataKey="downsell" name="Downsell" stackId="a" fill="#f97316" radius={[0,0,0,0]} />
+        <Bar dataKey="upsell"   name="Upsell"   stackId="b" fill="#6366f1" radius={[4,4,0,0]} />
+        <Bar dataKey="newEntry" name="New"       stackId="b" fill="#22c55e" radius={[0,0,0,0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
 // ── ChartCard ─────────────────────────────────────────────────────────────────
 
 function ChartCard({ title, hint, children }: {
@@ -368,32 +511,124 @@ function ChartCard({ title, hint, children }: {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export function Home() {
-  const [items,       setItems]       = useState<CompanyListItemVM[]>([]);
-  const [loading,     setLoading]     = useState(true);
-  const [error,       setError]       = useState<string | null>(null);
-  const [lastFetched, setLastFetched] = useState<string | null>(null);
+  const [items,               setItems]               = useState<CompanyListItemVM[]>([]);
+  const [loading,             setLoading]             = useState(true);
+  const [error,               setError]               = useState<string | null>(null);
+  const [lastFetched,         setLastFetched]         = useState<string | null>(null);
+  const [packageEventSummary, setPackageEventSummary] = useState<PackageEventSummary | null>(null);
+  const [userProfile,  setUserProfile]  = useState<AppUserProfile | null>(null);
+  // フェッチの世代管理（古い fetch の結果を無視するためのカウンタ）
+  const fetchGenRef = useRef(0);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (profile: AppUserProfile | null) => {
+    const gen = ++fetchGenRef.current;
     setLoading(true);
     setError(null);
     try {
-      const res  = await apiFetch("/api/company-summary-list?limit=500&sort=priority_desc");
+      const ownerParam = (profile?.default_home_scope === 'mine' && profile.name2)
+        ? `&owner=${encodeURIComponent(profile.name2)}`
+        : '';
+      const res  = await apiFetch(`/api/company-summary-list?limit=200&sort=priority_desc${ownerParam}`);
       const data = await res.json() as { total: number; items: CompanyListItemVM[] };
+      if (gen !== fetchGenRef.current) return; // より新しい fetch が走ったので破棄
       if (!res.ok) throw new Error((data as unknown as { error?: string }).error ?? res.statusText);
       setItems(data.items ?? []);
       setLastFetched(new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }));
     } catch (e) {
+      if (gen !== fetchGenRef.current) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (gen === fetchGenRef.current) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // マウント時: プロファイル取得と会社データ取得を並列で開始
+  // scope=mine の場合のみ、プロファイル確定後に owner フィルタ付きで再取得
+  useEffect(() => {
+    // 会社データを即時フェッチ開始（フィルタなし）
+    fetchData(null);
 
-  const signals  = buildSignals(items);
-  const topItems = items.slice(0, 7);
-  const total    = items.length;
+    // プロファイルを並列フェッチ
+    fetch('/api/user/profile')
+      .then(r => r.ok ? r.json() as Promise<AppUserProfile> : null)
+      .then(p => {
+        if (!p) { setUserProfile(null); return; }
+        // ローカルストレージの設定でスコープを上書き（NocoDB 拡張列なしでも動作）
+        const prefsRaw = typeof window !== 'undefined'
+          ? localStorage.getItem(`cxm_prefs_${p.name2}`)
+          : null;
+        if (prefsRaw) {
+          try {
+            const prefs = JSON.parse(prefsRaw) as { default_home_scope?: string };
+            if (prefs.default_home_scope) {
+              p = { ...p, default_home_scope: prefs.default_home_scope as 'mine' | 'team' | 'all' };
+            }
+          } catch { /* ignore */ }
+        }
+        setUserProfile(p);
+        // scope=mine の場合のみ、owner フィルタ付きで再フェッチ
+        if (p.default_home_scope === 'mine' && p.name2) {
+          fetchData(p);
+        }
+      })
+      .catch(() => setUserProfile(null));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // マウント時1回のみ（fetchData は安定した関数）
+
+  // パッケージ変動データは独立してフェッチ（company-summary-list と並行）
+  useEffect(() => {
+    apiFetch("/api/package-events-summary")
+      .then(r => r.json())
+      .then((d: PackageEventSummary) => setPackageEventSummary(d))
+      .catch(() => { /* graceful degradation: チャートは空表示 */ });
+  }, []);
+
+  const diffGroups      = buildDiffGroups(items);
+  const trendGroups     = buildTrendGroups(items);
+  const topItems        = items.slice(0, 7);
+  const total           = items.length;
+  const hasSnapshotDiff = items.some(i => i.snapshotDiff !== undefined);
+
+  // ── 変化サマリー: 2段×4列に集約 ──────────────────────────────────────────
+  // Tier 1（今日の変化 — 緊急度高）: 前日diff から
+  const urgentTiles = [
+    diffGroups.find(g => g.id === "diffHealthDec")!,
+    diffGroups.find(g => g.id === "diffSupport")!,
+    diffGroups.find(g => g.id === "diffRenewal30")!,
+    diffGroups.find(g => g.id === "diffPhase")!,
+  ].filter(Boolean) as DiffGroup[];
+
+  // Tier 2（今週の文脈 — 現況+週次）: 現況シグナル + 週次傾向
+  const risk      = items.filter(i => i.overallHealth === "critical" || i.overallHealth === "at_risk");
+  const renewal90 = items.filter(i => i.renewalBucket === "0-30" || i.renewalBucket === "31-90");
+  const expand    = items.filter(i => i.overallHealth === "expanding");
+  const contextTiles: DiffGroup[] = [
+    {
+      id: "ctxRisk", label: "健全度リスク",
+      icon: <AlertTriangle className="w-3.5 h-3.5" />,
+      count: risk.length, items: risk.slice(0, 3), segment: "critical",
+      iconColor: "text-red-500", bgClass: "bg-red-50",
+      borderColor: "border-red-200", accentColor: "border-l-red-400",
+      renderDetail: i => i.overallHealth === "critical" ? "Critical" : "At Risk",
+    },
+    {
+      id: "ctxRenewal90", label: "更新間近（90日）",
+      icon: <Calendar className="w-3.5 h-3.5" />,
+      count: renewal90.length, items: renewal90.slice(0, 3), segment: "renewal_90",
+      iconColor: "text-orange-500", bgClass: "bg-orange-50",
+      borderColor: "border-orange-200", accentColor: "border-l-orange-400",
+      renderDetail: i => i.renewalDaysLeft != null ? `あと${i.renewalDaysLeft}日` : null,
+    },
+    trendGroups.find(g => g.id === "trendWeeklyWorsened")!,
+    {
+      id: "ctxExpand", label: "拡大機会",
+      icon: <TrendingUp className="w-3.5 h-3.5" />,
+      count: expand.length, items: expand.slice(0, 3), segment: "expanding",
+      iconColor: "text-indigo-500", bgClass: "bg-indigo-50",
+      borderColor: "border-indigo-200", accentColor: "border-l-indigo-400",
+      renderDetail: i => i.activePhaseLabel ?? null,
+    },
+  ].filter(Boolean) as DiffGroup[];
 
   // ── 健全度集計 ──────────────────────────────────────────────────────────────
   const critical  = items.filter(i => i.overallHealth === "critical").length;
@@ -427,7 +662,12 @@ export function Home() {
       counts.set(label, (counts.get(label) ?? 0) + 1);
     }
     return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
+      .sort((a, b) => {
+        const numA = parseInt(a[0].match(/^(\d+)/)?.[1] ?? '0', 10);
+        const numB = parseInt(b[0].match(/^(\d+)/)?.[1] ?? '0', 10);
+        if (numA !== numB) return numB - numA;
+        return a[0].localeCompare(b[0]);
+      })
       .map(([name, count]) => ({ name, count }));
   }, [items]);
 
@@ -443,6 +683,18 @@ export function Home() {
       return { name, fill, segment, count: matched.length, mrr: matched.reduce((s, i) => s + (i.mrr ?? 0), 0) };
     });
   }, [items]);
+
+  // パッケージ変動チャートデータ（直近6ヶ月 + 月短縮ラベル）
+  const packageEventChartData: PackageEventBarData[] = useMemo(() => {
+    if (!packageEventSummary) return [];
+    return packageEventSummary.monthly.slice(-6).map(m => ({
+      month:    `${parseInt(m.month.slice(5))}月`,
+      churn:    m.churn,
+      downsell: m.downsell,
+      upsell:   m.upsell,
+      newEntry: m.newEntry,
+    }));
+  }, [packageEventSummary]);
 
   // チャートのバークリック → Company List へ遷移
   function navigateToList(segment: string) {
@@ -466,10 +718,20 @@ export function Home() {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {/* スコープバッジ */}
+              {userProfile && (
+                <span className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                  {userProfile.default_home_scope === 'mine'
+                    ? `${userProfile.name} 担当`
+                    : userProfile.default_home_scope === 'team' && userProfile.team
+                      ? `${userProfile.team}`
+                      : '全社'}
+                </span>
+              )}
               {lastFetched && (
                 <span className="text-xs text-slate-400">更新: {lastFetched}</span>
               )}
-              <Button variant="outline" size="sm" onClick={fetchData} disabled={loading}>
+              <Button variant="outline" size="sm" onClick={() => fetchData(userProfile ?? null)} disabled={loading}>
                 <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
                 更新
               </Button>
@@ -478,51 +740,14 @@ export function Home() {
 
           {error && <AlertBox variant="error" className="mb-4">{error}</AlertBox>}
 
-          {/* ── Section A: 変動シグナル ─────────────────────────────────── */}
-          <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-3">
-            今週の変動シグナル
-            <span className="ml-2 normal-case font-normal text-slate-300">— ラベル・件数をクリックで一覧へ / 企業名をクリックで詳細へ</span>
-          </p>
+          {/* ══ SECTION 1: 優先アクションキュー（ヒーロー）─────────────── */}
+          <div className="grid grid-cols-5 gap-5 mb-6">
 
-          {loading ? (
-            <div className="grid grid-cols-6 gap-3 mb-5">
-              {[0,1,2,3,4,5].map(i => <Skeleton key={i} className="h-36 rounded-xl" />)}
-            </div>
-          ) : (
-            <div className="grid grid-cols-6 gap-3 mb-5">
-              {signals.map(signal => (
-                <SignalTile key={signal.id} signal={signal} />
-              ))}
-            </div>
-          )}
-
-          {/* ── Section D: バーチャート ─────────────────────────────────── */}
-          {loading ? (
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              {[0,1,2].map(i => <Skeleton key={i} className="h-52 rounded-xl" />)}
-            </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <ChartCard title="健全度分布" hint="クリックで絞り込み">
-                <HealthBarChart data={healthChartData} onNavigate={navigateToList} />
-              </ChartCard>
-              <ChartCard title="フェーズ分布">
-                <PhaseBarChart data={phaseChartData} />
-              </ChartCard>
-              <ChartCard title="更新ウィンドウ" hint="クリックで絞り込み">
-                <RenewalBarChart data={renewalChartData} onNavigate={navigateToList} />
-              </ChartCard>
-            </div>
-          )}
-
-          {/* ── Section B + C ───────────────────────────────────────────── */}
-          <div className="grid grid-cols-5 gap-6">
-
-            {/* Section B: 優先アクションキュー */}
+            {/* 優先アクションキュー（col-span-3） */}
             <div className="col-span-3">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest">
-                  優先アクションキュー
+                  今週の優先アクション
                 </p>
                 <Link
                   href="/companies"
@@ -534,49 +759,57 @@ export function Home() {
 
               {loading ? (
                 <div className="space-y-2">
-                  {[0,1,2,3,4].map(i => <Skeleton key={i} className="h-14 rounded-lg" />)}
+                  {[0,1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-12 rounded-lg" />)}
                 </div>
               ) : topItems.length === 0 ? (
                 <div className="p-6 text-center text-sm text-slate-400 bg-white rounded-lg border border-slate-200">
                   表示できる企業がありません
                 </div>
               ) : (
-                <div className="space-y-1.5">
-                  {topItems.map(item => {
+                <div className="space-y-1">
+                  {topItems.map((item, idx) => {
                     const badge  = getHealthBadge(item.overallHealth);
                     const reason = priorityReason(item.priorityBreakdown ?? []);
                     return (
                       <Link
                         key={item.companyUid}
                         href={`/companies/${item.companyUid}`}
-                        className="block bg-white border border-slate-200 rounded-lg px-4 py-3 hover:border-slate-300 hover:shadow-sm transition-all group"
+                        className="flex items-center gap-3 bg-white border border-slate-200 rounded-lg px-3 py-2.5 hover:border-slate-300 hover:shadow-sm transition-all group"
                       >
-                        <div className="flex items-center gap-3">
-                          <Badge
-                            variant="outline"
-                            className={`text-[10px] px-1.5 py-0 flex-shrink-0 ${badge.className}`}
-                          >
-                            {badge.label}
-                          </Badge>
-                          <span className="text-sm font-medium text-slate-800 flex-1 truncate">
-                            {item.companyName}
+                        {/* 順位 */}
+                        <span className="text-[11px] text-slate-300 w-4 text-right flex-shrink-0 tabular-nums font-medium">
+                          {idx + 1}
+                        </span>
+                        {/* Health badge */}
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] px-1.5 py-0 flex-shrink-0 font-medium ${badge.className}`}
+                        >
+                          {badge.label}
+                        </Badge>
+                        {/* 企業名 */}
+                        <span className="text-sm font-medium text-slate-800 flex-1 truncate min-w-0">
+                          {item.companyName}
+                        </span>
+                        {/* 更新日 */}
+                        {item.renewalBucket === "0-30" && (
+                          <span className="text-[10px] text-rose-600 font-medium flex-shrink-0 flex items-center gap-0.5">
+                            <Calendar className="w-3 h-3" />{item.renewalDaysLeft}日
                           </span>
-                          {item.renewalBucket === "0-30" && (
-                            <span className="text-[10px] text-rose-600 font-medium flex-shrink-0 flex items-center gap-0.5">
-                              <Calendar className="w-3 h-3" />
-                              {item.renewalDaysLeft}日
-                            </span>
-                          )}
-                          {item.activePhaseLabel && (
-                            <span className="text-[11px] text-slate-400 flex-shrink-0">
-                              {item.activePhaseLabel}
-                            </span>
-                          )}
-                          <ArrowRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 flex-shrink-0 transition-colors" />
-                        </div>
-                        {reason && (
-                          <p className="text-[11px] text-slate-400 mt-1 truncate">→ {reason}</p>
                         )}
+                        {/* フェーズ */}
+                        {item.activePhaseLabel && (
+                          <span className="text-[11px] text-slate-400 flex-shrink-0 w-24 truncate text-right">
+                            {item.activePhaseLabel}
+                          </span>
+                        )}
+                        {/* 優先理由 */}
+                        {reason && (
+                          <span className="text-[10px] text-slate-400 flex-shrink-0 hidden xl:block max-w-[120px] truncate">
+                            {reason}
+                          </span>
+                        )}
+                        <ArrowRight className="w-3 h-3 text-slate-300 group-hover:text-slate-500 flex-shrink-0 transition-colors" />
                       </Link>
                     );
                   })}
@@ -584,46 +817,37 @@ export function Home() {
               )}
             </div>
 
-            {/* Section C: MRR + ARR at risk + 全企業リンク */}
-            <div className="col-span-2 space-y-4">
-
+            {/* MRR サマリー + 全社リンク（col-span-2） */}
+            <div className="col-span-2 flex flex-col gap-3">
               {!loading && hasMrr && (
                 <div>
                   <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-3">
                     MRR サマリー
                   </p>
-                  <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+                  <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-500">MRR 合計</span>
+                      <span className="text-xs text-slate-500">合計 MRR</span>
                       <span className="text-base font-bold text-slate-800 tabular-nums">
                         {formatMrr(mrrTotal)}
                       </span>
                     </div>
                     {mrrAtRisk > 0 && (
-                      <Link
-                        href={listUrl("arr_at_risk")}
-                        className="flex items-center justify-between hover:opacity-75 transition-opacity"
-                      >
+                      <Link href={listUrl("arr_at_risk")} className="flex items-center justify-between hover:opacity-75 transition-opacity">
                         <span className="text-xs text-slate-500 flex items-center gap-1">
-                          うちリスク
-                          <ArrowRight className="w-3 h-3 text-slate-300" />
+                          リスク下 <ArrowRight className="w-3 h-3 text-slate-300" />
                         </span>
                         <span className="text-sm font-semibold text-red-600 tabular-nums">
                           {formatMrr(mrrAtRisk)}
-                          <span className="text-[11px] font-normal text-slate-400 ml-1">
+                          <span className="text-[10px] font-normal text-slate-400 ml-1">
                             ({Math.round(mrrAtRisk / mrrTotal * 100)}%)
                           </span>
                         </span>
                       </Link>
                     )}
                     {mrrRenewal30 > 0 && (
-                      <Link
-                        href={listUrl("renewal_30")}
-                        className="flex items-center justify-between hover:opacity-75 transition-opacity"
-                      >
+                      <Link href={listUrl("renewal_30")} className="flex items-center justify-between hover:opacity-75 transition-opacity">
                         <span className="text-xs text-slate-500 flex items-center gap-1">
-                          30日更新分
-                          <ArrowRight className="w-3 h-3 text-slate-300" />
+                          30日更新分 <ArrowRight className="w-3 h-3 text-slate-300" />
                         </span>
                         <span className="text-sm font-semibold text-rose-600 tabular-nums">
                           {formatMrr(mrrRenewal30)}
@@ -632,12 +856,14 @@ export function Home() {
                     )}
                     <div className="pt-1 border-t border-slate-100">
                       <p className="text-[11px] text-slate-400 text-right tabular-nums">
-                        対象 {items.filter(i => i.mrr != null).length} 社
+                        {items.filter(i => i.mrr != null).length} 社集計
                       </p>
                     </div>
                   </div>
                 </div>
               )}
+
+              {loading && <Skeleton className="h-36 rounded-xl" />}
 
               {!loading && (
                 <Link
@@ -653,6 +879,125 @@ export function Home() {
               )}
             </div>
           </div>
+
+          {/* ══ SECTION 2: 変化サマリー（2段 × 4列）──────────────────────── */}
+          <div className="mb-6">
+            {/* Tier 1: 今日の変化（緊急・前日差分ベース） */}
+            <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-2">
+              今日の変化
+            </p>
+            {loading ? (
+              <div className="grid grid-cols-4 gap-3 mb-3">
+                {[0,1,2,3].map(i => <Skeleton key={i} className="h-28 rounded-xl" />)}
+              </div>
+            ) : !hasSnapshotDiff ? (
+              // スナップショット未蓄積 → 空カードを並べず1行で案内
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 mb-3">
+                <span className="text-[11px] text-slate-400">
+                  前日比データ蓄積中
+                </span>
+                <span className="text-[11px] text-slate-300">—</span>
+                <span className="text-[11px] text-slate-300">
+                  スナップショットバッチ実行後（翌日〜）から差分が表示されます
+                </span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-4 gap-3 mb-3">
+                {urgentTiles.map(g => <DiffTile key={g.id} group={g} />)}
+              </div>
+            )}
+
+            {/* Tier 2: 今週の文脈（現況シグナル + 週次傾向） */}
+            <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-2">
+              今週の文脈
+              <span className="ml-2 normal-case font-normal text-slate-300">— 現況シグナル + 週次傾向</span>
+            </p>
+            {loading ? (
+              <div className="grid grid-cols-4 gap-3">
+                {[0,1,2,3].map(i => <Skeleton key={i} className="h-28 rounded-xl" />)}
+              </div>
+            ) : (
+              <div className="grid grid-cols-4 gap-3">
+                {/* 現況シグナル 3枚（常に live data）*/}
+                {contextTiles.filter(g => g.id !== "trendWeeklyWorsened").map(g => (
+                  <DiffTile key={g.id} group={g} />
+                ))}
+                {/* 週次悪化タイル: スナップショット蓄積中は破線プレースホルダー */}
+                {hasSnapshotDiff
+                  ? contextTiles.filter(g => g.id === "trendWeeklyWorsened").map(g => (
+                      <DiffTile key={g.id} group={g} />
+                    ))
+                  : (
+                    <div className="flex flex-col items-center justify-center gap-1 p-3 rounded-xl border border-dashed border-slate-200 bg-white">
+                      <span className="text-[10px] text-slate-300 font-medium">週次悪化</span>
+                      <span className="text-[10px] text-slate-200 text-center leading-snug">
+                        7日分蓄積後<br />から表示
+                      </span>
+                    </div>
+                  )
+                }
+              </div>
+            )}
+          </div>
+
+          {/* ══ SECTION 3: 分布（補助）────────────────────────────────────── */}
+          {loading ? (
+            <div className="grid grid-cols-3 gap-4">
+              {[0,1,2].map(i => <Skeleton key={i} className="h-52 rounded-xl" />)}
+            </div>
+          ) : (
+            <div>
+              <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-3">
+                ポートフォリオ分布
+                <span className="ml-2 normal-case font-normal text-slate-300">— クリックで絞り込み</span>
+              </p>
+              <div className="grid grid-cols-4 gap-4">
+                <ChartCard title="健全度分布" hint="クリックで絞り込み">
+                  <HealthBarChart data={healthChartData} onNavigate={navigateToList} />
+                </ChartCard>
+                <ChartCard title="フェーズ分布">
+                  <PhaseBarChart data={phaseChartData} />
+                </ChartCard>
+                <ChartCard title="更新ウィンドウ" hint="クリックで絞り込み">
+                  <RenewalBarChart data={renewalChartData} onNavigate={navigateToList} />
+                </ChartCard>
+                <ChartCard title="パッケージ変動（月次）" hint="クリックで絞り込み">
+                  {packageEventSummary ? (
+                    <>
+                      <PackageEventChart data={packageEventChartData} onNavigate={navigateToList} />
+                      {/* 直近30日サマリー（クリックで Companies へ遷移）*/}
+                      <div className="flex gap-3 mt-2 text-[10px] flex-wrap">
+                        {packageEventSummary.last30.churn > 0 && (
+                          <Link href={listUrl('critical')} className="text-red-500 font-medium hover:underline">
+                            Churn {packageEventSummary.last30.churn}件
+                          </Link>
+                        )}
+                        {packageEventSummary.last30.downsell > 0 && (
+                          <Link href={listUrl('at_risk')} className="text-orange-500 font-medium hover:underline">
+                            Downsell {packageEventSummary.last30.downsell}件
+                          </Link>
+                        )}
+                        {packageEventSummary.last30.upsell > 0 && (
+                          <Link href={listUrl('expanding')} className="text-indigo-500 font-medium hover:underline">
+                            Upsell {packageEventSummary.last30.upsell}件
+                          </Link>
+                        )}
+                        {packageEventSummary.last30.newEntry > 0 && (
+                          <Link href="/companies" className="text-green-500 font-medium hover:underline">
+                            New {packageEventSummary.last30.newEntry}件
+                          </Link>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center justify-center h-[180px] text-sm text-slate-400">
+                      読み込み中...
+                    </div>
+                  )}
+                </ChartCard>
+              </div>
+            </div>
+          )}
 
         </main>
       </div>

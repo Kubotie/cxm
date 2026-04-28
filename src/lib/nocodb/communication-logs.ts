@@ -15,12 +15,15 @@ import {
   toAppLogChatwork,
   toAppLogSlack,
   toAppLogNotionMinutes,
+  toAppLogIntercomMail,
   type RawLogChatwork,
   type RawLogSlack,
   type RawLogNotionMinutes,
+  type RawSupportCase,
   type AppLogChatwork,
   type AppLogSlack,
   type AppLogNotionMinutes,
+  type AppLogIntercomMail,
 } from '@/lib/nocodb/types';
 
 // ── 定数 ─────────────────────────────────────────────────────────────────────
@@ -126,6 +129,42 @@ export async function fetchNotionMinutesByUids(
   return result;
 }
 
+// ── Intercom Mail ─────────────────────────────────────────────────────────────
+
+export async function fetchIntercomMailLogs(
+  companyUid: string,
+  limit = DETAIL_LIMIT,
+): Promise<AppLogIntercomMail[]> {
+  const tableId = TABLE_IDS.log_intercom;
+  if (!tableId) return [];
+  const list = await nocoFetch<RawSupportCase>(tableId, {
+    where: `(company_uid,eq,${companyUid})~and(massage_type,eq,mail)`,
+    sort:  '-sent_at_jst',
+    limit: String(limit),
+  });
+  return list.map(toAppLogIntercomMail);
+}
+
+export async function fetchIntercomMailLogsByUids(
+  companyUids: string[],
+): Promise<Map<string, AppLogIntercomMail[]>> {
+  const tableId = TABLE_IDS.log_intercom;
+  if (!tableId || companyUids.length === 0) return new Map(companyUids.map(u => [u, []]));
+  // nocoFetchByUids は where を受け付けないため全件取得後にメモリでフィルタ
+  // fields で必要カラムのみ取得してレスポンスサイズを削減。no-store でキャッシュ警告を回避。
+  const rawMap = await nocoFetchByUids<RawSupportCase>(tableId, companyUids, {
+    sort:   '-sent_at_jst',
+    limit:  String(companyUids.length * BULK_LIMIT_PER_UID),
+    fields: 'company_uid,massage_type,sent_at_jst,subject,from_email,from_name,conversation_id',
+  }, false);
+  const result = new Map<string, AppLogIntercomMail[]>();
+  for (const [uid, rows] of rawMap) {
+    result.set(uid, rows.filter(r => r.massage_type === 'mail').map(toAppLogIntercomMail));
+  }
+  for (const uid of companyUids) if (!result.has(uid)) result.set(uid, []);
+  return result;
+}
+
 // ── List 向け: 最終コミュニケーション日時のみ一括取得 ─────────────────────────
 
 export interface LatestCommunicationDate {
@@ -163,40 +202,53 @@ export async function fetchLatestCommunicationDatesByUids(
 ): Promise<Map<string, LatestCommunicationDate>> {
   if (companyUids.length === 0) return new Map();
 
-  // sort=-sent_at/-meeting_date で最新1件取得。limit は uid数 × 1 で十分だが
-  // NocoDB の in フィルタは全件返すためある程度余裕を持たせる
-  const fetchOpts = { limit: String(companyUids.length * 2) };
+  // sort=-sent_at/-meeting_date で最新1件/社を取得。余裕をみて × 3。
+  const fetchOpts = { limit: String(Math.min(companyUids.length * 3, 300)) };
 
-  const [chatworkMap, slackMap, notionMap] = await Promise.all([
+  // 最終日時だけ必要なため最小カラムのみ取得。no-store でキャッシュ警告を回避。
+  const [chatworkMap, slackMap, notionMap, intercomMailMap] = await Promise.all([
     TABLE_IDS.log_chatwork
       ? nocoFetchByUids<RawLogChatwork>(TABLE_IDS.log_chatwork, companyUids, {
           ...fetchOpts, sort: '-sent_at',
-        })
+          fields: 'company_uid,sent_at',
+        }, false)
       : Promise.resolve(new Map<string, RawLogChatwork[]>()),
     TABLE_IDS.log_slack
       ? nocoFetchByUids<RawLogSlack>(TABLE_IDS.log_slack, companyUids, {
           ...fetchOpts, sort: '-sent_at',
-        })
+          fields: 'company_uid,sent_at',
+        }, false)
       : Promise.resolve(new Map<string, RawLogSlack[]>()),
     TABLE_IDS.log_notion_minutes
       ? nocoFetchByUids<RawLogNotionMinutes>(TABLE_IDS.log_notion_minutes, companyUids, {
           ...fetchOpts, sort: '-meeting_date',
-        })
+          fields: 'company_uid,meeting_date',
+        }, false)
       : Promise.resolve(new Map<string, RawLogNotionMinutes[]>()),
+    TABLE_IDS.log_intercom
+      ? nocoFetchByUids<RawSupportCase>(TABLE_IDS.log_intercom, companyUids, {
+          ...fetchOpts, sort: '-sent_at_jst',
+          fields: 'company_uid,massage_type,sent_at_jst',
+        }, false)
+      : Promise.resolve(new Map<string, RawSupportCase[]>()),
   ]);
 
   const result = new Map<string, LatestCommunicationDate>();
 
   for (const uid of companyUids) {
-    const cwRows     = chatworkMap.get(uid) ?? [];
-    const slackRows  = slackMap.get(uid)    ?? [];
-    const notionRows = notionMap.get(uid)   ?? [];
+    const cwRows         = chatworkMap.get(uid)     ?? [];
+    const slackRows      = slackMap.get(uid)        ?? [];
+    const notionRows     = notionMap.get(uid)       ?? [];
+    const intercomRows   = intercomMailMap.get(uid) ?? [];
 
-    const cwDate     = cwRows[0]?.sent_at     ? String(cwRows[0].sent_at) : null;
-    const slackDate  = slackRows[0]?.sent_at  ? String(slackRows[0].sent_at) : null;
-    const notionDate = notionRows[0]?.meeting_date ? String(notionRows[0].meeting_date) : null;
+    const cwDate       = cwRows[0]?.sent_at         ? String(cwRows[0].sent_at) : null;
+    const slackDate    = slackRows[0]?.sent_at       ? String(slackRows[0].sent_at) : null;
+    const notionDate   = notionRows[0]?.meeting_date ? String(notionRows[0].meeting_date) : null;
+    // mail タイプのみ最新日付を取得（インメモリフィルタ）
+    const mailRow      = intercomRows.find(r => r.massage_type === 'mail');
+    const intercomDate = mailRow?.sent_at_jst ? String(mailRow.sent_at_jst) : null;
 
-    const latestDate = latestOf(cwDate, slackDate, notionDate);
+    const latestDate = latestOf(cwDate, slackDate, notionDate, intercomDate);
     result.set(uid, { latestDate, blankDays: daysSince(latestDate) });
   }
 
@@ -209,6 +261,7 @@ export interface AllCommunicationLogs {
   chatwork:      AppLogChatwork[];
   slack:         AppLogSlack[];
   notionMinutes: AppLogNotionMinutes[];
+  intercomMail:  AppLogIntercomMail[];
 }
 
 /**
@@ -218,10 +271,11 @@ export interface AllCommunicationLogs {
 export async function fetchAllCommunicationLogs(
   companyUid: string,
 ): Promise<AllCommunicationLogs> {
-  const [chatwork, slack, notionMinutes] = await Promise.all([
-    fetchChatworkLogs(companyUid),
-    fetchSlackLogs(companyUid),
-    fetchNotionMinutes(companyUid),
+  const [chatwork, slack, notionMinutes, intercomMail] = await Promise.all([
+    fetchChatworkLogs(companyUid).catch(() => [] as AppLogChatwork[]),
+    fetchSlackLogs(companyUid).catch(() => [] as AppLogSlack[]),
+    fetchNotionMinutes(companyUid).catch(() => [] as AppLogNotionMinutes[]),
+    fetchIntercomMailLogs(companyUid).catch(() => [] as AppLogIntercomMail[]),
   ]);
-  return { chatwork, slack, notionMinutes };
+  return { chatwork, slack, notionMinutes, intercomMail };
 }

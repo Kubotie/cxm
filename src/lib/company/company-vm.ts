@@ -92,6 +92,60 @@ export interface CompanyListItemVM extends CompanySummaryListItemViewModel {
   /** 直前の M-Phase 値（null = 履歴なし or CSM 担当なし） */
   previousMPhase:  string | null;
 
+  // ── Snapshot Diff（前日スナップショット比較）────────────────────────────
+  /**
+   * 前日スナップショットとの差分。
+   * スナップショット未蓄積（初日）または table 未設定時は undefined。
+   */
+  snapshotDiff?: {
+    /** フェーズが昨日から変化したか */
+    phaseChanged:         boolean;
+    /** 昨日の M-Phase */
+    previousMPhase:       string | null;
+    /** サポート件数の前日差（正=増加、負=減少） */
+    supportDelta:         number | null;
+    /** サポート件数が増加したか */
+    supportIncreased:     boolean;
+    /** 更新バケットが 0-30 に入った（昨日は 0-30 以外だった） */
+    renewalEnteredThirty: boolean;
+    /** 更新バケットが 31-90 に入った（昨日は 91-180 以上だった） */
+    renewalEnteredNinety: boolean;
+    /** MRR の前日差（正=増加、負=減少、null=いずれか null） */
+    mrrDelta:             number | null;
+    /** MRR が増加したか */
+    mrrIncreased:         boolean;
+    /** MRR が減少したか */
+    mrrDecreased:         boolean;
+    /** 健全度が変化したか */
+    healthChanged:        boolean;
+    /** 健全度が悪化したか（critical < at_risk < healthy < expanding の順） */
+    healthWorsened:       boolean;
+    /** 健全度が改善したか */
+    healthImproved:       boolean;
+    /** 昨日の overall_health */
+    previousHealth:       string | null;
+    /** 遷移文字列（例: "healthy → at_risk"）。変化なし時は null */
+    healthTransition:     string | null;
+
+    // ── Weekly (7-day) trend ──────────────────────────────────────────────
+    /** 7日間で健全度が悪化したか */
+    weeklyHealthWorsened:    boolean;
+    /** 7日間で健全度が healthy/expanding に改善したか（"activated"）*/
+    weeklyActivated:         boolean;
+    /** 週次の健全度遷移文字列。変化なし時は null */
+    weeklyHealthTransition:  string | null;
+
+    // ── Monthly (30-day) trend ────────────────────────────────────────────
+    /** 30日間で更新バケットが近づいたか（91+→31-90/0-30）*/
+    monthlyRenewalEntered:   boolean;
+    /** 30日間の MRR 変化量（null = いずれか null） */
+    monthlyMrrDelta:         number | null;
+    /** 30日間で MRR が増加したか */
+    monthlyMrrIncreased:     boolean;
+    /** 30日間で MRR が減少したか */
+    monthlyMrrDecreased:     boolean;
+  };
+
   // ── Basic ───────────────────────────────────────────────────────────────
   owner:       string;
   lastContact: string;
@@ -189,4 +243,8 @@ export interface CompanyDetailApiResponse {
   // ── Evidence ──────────────────────────────────────────────────────────────
   /** 直近 20 件の evidence（drill-down 起点） */
   evidence: AppEvidence[];
+
+  // ── Package Events ────────────────────────────────────────────────────────
+  /** この企業に紐づくパッケージ変動イベント（Metabase, sfId join） */
+  packageEvents?: import('@/lib/metabase/package-events').PackageEvent[];
 }

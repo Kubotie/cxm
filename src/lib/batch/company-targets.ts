@@ -11,6 +11,8 @@ import type { AppCompany } from '@/lib/nocodb/types';
 export interface CompanyTargetParams {
   limit:          number;
   company_uids?:  string[];
+  /** owner_name フィルタ（staff_identify.name2 に対応）*/
+  owner_name?:    string;
 }
 
 /**
@@ -28,5 +30,5 @@ export async function resolveTargetCompanies(
     );
     return fetched.filter((c): c is AppCompany => c !== null);
   }
-  return fetchAllCompanies(params.limit);
+  return fetchAllCompanies(params.limit, params.owner_name);
 }

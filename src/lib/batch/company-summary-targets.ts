@@ -41,6 +41,8 @@ export interface CompanySummaryTargetParams {
    */
   review_filter?:    (SummaryHumanReviewStatus | null)[];
   summary_type?:     string;
+  /** owner_name フィルタ（companies.owner_name = staff_identify.name2）*/
+  owner_name?:       string;
 }
 
 /** list API / batch 系が共通で扱うアイテム */
@@ -67,6 +69,7 @@ export async function resolveCompanySummaryTargets(
   const companies = await resolveTargetCompanies({
     limit:        params.limit,
     company_uids: params.company_uids,
+    owner_name:   params.owner_name,
   });
 
   if (companies.length === 0) return [];

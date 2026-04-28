@@ -204,16 +204,20 @@ export async function fetchSupportCountsByUids(
   const emptyMap = (): Map<string, SupportCountSummary> =>
     new Map(companyUids.map(u => [u, { openCount: 0, waitingCseCount: 0, criticalCount: 0, recentSupportCount: 0 }]));
 
+  // fields 投影でレスポンスを最小化。no-store で Next.js キャッシュをスキップ
+  // （2MB 超のレスポンスは Next.js がキャッシュ保存に失敗して警告を出すため）
   const [intercomMap, cseMap] = await Promise.all([
     TABLE_IDS.log_intercom
       ? nocoFetchByUids<RawSupportCase>(TABLE_IDS.log_intercom, companyUids, {
-          sort: '-CreatedAt',
-        })
+          sort:   '-CreatedAt',
+          fields: 'company_uid,routing_status,severity,CreatedAt',
+        }, false)
       : Promise.resolve(new Map<string, RawSupportCase[]>()),
     TABLE_IDS.cse_tickets
       ? nocoFetchByUids<RawCseTicket>(TABLE_IDS.cse_tickets, companyUids, {
-          sort: '-CreatedAt',
-        })
+          sort:   '-CreatedAt',
+          fields: 'company_uid,status,created_at',
+        }, false)
       : Promise.resolve(new Map<string, RawCseTicket[]>()),
   ]);
 

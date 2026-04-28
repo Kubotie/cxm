@@ -298,3 +298,17 @@ export function buildSupportAlertPromptFromContext(
   }
   return lines.join('\n');
 }
+
+// ── NocoDB 管理プロンプトキー ─────────────────────────────────────────────────
+
+export const AI_CONFIG_KEY_SUPPORT_ALERT = 'support_alert_system_prompt';
+
+export async function loadSupportAlertSystemPrompt(): Promise<string> {
+  try {
+    const { getAiConfig } = await import('@/lib/nocodb/ai-config');
+    const stored = await getAiConfig(AI_CONFIG_KEY_SUPPORT_ALERT);
+    return stored ?? SUPPORT_ALERT_SYSTEM_PROMPT;
+  } catch {
+    return SUPPORT_ALERT_SYSTEM_PROMPT;
+  }
+}

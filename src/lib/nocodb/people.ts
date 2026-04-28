@@ -1,6 +1,65 @@
 import { nocoFetch, nocoFetchByUids, TABLE_IDS } from './client';
 import { RawPerson, AppPerson, toAppPerson, type RawCompanyPerson } from './types';
 
+// ── Mail 送信用コンタクト取得 ──────────────────────────────────────────────────
+
+export interface MailContact {
+  name:  string;
+  email: string;
+  role:  string | null;
+}
+
+/**
+ * 複数企業のメール連絡先を一括取得する（Outbound Mail 送信用）。
+ * company_people テーブルから email が設定されているコンタクトを返す。
+ * 優先度: decision_influence=high → contact_status=active → 名前順
+ */
+export async function fetchContactsByCompanyUids(
+  uids: string[],
+): Promise<Map<string, MailContact[]>> {
+  const result = new Map<string, MailContact[]>();
+  for (const uid of uids) result.set(uid, []);
+
+  const tableId = TABLE_IDS.company_people;
+  if (!tableId || uids.length === 0) return result;
+
+  const rawMap = await nocoFetchByUids<RawCompanyPerson>(tableId, uids, {
+    fields: 'company_uid,name,email,role,decision_influence,contact_status',
+    limit:  String(uids.length * 20),
+  }).catch(() => new Map<string, RawCompanyPerson[]>());
+
+  const INFLUENCE_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2, unknown: 3 };
+
+  for (const [uid, rows] of rawMap) {
+    const contacts: MailContact[] = rows
+      .filter(r => r.email && String(r.email).includes('@'))
+      .map(r => ({
+        name:  r.name ? String(r.name) : '（名前なし）',
+        email: String(r.email),
+        role:  r.role ? String(r.role) : null,
+        _influence: INFLUENCE_ORDER[String(r.decision_influence ?? 'unknown').toLowerCase()] ?? 3,
+        _active: String(r.contact_status ?? '').toLowerCase() === 'active' ? 0 : 1,
+        _name: r.name ? String(r.name) : '',
+      }))
+      .sort((a, b) => a._influence - b._influence || a._active - b._active || a._name.localeCompare(b._name))
+      .map(({ name, email, role }) => ({ name, email, role }));
+    result.set(uid, contacts);
+  }
+  return result;
+}
+
+// ── プロセスメモリキャッシュ（Next.js fetch cache の2MB上限回避）──────────────
+// People / StaleDm の結果は全企業まとめて5分間キャッシュする。
+// リクエストごとに uid セットが変わるため、全件キャッシュして呼び出し側でフィルタする。
+
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5分
+
+let _peopleSignalCache:    Map<string, PeopleSignalSummary> | null = null;
+let _peopleSignalCacheAt = 0;
+
+let _staleDmCache:    Map<string, boolean> | null = null;
+let _staleDmCacheAt = 0;
+
 /** People 一覧（Company Detail 用） */
 export async function fetchPeople(companyUid: string): Promise<AppPerson[]> {
   const raw = await nocoFetch<RawPerson>(TABLE_IDS.people, {
@@ -45,21 +104,17 @@ const STALE_DAYS = 90;
  * @returns Map<company_uid, true>（stale な DM がない UID はキー自体が含まれない）
  * @remarks NOCODB_COMPANY_PEOPLE_TABLE_ID 未設定 / エラー時は空 Map を返す
  */
-export async function fetchStaleDmSignalsByUids(
-  uids: string[],
-): Promise<Map<string, boolean>> {
-  const result = new Map<string, boolean>();
-  if (uids.length === 0 || !TABLE_IDS.company_people) return result;
+/** 全企業の StaleDm シグナルを一括フェッチしてキャッシュする（内部用）*/
+async function loadAllStaleDmSignals(): Promise<Map<string, boolean>> {
+  if (_staleDmCache && Date.now() - _staleDmCacheAt < CACHE_TTL_MS) {
+    return _staleDmCache;
+  }
+  if (!TABLE_IDS.company_people) return _staleDmCache ?? new Map();
 
-  // today - STALE_DAYS のしきい値日付
   const threshold = new Date();
   threshold.setDate(threshold.getDate() - STALE_DAYS);
-  const thresholdStr = threshold.toISOString().slice(0, 10); // YYYY-MM-DD
 
-  // company_people: decision_influence=high AND last_touchpoint notblank
-  //   → last_touchpoint < threshold は JS 側でフィルタ（NocoDB の lt は文字列比較が不安定）
   const where = [
-    `(company_uid,in,${uids.join(',')})`,
     `(decision_influence,eq,high)`,
     `(last_touchpoint,notblank)`,
   ].join('~and');
@@ -68,52 +123,84 @@ export async function fetchStaleDmSignalsByUids(
     const rows = await nocoFetch<RawCompanyPerson>(TABLE_IDS.company_people, {
       where,
       fields: 'company_uid,last_touchpoint',
-      limit:  String(Math.min(uids.length * 20, 2000)),
+      limit:  '2000',
     });
-
+    const result = new Map<string, boolean>();
     for (const row of rows) {
       const uid = row.company_uid?.trim();
-      if (!uid) continue;
-      // すでに true 確定ならスキップ
-      if (result.get(uid) === true) continue;
-
+      if (!uid || result.get(uid) === true) continue;
       const date = parseTouchpointDate(row.last_touchpoint as string | null);
-      if (date && date < threshold) {
-        result.set(uid, true);
-      }
+      if (date && date < threshold) result.set(uid, true);
     }
+    _staleDmCache   = result;
+    _staleDmCacheAt = Date.now();
+    return result;
   } catch {
-    // エラー時は空 Map → hasStaleDm = false（近似値 fallback）
+    return _staleDmCache ?? new Map();
+  }
+}
+
+export async function fetchStaleDmSignalsByUids(
+  uids: string[],
+): Promise<Map<string, boolean>> {
+  if (uids.length === 0 || !TABLE_IDS.company_people) return new Map();
+  const all = await loadAllStaleDmSignals();
+  const result = new Map<string, boolean>();
+  for (const uid of uids) {
+    if (all.has(uid)) result.set(uid, all.get(uid)!);
   }
   return result;
 }
 
 /**
+ * 全企業の People シグナルを一括フェッチしてキャッシュに格納する（内部用）。
+ * 結果は uid → PeopleSignalSummary の Map として5分間保持する。
+ */
+async function loadAllPeopleSignals(): Promise<Map<string, PeopleSignalSummary>> {
+  if (_peopleSignalCache && Date.now() - _peopleSignalCacheAt < CACHE_TTL_MS) {
+    return _peopleSignalCache;
+  }
+  const tableId = TABLE_IDS.people;
+  if (!tableId) return _peopleSignalCache ?? new Map();
+
+  try {
+    // 全企業分を一括取得（上限3000件）
+    const rows = await nocoFetch<RawPerson>(tableId, {
+      fields: 'company_uid,is_decision_maker',
+      limit:  '3000',
+    });
+    const result = new Map<string, PeopleSignalSummary>();
+    for (const row of rows) {
+      const uid = row.company_uid as string | undefined;
+      if (!uid) continue;
+      const entry = result.get(uid) ?? { companyUid: uid, dmCount: 0, totalCount: 0 };
+      entry.totalCount++;
+      const v = String(row.is_decision_maker ?? '').toUpperCase();
+      if (v === 'TRUE' || v === '1') entry.dmCount++;
+      result.set(uid, entry);
+    }
+    _peopleSignalCache   = result;
+    _peopleSignalCacheAt = Date.now();
+    return result;
+  } catch {
+    return _peopleSignalCache ?? new Map();
+  }
+}
+
+/**
  * 複数企業の People シグナルサマリーを一括取得する。
  * List API で priority score に people signal を注入するための軽量クエリ。
- *
- * is_decision_maker が "TRUE" の件数を company_uid ごとに集計して返す。
- * テーブル未設定の場合は空 Map を返す（graceful degradation）。
+ * プロセスキャッシュ（5分）で大量レスポンスの再フェッチを防ぐ。
  */
 export async function fetchPeopleSignalsByUids(
   uids: string[],
 ): Promise<Map<string, PeopleSignalSummary>> {
-  const tableId = TABLE_IDS.people;
-  if (!tableId || uids.length === 0) return new Map();
-
-  const rowMap = await nocoFetchByUids<RawPerson>(tableId, uids, {
-    fields: 'company_uid,is_decision_maker',
-    limit:  String(Math.min(uids.length * 30, 3000)),
-  });
-
+  if (uids.length === 0) return new Map();
+  const all = await loadAllPeopleSignals();
   const result = new Map<string, PeopleSignalSummary>();
   for (const uid of uids) {
-    const rows = rowMap.get(uid) ?? [];
-    const dmCount = rows.filter(r => {
-      const v = String(r.is_decision_maker ?? '').toUpperCase();
-      return v === 'TRUE' || v === '1';
-    }).length;
-    result.set(uid, { companyUid: uid, dmCount, totalCount: rows.length });
+    const v = all.get(uid);
+    if (v) result.set(uid, v);
   }
   return result;
 }

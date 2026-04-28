@@ -10,10 +10,15 @@
 //   Order Termの最小値, Order Termの最大値, has_auto_renewal_contract
 //
 // キー: Project ID（project_info テーブルの project_id と突合する）
-// 1時間キャッシュ（Next.js fetch cache）
+// CSVが2MB超で Next.js fetch cache の上限を超えるため、プロセスメモリキャッシュを使用する。
 
 const MRR_CSV_URL =
   'https://bi.ptmind.com/public/question/ac9183fd-b0f0-497f-8d1c-55a3e037b330.csv';
+
+// プロセスメモリキャッシュ（Next.js fetch cache の2MB上限回避）
+let _cache: Map<string, ProjectMrrData> | null = null;
+let _cacheAt = 0;
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1時間
 
 export interface ProjectMrrData {
   projectId:      string;
@@ -48,10 +53,13 @@ function parseCsvLine(line: string): string[] {
  * 取得失敗時は空 Map（graceful degradation）。
  */
 export async function fetchProjectMrrMap(): Promise<Map<string, ProjectMrrData>> {
+  // メモリキャッシュヒット
+  if (_cache && Date.now() - _cacheAt < CACHE_TTL_MS) return _cache;
+
   const result = new Map<string, ProjectMrrData>();
   try {
     const res = await fetch(MRR_CSV_URL, {
-      next: { revalidate: 3600 },  // 1時間キャッシュ
+      cache: 'no-store',  // Next.js fetch cache はサイズ上限のためスキップ。プロセスキャッシュで代替。
     });
     if (!res.ok) {
       console.warn(`[metabase/mrr] CSV fetch failed: ${res.status}`);
@@ -98,8 +106,11 @@ export async function fetchProjectMrrMap(): Promise<Map<string, ProjectMrrData>>
 
       result.set(projectId, { projectId, mrr, orderEndDate, hasAutoRenewal });
     }
+    _cache = result;
+    _cacheAt = Date.now();
   } catch (e) {
     console.error('[metabase/mrr] CSV 取得エラー:', e);
+    if (_cache) return _cache;
   }
   return result;
 }

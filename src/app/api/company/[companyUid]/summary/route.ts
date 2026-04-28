@@ -33,10 +33,10 @@ import { buildProjectAggregateVM } from '@/lib/company/project-aggregate';
 import { fetchSupportAggregateForCompany } from '@/lib/nocodb/support-by-company';
 import { getOpenAIClient, getOpenAIModel } from '@/lib/openai/client';
 import {
-  COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT,
   COMPANY_EVIDENCE_SUMMARY_JSON_SCHEMA,
   buildCompanyEvidenceSummaryPrompt,
   buildSummaryPolicySystemPrompt,
+  loadCompanySummarySystemPrompt,
 } from '@/lib/prompts/company-evidence-summary';
 import type { CompanyEvidenceSummaryResult } from '@/lib/prompts/company-evidence-summary';
 import { getPolicyById } from '@/lib/nocodb/policy-store';
@@ -114,7 +114,8 @@ export async function POST(
   const effectivePolicy = inlineFocus
     ? { ...(summaryPolicy ?? {}), summary_focus: inlineFocus }
     : summaryPolicy;
-  const systemPrompt = buildSummaryPolicySystemPrompt(effectivePolicy);
+  const basePrompt = await loadCompanySummarySystemPrompt();
+  const systemPrompt = buildSummaryPolicySystemPrompt(effectivePolicy, basePrompt);
 
   // ── プロンプト構築 & OpenAI 呼び出し ────────────────────────────────────
   const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people, {

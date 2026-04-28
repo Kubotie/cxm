@@ -89,13 +89,45 @@ export async function fetchCanonicalNameMap(uids: string[]): Promise<Map<string,
  *   1. open_alert_count 降順（アラート多い＝緊急度高い）
  *   2. last_contact 降順（最近接点あり＝アクティブ）
  */
-export async function fetchAllCompanies(limit = 50): Promise<AppCompany[]> {
+export async function fetchAllCompanies(limit = 50, ownerName?: string): Promise<AppCompany[]> {
+  const baseWhere = '(status,eq,active)~and(is_csm_managed,eq,true)';
+  const where = ownerName
+    ? `${baseWhere}~and(owner_name,eq,${ownerName})`
+    : baseWhere;
   const raw = await nocoFetch<RawCompany>(TABLE_IDS.companies, {
-    where: '(status,eq,active)~and(is_csm_managed,eq,true)',
+    where,
     sort: '-open_alert_count,-last_contact',
     limit: String(limit),
   });
   return raw.map(toAppCompany);
+}
+
+/**
+ * 担当がついているCSM管理企業を全件取得（SF一括同期用）。
+ * owner_name が空でない企業のみ対象。
+ */
+export async function fetchAssignedCompanies(): Promise<Array<{
+  companyUid:  string;
+  sfAccountId: string | null;
+  ownerName:   string;
+}>> {
+  if (!TABLE_IDS.companies) return [];
+  try {
+    const rows = await nocoFetch<RawCompany>(TABLE_IDS.companies, {
+      where:  '(status,eq,active)~and(is_csm_managed,eq,true)~and(owner_name,notblank,)',
+      fields: 'company_uid,sf_account_id,owner_name',
+      limit:  '300',
+    }, false);
+    return rows
+      .filter(r => r.company_uid && r.owner_name)
+      .map(r => ({
+        companyUid:  String(r.company_uid).trim(),
+        sfAccountId: r.sf_account_id ? String(r.sf_account_id).trim() : null,
+        ownerName:   String(r.owner_name).trim(),
+      }));
+  } catch {
+    return [];
+  }
 }
 
 /**

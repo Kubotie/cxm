@@ -83,6 +83,29 @@ export async function nocoUpdate<T>(
 }
 
 /**
+ * 行 ID を指定してレコードを削除する。
+ * NocoDB v2: DELETE /api/v2/tables/{tableId}/records
+ */
+export async function nocoDelete(
+  tableId: string,
+  rowId: number,
+): Promise<void> {
+  if (!API_TOKEN) throw new Error('NOCODB_API_TOKEN が未設定です');
+
+  const res = await fetch(`${BASE_URL}/api/v2/tables/${tableId}/records`, {
+    method: 'DELETE',
+    headers: apiHeaders(),
+    body: JSON.stringify({ Id: rowId }),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '(body read failed)');
+    throw new Error(`NocoDB delete ${res.status}: ${res.statusText} [${tableId}] — ${errBody}`);
+  }
+}
+
+/**
  * lookup → なければ create、あれば update を行う。
  *
  * @param tableId      対象テーブル ID

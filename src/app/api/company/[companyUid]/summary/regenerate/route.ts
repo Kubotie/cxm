@@ -30,11 +30,13 @@ import { getCompanySummaryState } from '@/lib/nocodb/company-summary-read';
 import { saveCompanySummaryState } from '@/lib/nocodb/company-summary-write';
 import { getOpenAIClient, getOpenAIModel } from '@/lib/openai/client';
 import {
-  COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT,
   COMPANY_EVIDENCE_SUMMARY_JSON_SCHEMA,
   buildCompanyEvidenceSummaryPrompt,
+  buildSummaryPolicySystemPrompt,
+  loadCompanySummarySystemPrompt,
 } from '@/lib/prompts/company-evidence-summary';
 import type { CompanyEvidenceSummaryResult } from '@/lib/prompts/company-evidence-summary';
+import { getPolicyById } from '@/lib/nocodb/policy-store';
 
 const AI_VERSION    = 'company-summary-v1';
 const DEFAULT_TYPE  = 'default';
@@ -49,8 +51,14 @@ export async function POST(
     return NextResponse.json({ error: 'companyUid が必要です' }, { status: 400 });
   }
 
-  const body = await req.json().catch(() => ({})) as { summary_type?: string };
+  const body = await req.json().catch(() => ({})) as {
+    summary_type?:  string;
+    policy_id?:     string;
+    summary_focus?: string;
+  };
   const summaryType = body.summary_type ?? DEFAULT_TYPE;
+  const policyId    = body.policy_id;
+  const inlineFocus = body.summary_focus;
 
   // ── 保護チェック: approved なら 409 ────────────────────────────────────
   const existing = await getCompanySummaryState(companyUid, summaryType).catch(() => null);
@@ -76,11 +84,12 @@ export async function POST(
   }
 
   // ── NocoDB からデータ取得（並列） ────────────────────────────────────────
-  const [company, evidence, alerts, people] = await Promise.all([
+  const [company, evidence, alerts, people, policyRecord] = await Promise.all([
     fetchCompanyByUid(companyUid).catch(() => null),
     fetchEvidence(companyUid).catch(() => []),
     fetchAlerts(companyUid).catch(() => []),
     fetchPeople(companyUid).catch(() => []),
+    policyId ? getPolicyById(policyId).catch(() => null) : Promise.resolve(null),
   ]);
 
   if (!company) {
@@ -90,13 +99,21 @@ export async function POST(
     );
   }
 
+  // ── Summary Policy の設定を適用 ─────────────────────────────────────────
+  const summaryPolicy  = policyRecord?.summaryPolicy ?? null;
+  const effectivePolicy = inlineFocus
+    ? { ...(summaryPolicy ?? {}), summary_focus: inlineFocus }
+    : summaryPolicy;
+  const basePrompt = await loadCompanySummarySystemPrompt();
+  const systemPrompt = buildSummaryPolicySystemPrompt(effectivePolicy, basePrompt);
+
   // ── AI 生成 ───────────────────────────────────────────────────────────────
   const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people);
 
   const comp = await openai.chat.completions.create({
-    model,
+    model:    summaryPolicy?.model ?? model,
     messages: [
-      { role: 'system', content: COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       { role: 'user',   content: userPrompt },
     ],
     response_format: { type: 'json_schema', json_schema: COMPANY_EVIDENCE_SUMMARY_JSON_SCHEMA },
@@ -126,6 +143,7 @@ export async function POST(
     evidence_count:          evidence.length,
     alert_count:             alerts.length,
     people_count:            people.length,
+    applied_policy_id:       policyId ?? null,
   }).catch(err => ({
     ok:      false  as const,
     skipped: false  as const,
