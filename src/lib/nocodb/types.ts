@@ -1128,6 +1128,10 @@ export interface RawProjectInfo {
   paid_type?:            string | null;     // "PTI-PAID" / "PTX-PAID" / "FREE"
   project_create_time?:  string | null;     // プロジェクト作成日時
   latest_order_end_date?: string | null;    // 最新契約終了日
+  // ── 利用スコア（0-100、NocoDB 実カラム）─────────────────────────────────
+  healthy_score?: number | null;            // プロジェクト利用健全性スコア
+  depth_score?:   number | null;            // 機能深度スコア
+  breadth_score?: number | null;            // 機能横断利用スコア
   // ── 互換用（将来テーブルが正規化された場合のフォールバック）────────────────
   status?:         string | null;
   start_date?:     string | null;
@@ -1157,6 +1161,13 @@ export interface AppProjectInfo {
   habituationStatus:  boolean | null;
   /** 最新契約終了日（upsell / renewal タイミング判定用） */
   latestOrderEndDate: string | null;
+  // ── 利用スコア（0-100）───────────────────────────────────────────────────
+  /** プロジェクト利用健全性スコア（PV/Campaign/操作履歴・時間減衰付き） */
+  healthyScore:       number | null;
+  /** 機能深度スコア（ABTest/Goal/UserGroup/Funnel 等の高度機能利用度） */
+  depthScore:         number | null;
+  /** 機能横断利用スコア（Heatmap/Goal/UserGroup/Segment 等を幅広く使えているか） */
+  breadthScore:       number | null;
 }
 
 /**
@@ -1212,6 +1223,9 @@ export function toAppProjectInfo(raw: RawProjectInfo, companyUid?: string): AppP
     latestOrderEndDate: raw.latest_order_end_date
       ? String(raw.latest_order_end_date).slice(0, 10)
       : null,
+    healthyScore:       raw.healthy_score != null ? Number(raw.healthy_score) : null,
+    depthScore:         raw.depth_score   != null ? Number(raw.depth_score)   : null,
+    breadthScore:       raw.breadth_score != null ? Number(raw.breadth_score) : null,
   };
 }
 
@@ -1361,6 +1375,34 @@ function parseStringJsonArray(v: unknown): string[] {
   catch { return []; }
 }
 
+// ─── Intercom Mail Log ───────────────────────────────────────────────────────
+// log_intercom テーブルの massage_type='mail' レコード。
+// RawSupportCase を共有型として利用（同じテーブル・同じカラム）。
+
+export interface AppLogIntercomMail {
+  id:          string;
+  companyUid:  string;
+  sentAt:      string | null;   // sent_at_jst（"YYYY-MM-DD HH:mm" 形式）
+  senderName:  string | null;   // account_name
+  subject:     string | null;   // display_title（AI生成件名）または body 冒頭
+  body:        string;          // display_message（整形済み）または body
+}
+
+export function toAppLogIntercomMail(raw: RawSupportCase): AppLogIntercomMail {
+  const dateRaw = raw.sent_at_jst ?? null;
+  const bodyRaw = raw.display_message ?? raw.body ?? '';
+  return {
+    id:         raw.case_id ? String(raw.case_id) : String(raw.Id),
+    companyUid: raw.company_uid ?? '',
+    sentAt:     dateRaw ? String(dateRaw).slice(0, 16).replace('T', ' ') : null,
+    senderName: raw.account_name ? String(raw.account_name) : null,
+    subject:    raw.display_title
+                  ? String(raw.display_title)
+                  : (bodyRaw ? String(bodyRaw).slice(0, 40) : null),
+    body:       bodyRaw ? String(bodyRaw) : '',
+  };
+}
+
 export function toAppPerson(raw: RawPerson, companyUid: string): AppPerson {
   const isDecisionMaker = String(raw.is_decision_maker).toUpperCase() === 'TRUE';
   const isCandidate = raw.status === 'candidate';
@@ -1391,13 +1433,21 @@ export interface RawCompanyAction {
   Id: number;
   action_id?: string | null;
   company_uid?: string | null;
+  /** 表示用企業名（非正規化）。未設定時は company_uid で代替 */
+  company_name?: string | null;
   title?: string | null;
   /** NocoDB カラム名は description（アプリ内では body として扱う）*/
   description?: string | null;
   owner?: string | null;
+  /** アクション担当者の Salesforce Account ID（フィルタキー）*/
+  owner_sf_id?: string | null;
   due_date?: string | null;
   /** open / in_progress / done / cancelled */
   status?: string | null;
+  /** high / medium / low */
+  urgency?: string | null;
+  /** call / mail / intercom / slack */
+  recommended_channel?: string | null;
   /** manual / risk_signal / opportunity_signal / support_case / people_risk */
   created_from?: string | null;
   source_ref?: string | null;
@@ -1407,6 +1457,16 @@ export interface RawCompanyAction {
   sf_todo_id?: string | null;
   /** SF Task 最終同期日時（ISO 8601） */
   sf_last_synced_at?: string | null;
+  /** SF Event 接点者レベル（POC__c） */
+  poc?: string | null;
+  /** SF Event 形式（Type）: Call / Email / Meeting / Event / Intercom / Chat / Other */
+  activity_type?: string | null;
+  /** SF Event 結果（Result__c）: S / A / B / C / D */
+  result?: string | null;
+  /** SF Event 活動形式（Event_format__c）: Web / 訪問 */
+  event_format?: string | null;
+  /** SF Event 行動目的・内容（Action_Purpose__c） */
+  action_purpose?: string | null;
   created_at?: string | null;
   [key: string]: unknown;
 }
@@ -1417,11 +1477,17 @@ export interface AppCompanyAction {
   /** アプリ生成 UUID */
   id: string;
   companyUid: string;
+  /** 表示用企業名（非正規化。未設定時は companyUid） */
+  companyName: string;
   title: string;
   body: string;
   owner: string;
+  /** アクション担当者の Salesforce Account ID（フィルタキー）*/
+  ownerSfId: string | null;
   dueDate: string | null;
   status: 'open' | 'in_progress' | 'done' | 'cancelled';
+  urgency: 'high' | 'medium' | 'low';
+  recommendedChannel: 'call' | 'mail' | 'intercom' | 'slack' | null;
   createdFrom: 'manual' | 'risk_signal' | 'opportunity_signal' | 'support_case' | 'people_risk';
   sourceRef: string | null;
   personRef: string | null;
@@ -1429,10 +1495,22 @@ export interface AppCompanyAction {
   sfTodoId: string | null;
   /** SF Task 最終同期日時（ISO 8601） */
   sfLastSyncedAt: string | null;
+  /** SF Event 接点者レベル（POC__c） */
+  poc: string | null;
+  /** SF Event 形式（Type）: Call / Email / Meeting / Event / Intercom / Chat / Other */
+  activityType: string | null;
+  /** SF Event 結果（Result__c）: S / A / B / C / D */
+  result: string | null;
+  /** SF Event 活動形式（Event_format__c）: Web / 訪問 */
+  eventFormat: string | null;
+  /** SF Event 行動目的・内容（Action_Purpose__c） */
+  actionPurpose: string | null;
   createdAt: string;
 }
 
 const ACTION_STATUS_VALUES = new Set(['open', 'in_progress', 'done', 'cancelled']);
+const ACTION_URGENCY_VALUES = new Set(['high', 'medium', 'low']);
+const ACTION_CHANNEL_VALUES = new Set(['call', 'mail', 'intercom', 'slack']);
 const ACTION_CREATED_FROM_VALUES = new Set([
   'manual', 'risk_signal', 'opportunity_signal', 'support_case', 'people_risk',
 ]);
@@ -1444,6 +1522,16 @@ export function toAppCompanyAction(raw: RawCompanyAction): AppCompanyAction {
     ? rawStatus as AppCompanyAction['status']
     : 'open';
 
+  const rawUrgency = raw.urgency ? s(raw.urgency) : null;
+  const urgency: AppCompanyAction['urgency'] = rawUrgency && ACTION_URGENCY_VALUES.has(rawUrgency)
+    ? rawUrgency as AppCompanyAction['urgency']
+    : 'medium';
+
+  const rawChannel = raw.recommended_channel ? s(raw.recommended_channel) : null;
+  const recommendedChannel = rawChannel && ACTION_CHANNEL_VALUES.has(rawChannel)
+    ? rawChannel as AppCompanyAction['recommendedChannel']
+    : null;
+
   const rawCreatedFrom = s(raw.created_from, 'manual');
   const createdFrom = ACTION_CREATED_FROM_VALUES.has(rawCreatedFrom)
     ? rawCreatedFrom as AppCompanyAction['createdFrom']
@@ -1454,22 +1542,33 @@ export function toAppCompanyAction(raw: RawCompanyAction): AppCompanyAction {
     ? rawSfTodoStatus as AppCompanyAction['sfTodoStatus']
     : null;
 
+  const companyUid = s(raw.company_uid, '');
+
   return {
-    rowId:       raw.Id,
-    id:          s(raw.action_id, String(raw.Id)),
-    companyUid:  s(raw.company_uid, ''),
-    title:       s(raw.title, '(タイトルなし)'),
-    body:        s(raw.description, ''),
-    owner:       s(raw.owner, ''),
-    dueDate:     raw.due_date ? String(raw.due_date).slice(0, 10) : null,
+    rowId:              raw.Id,
+    id:                 s(raw.action_id, String(raw.Id)),
+    companyUid,
+    companyName:        raw.company_name ? s(raw.company_name) : companyUid,
+    title:              s(raw.title, '(タイトルなし)'),
+    body:               s(raw.description, ''),
+    owner:              s(raw.owner, ''),
+    ownerSfId:          raw.owner_sf_id ? s(raw.owner_sf_id) : null,
+    dueDate:            raw.due_date ? String(raw.due_date).slice(0, 10) : null,
     status,
+    urgency,
+    recommendedChannel,
     createdFrom,
-    sourceRef:   raw.source_ref   ? s(raw.source_ref)   : null,
-    personRef:   raw.person_ref   ? s(raw.person_ref)   : null,
+    sourceRef:          raw.source_ref   ? s(raw.source_ref)   : null,
+    personRef:          raw.person_ref   ? s(raw.person_ref)   : null,
     sfTodoStatus,
-    sfTodoId:        raw.sf_todo_id        ? s(raw.sf_todo_id)        : null,
-    sfLastSyncedAt:  raw.sf_last_synced_at ? s(raw.sf_last_synced_at) : null,
-    createdAt:   raw.created_at
+    sfTodoId:           raw.sf_todo_id        ? s(raw.sf_todo_id)        : null,
+    sfLastSyncedAt:     raw.sf_last_synced_at ? s(raw.sf_last_synced_at) : null,
+    poc:                raw.poc          ? s(raw.poc)          : null,
+    activityType:       raw.activity_type ? s(raw.activity_type) : null,
+    result:             raw.result        ? s(raw.result)        : null,
+    eventFormat:        raw.event_format  ? s(raw.event_format)  : null,
+    actionPurpose:      raw.action_purpose ? s(raw.action_purpose) : null,
+    createdAt:          raw.created_at
       ? String(raw.created_at).slice(0, 19).replace('T', ' ')
       : (raw.CreatedAt ? String(raw.CreatedAt).slice(0, 19).replace('T', ' ') : new Date().toISOString()),
   };
@@ -1595,4 +1694,64 @@ export function toAppPersonFromCompanyPeople(raw: RawCompanyPerson): AppPerson {
     displayGroup:      raw.display_group      ? s(raw.display_group)      : null,
     stakeholderNote:   raw.stakeholder_note   ? s(raw.stakeholder_note)   : null,
   };
+}
+
+// ─── Company Channel Identify（Outbound チャンネル設定）────────────────────────
+// company_channel_identify テーブル（TABLE_IDS.company_channel_identify）
+// 各企業の Slack / Chatwork 送信先チャンネルを管理する SSOT。
+// 実テーブルのスキーマ（2026-02-20 確認）:
+//   company_uid        : string (例: "sf_0017F00000UiwVgQAJ")
+//   slack_channel_id   : string | null  (SlackチャンネルID: C1234ABCD)
+//   chatwork_channel_id: string | null  (ChatworkルームID: 123456789)
+//   channel_name       : string | null  (チャンネル表示名)
+//   is_active          : boolean | null
+
+export interface RawCompanyChannel {
+  Id: number;
+  company_uid?: string | null;
+  slack_channel_id?: string | null;
+  chatwork_channel_id?: string | null;
+  channel_name?: string | null;
+  is_active?: boolean | null;
+  /** true の場合、SLACK_BOT_TOKEN 環境変数ではなく外部ワークスペース用 bot_token を使用。NocoDB は "true"/"false" 文字列で返す場合がある */
+  ext_slack_workspace?: boolean | string | null;
+  /** 外部 Slackワークスペース ID（slack_workspace_tokens テーブルの検索キー） */
+  slack_team_id?: string | null;
+  [key: string]: unknown;
+}
+
+export interface CompanyChannelInfo {
+  companyUid:  string;
+  type:        'slack' | 'chatwork';
+  channelId:   string;
+  channelName: string | null;
+  /** true の場合、外部ワークスペース用 bot_token を使用 */
+  extSlackWorkspace?: boolean;
+  /** 外部 Slack ワークスペース ID */
+  slackTeamId?: string | null;
+}
+
+/**
+ * 1行の RawCompanyChannel から CompanyChannelInfo の配列を生成する。
+ * slack_channel_id / chatwork_channel_id それぞれ非 null なら要素を追加。
+ */
+export function toCompanyChannelInfos(raw: RawCompanyChannel): CompanyChannelInfo[] {
+  const companyUid = raw.company_uid ? String(raw.company_uid).trim() : '';
+  if (!companyUid) return [];
+
+  const channelName = raw.channel_name ? String(raw.channel_name) : null;
+  const results: CompanyChannelInfo[] = [];
+
+  const slackId = raw.slack_channel_id ? String(raw.slack_channel_id).trim() : '';
+  if (slackId) {
+    // NocoDB は boolean フィールドを "true"/"false" の文字列で返す場合がある
+    const extSlackWorkspace = raw.ext_slack_workspace === true || raw.ext_slack_workspace === 'true';
+    const slackTeamId = raw.slack_team_id ? String(raw.slack_team_id).trim() : null;
+    results.push({ companyUid, type: 'slack', channelId: slackId, channelName, extSlackWorkspace, slackTeamId });
+  }
+
+  const cwId = raw.chatwork_channel_id ? String(raw.chatwork_channel_id).trim() : '';
+  if (cwId) results.push({ companyUid, type: 'chatwork', channelId: cwId, channelName });
+
+  return results;
 }

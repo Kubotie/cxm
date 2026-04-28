@@ -71,6 +71,7 @@ import {
   XCircle,
   ListTodo,
   Unplug,
+  Mail,
 } from "lucide-react";
 
 import type { CompanyDetailApiResponse } from "@/lib/company/company-vm";
@@ -162,12 +163,14 @@ const COMM_SOURCE_ICON: Record<string, React.ReactNode> = {
   chatwork:      <MessageSquare className="w-3 h-3 text-indigo-500 flex-shrink-0" />,
   slack:         <MessageSquare className="w-3 h-3 text-sky-500 flex-shrink-0" />,
   notion_minutes:<Calendar className="w-3 h-3 text-purple-500 flex-shrink-0" />,
+  intercom_mail: <Mail className="w-3 h-3 text-emerald-500 flex-shrink-0" />,
 };
 
 const COMM_SOURCE_LABEL: Record<string, string> = {
   chatwork:      'Chatwork',
   slack:         'Slack',
   notion_minutes:'議事録',
+  intercom_mail: 'メール',
 };
 
 function SeverityDot({ severity }: { severity: string }) {
@@ -378,6 +381,15 @@ export function CompanyDetail() {
     return { builtins, saved };
   }, [allPolicies]);
 
+  // ── companyId 変更時に lazy-load 状態をリセット ─────────────────────────────
+  // Next.js がコンポーネントを再マウントせず props だけ変わる場合に対応。
+  useEffect(() => {
+    setContactsLoaded(false);
+    setLocalContacts([]);
+    setActionsLoaded(false);
+    setLocalActions([]);
+  }, [companyId]);
+
   // ── Data fetch ────────────────────────────────────────────────────────────
   // /api/company/[companyUid] は UI向けルート（Bearer 認証不要）
   // TODO: サーバーサイドフェッチ or SWR に移行してクライアント再計算を減らすこと
@@ -495,8 +507,24 @@ export function CompanyDetail() {
 
   async function handleRegenerate() {
     setSummaryLoading(true); setSummaryError(null); setShowSummarySheet(true);
+
+    // 選択中のポリシーを regenerate に引き渡す
+    const regenBody: Record<string, string> = {};
+    if (selectedPolicyId && selectedPolicyId !== '__default__') {
+      if (selectedPolicyId.startsWith('__tmpl__')) {
+        const sp = summaryPoliciesForSelector.builtins.find(p => p.policyId === selectedPolicyId);
+        if (sp?.summaryFocus) regenBody.summary_focus = sp.summaryFocus;
+      } else {
+        regenBody.policy_id = selectedPolicyId;
+      }
+    }
+
     try {
-      const res = await fetch(`/api/company/${companyId}/summary/regenerate`, { method: 'POST' });
+      const res = await fetch(`/api/company/${companyId}/summary/regenerate`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(regenBody),
+      });
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string; message?: string }).message ?? `HTTP ${res.status}`);
       setSummaryResult(await res.json() as CompanyEvidenceSummaryApiResponse);
       await refreshSavedRecord();
@@ -657,7 +685,8 @@ export function CompanyDetail() {
   const phase       = detail?.phase;
   const health      = detail?.health;
   const comm        = detail?.communication;
-  const projects    = detail?.projects;
+  const projects        = detail?.projects;
+  const packageEvents   = detail?.packageEvents ?? [];
   const support     = detail?.support;
   const people      = detail?.people;
   const policyAlerts: AppAlert[] = (detail?.alerts ?? []).filter(
@@ -1709,7 +1738,7 @@ export function CompanyDetail() {
                   SF 未連携企業のため、プロジェクト情報は取得できません（company_uid: {companyId}）
                 </p>
               ) : (
-                <ProjectsTab projects={projects} companyUid={companyId} />
+                <ProjectsTab projects={projects} companyUid={companyId} packageEvents={packageEvents} />
               )}
             </TabsContent>
 
@@ -2095,9 +2124,11 @@ export function CompanyDetail() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   action_id:      action.id,
+                  company_name:   company?.name ?? companyId,
                   title:          action.title,
                   description:    action.body,
                   owner:          action.owner,
+                  owner_sf_id:    action.ownerSfId,
                   due_date:       action.dueDate,
                   status:         action.status,
                   created_from:   action.createdFrom,
@@ -2105,6 +2136,11 @@ export function CompanyDetail() {
                   person_ref:     action.personRef,
                   sf_todo_status: action.sfTodoStatus,
                   sf_todo_id:     null,
+                  poc:            action.poc,
+                  activity_type:  action.activityType,
+                  result:         action.result,
+                  event_format:   action.eventFormat,
+                  action_purpose: action.actionPurpose,
                   created_at:     action.createdAt,
                 }),
               });
@@ -2531,7 +2567,27 @@ function SupportTab({ support }: { support: CompanyDetailApiResponse['support'] 
 
 // ── Projects tab ──────────────────────────────────────────────────────────────
 
-function ProjectsTab({ projects, companyUid }: { projects: CompanyDetailApiResponse['projects'] | undefined; companyUid: string }) {
+/** 日付文字列から今日までの経過日数を計算 */
+function daysSince(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  const d = new Date(dateStr.trim());
+  if (isNaN(d.getTime())) return null;
+  return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+/** 契約終了日から残日数を計算（過去日は負の値） */
+function daysUntil(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  const d = new Date(dateStr.trim());
+  if (isNaN(d.getTime())) return null;
+  return Math.floor((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+}
+
+function ProjectsTab({ projects, companyUid, packageEvents }: {
+  projects:      CompanyDetailApiResponse['projects'] | undefined;
+  companyUid:    string;
+  packageEvents: import('@/lib/metabase/package-events').PackageEvent[];
+}) {
   if (!projects || projects.total === 0) {
     const isCmpId = companyUid.startsWith('cmp_');
     return (
@@ -2581,6 +2637,13 @@ function ProjectsTab({ projects, companyUid }: { projects: CompanyDetailApiRespo
       <div className="bg-white border rounded-lg overflow-hidden">
         <div className="divide-y">
           {projects.projects.map((p: ProjectItemVM) => {
+            // パッケージイベント（直近3件、新しい順）
+            const projEvents = packageEvents
+              .filter(ev => ev.projectId === p.id)
+              .sort((a, b) => b.statDate.localeCompare(a.statDate))
+              .slice(0, 3);
+            const latestEvent = projEvents[0] ?? null;
+
             const statusCfg  = PROJECT_STATUS_BADGE[p.derivedStatus] ?? PROJECT_STATUS_BADGE.inactive;
             const paidUpper  = (p.paidType ?? '').toUpperCase();
             const isFree     = paidUpper === 'FREE';
@@ -2591,7 +2654,7 @@ function ProjectsTab({ projects, companyUid }: { projects: CompanyDetailApiRespo
               : isPaid
               ? 'border-green-200 text-green-600'
               : '';
-            // 活動レベル（L30）
+            // 活動レベル（L30 イベント数）
             const l30 = p.l30Active;
             const activityLevel = l30 == null ? null
               : l30 === 0   ? 'none'
@@ -2603,8 +2666,33 @@ function ProjectsTab({ projects, companyUid }: { projects: CompanyDetailApiRespo
               : activityLevel === 'low'  ? 'text-slate-400'
               : 'text-red-400';
 
+            // 契約残日数
+            const remainDays = daysUntil(p.latestOrderEndDate);
+            const showRenewUrgency = remainDays !== null && remainDays <= 90;
+            const renewUrgencyCls  = remainDays !== null && remainDays <= 30
+              ? 'border-red-200 text-red-600'
+              : 'border-amber-200 text-amber-600';
+
+            // ユーザー活動（Metabase）
+            const ua = p.userActivity;
+            const adoptionRate = ua && ua.totalUsers > 0
+              ? ua.l30ActiveUsers / ua.totalUsers
+              : null;
+            const adoptionCls = adoptionRate === null ? ''
+              : adoptionRate === 0  ? 'text-red-500'
+              : adoptionRate < 0.5  ? 'text-amber-600'
+              : 'text-green-600';
+            const showDeclineTrend = ua !== null && ua !== undefined
+              && ua.l30ActiveUsers > 0 && ua.l7ActiveUsers === 0;
+            const lastActiveDays = ua ? daysSince(ua.maxLastActiveDate) : null;
+            const lastActiveCls  = lastActiveDays === null ? 'text-slate-400'
+              : lastActiveDays > 60 ? 'text-red-500'
+              : lastActiveDays > 30 ? 'text-amber-600'
+              : 'text-slate-400';
+
             return (
               <div key={p.id} className="px-4 py-3 text-sm">
+                {/* Row 1: name + badges */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium text-slate-700 flex-1 min-w-0 truncate">{p.name}</span>
                   {/* Paid type chip */}
@@ -2617,7 +2705,18 @@ function ProjectsTab({ projects, companyUid }: { projects: CompanyDetailApiRespo
                   <Badge variant="outline" className={`text-xs flex-shrink-0 ${statusCfg.className}`}>
                     {statusCfg.label}
                   </Badge>
-                  {/* L30 activity */}
+                  {/* 定着フラグ */}
+                  {p.habituationStatus === true && (
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 flex-shrink-0 border-green-200 text-green-600">
+                      定着済 ✓
+                    </Badge>
+                  )}
+                  {p.habituationStatus === false && (
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 flex-shrink-0 border-amber-200 text-amber-600">
+                      未定着
+                    </Badge>
+                  )}
+                  {/* L30 activity（イベント数） */}
                   {l30 != null && (
                     <TooltipProvider delayDuration={300}>
                       <Tooltip>
@@ -2632,20 +2731,91 @@ function ProjectsTab({ projects, companyUid }: { projects: CompanyDetailApiRespo
                       </Tooltip>
                     </TooltipProvider>
                   )}
+                  {/* 契約残日数 urgency */}
+                  {showRenewUrgency && (
+                    <Badge variant="outline" className={`text-[10px] py-0 px-1.5 flex-shrink-0 ${renewUrgencyCls}`}>
+                      残 {remainDays}d
+                    </Badge>
+                  )}
                   {/* Stalled indicator */}
-                  {p.stalledDays !== null && p.stalledDays >= 60 && (
-                    <span className="text-xs text-amber-600 flex-shrink-0">{p.stalledDays}d停滞</span>
+                  {p.stalledDays !== null && p.stalledDays >= 30 && (
+                    <span className={`text-xs flex-shrink-0 ${p.stalledDays >= 60 ? 'text-amber-600' : 'text-slate-400'}`}>
+                      {p.stalledDays}d停滞
+                    </span>
+                  )}
+                  {/* パッケージ変動バッジ（直近イベント） */}
+                  {latestEvent && (() => {
+                    const cfg: Record<string, { label: string; cls: string }> = {
+                      'Package-Churn':    { label: 'Churn',    cls: 'border-red-200 text-red-600 bg-red-50' },
+                      'Package-Downsell': { label: 'Downsell', cls: 'border-orange-200 text-orange-600 bg-orange-50' },
+                      'Package-Upsell':   { label: 'Upsell',   cls: 'border-indigo-200 text-indigo-600 bg-indigo-50' },
+                      'Package-New':      { label: 'New',      cls: 'border-green-200 text-green-600 bg-green-50' },
+                      'Package-Trial':    { label: 'Trial',    cls: 'border-slate-200 text-slate-500 bg-slate-50' },
+                    };
+                    const c = cfg[latestEvent.changeType];
+                    if (!c) return null;
+                    return (
+                      <TooltipProvider delayDuration={300}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="outline" className={`text-[10px] py-0 px-1.5 flex-shrink-0 ${c.cls}`}>
+                              {c.label}
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="text-xs">
+                            {latestEvent.statDate} — {latestEvent.changeType}
+                            {latestEvent.ptiPackage && latestEvent.ptiPackage !== 'PTI Free' && ` (PTI: ${latestEvent.ptiPackage})`}
+                            {latestEvent.ptxPackage && latestEvent.ptxPackage !== 'PTX Free' && ` (PTX: ${latestEvent.ptxPackage})`}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    );
+                  })()}
+                </div>
+                {/* Row 2: useCase + ユーザー活動 + 契約終了日 */}
+                <div className="flex items-center gap-3 mt-1 text-[11px] flex-wrap">
+                  {p.useCase && <span className="truncate text-slate-400">{p.useCase}</span>}
+                  {/* ユーザー採用率 */}
+                  {ua && ua.totalUsers > 0 && (
+                    <span className={`flex-shrink-0 font-medium ${adoptionCls}`}>
+                      {ua.l30ActiveUsers}/{ua.totalUsers}人 先月アクティブ
+                    </span>
+                  )}
+                  {/* 離脱トレンド */}
+                  {showDeclineTrend && (
+                    <span className="flex-shrink-0 text-amber-600">最近減少中</span>
+                  )}
+                  {/* 最終ログイン */}
+                  {lastActiveDays !== null && (
+                    <span className={`flex-shrink-0 ${lastActiveCls}`}>
+                      最終: {lastActiveDays <= 7 ? '今週' : `${lastActiveDays}日前`}
+                    </span>
+                  )}
+                  {/* 契約終了日（urgency 表示がない場合のみテキスト表示） */}
+                  {p.latestOrderEndDate && !showRenewUrgency && (
+                    <span className="flex-shrink-0 text-slate-400">契約終了: {p.latestOrderEndDate}</span>
+                  )}
+                  {/* Health / Depth / Breadth スコア */}
+                  {(p.healthyScore !== null || p.depthScore !== null || p.breadthScore !== null) && (
+                    <span className="flex-shrink-0 flex gap-1">
+                      {p.healthyScore !== null && (
+                        <span className={`px-1 rounded font-mono ${p.healthyScore >= 60 ? 'bg-green-100 text-green-700' : p.healthyScore >= 30 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                          H:{p.healthyScore}
+                        </span>
+                      )}
+                      {p.depthScore !== null && (
+                        <span className="px-1 rounded font-mono bg-blue-100 text-blue-700">
+                          D:{p.depthScore}
+                        </span>
+                      )}
+                      {p.breadthScore !== null && (
+                        <span className="px-1 rounded font-mono bg-purple-100 text-purple-700">
+                          B:{p.breadthScore}
+                        </span>
+                      )}
+                    </span>
                   )}
                 </div>
-                {/* Sub row: useCase + 契約終了日 */}
-                {(p.useCase || p.latestOrderEndDate) && (
-                  <div className="flex items-center gap-3 mt-0.5 text-[11px] text-slate-400">
-                    {p.useCase && <span className="truncate">{p.useCase}</span>}
-                    {p.latestOrderEndDate && (
-                      <span className="flex-shrink-0">契約終了: {p.latestOrderEndDate}</span>
-                    )}
-                  </div>
-                )}
               </div>
             );
           })}
@@ -2662,6 +2832,7 @@ const COMM_SOURCE_FILTERS = [
   { value: 'chatwork',       label: 'Chatwork' },
   { value: 'slack',          label: 'Slack' },
   { value: 'notion_minutes', label: '議事録' },
+  { value: 'intercom_mail',  label: 'メール' },
 ];
 
 const COMM_DISPLAY_LIMIT = 20;
@@ -2986,9 +3157,9 @@ function PeopleTab({
                   <div className="text-[10px] space-y-1">
                     {/* 精度インジケータ */}
                     <div className="flex gap-3 text-slate-500 mb-1">
-                      {['chatwork', 'slack', 'notion_minutes'].map(src => {
-                        const SOURCE_STAR: Record<string, string> = { chatwork: '★★★', slack: '★★', notion_minutes: '★' };
-                        const SOURCE_LBL: Record<string, string> = { chatwork: 'Chatwork', slack: 'Slack', notion_minutes: 'Notion' };
+                      {['chatwork', 'slack', 'notion_minutes', 'intercom_mail'].map(src => {
+                        const SOURCE_STAR: Record<string, string> = { chatwork: '★★★', slack: '★★', notion_minutes: '★', intercom_mail: '★★★' };
+                        const SOURCE_LBL: Record<string, string> = { chatwork: 'Chatwork', slack: 'Slack', notion_minutes: 'Notion', intercom_mail: 'メール' };
                         const isSkipped = candidateResult.skippedSources.includes(src as ContactCandidateSource);
                         const isEmpty   = candidateResult.emptySources.includes(src as ContactCandidateSource);
                         const isWeak    = (candidateResult.weakSources ?? []).includes(src as ContactCandidateSource);
@@ -3927,8 +4098,17 @@ function OrgChartLayered({
       }
     }
 
-    setBranchPaths(paths);
-    setSvgH(container.scrollHeight);
+    setBranchPaths(prev => {
+      if (prev.length !== paths.length) return paths;
+      for (let i = 0; i < paths.length; i++) {
+        if (prev[i].d !== paths[i].d || prev[i].type !== paths[i].type) return paths;
+      }
+      return prev; // 変化なし → 同じ参照を返してre-renderを防ぐ
+    });
+    setSvgH(h => {
+      const next = container.scrollHeight;
+      return h === next ? h : next;
+    });
   }); // 毎 render 後に再計測（レイアウト変化・resize 対応）
 
   // ② works_with 点線: ホバー中カードから協働相手への indigo 破線（hover 時のみ）
