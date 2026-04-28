@@ -316,17 +316,8 @@ export function AiControlPage() {
       }
       setEditSaved(editValue);
       setSaveMsg({ type: 'success', text: '保存しました' });
-      // ローカルキャッシュ更新
-      setRecords(prev => {
-        const idx = prev.findIndex(r => r.config_key === editKey);
-        const upd: AiConfigRecord = {
-          ...(prev[idx] ?? { config_key: editKey, label }),
-          value:      editValue,
-          updated_at: new Date().toISOString(),
-        };
-        if (idx >= 0) { const n = [...prev]; n[idx] = upd; return n; }
-        return [...prev, upd];
-      });
+      // 保存後に再取得して outdated フラグを最新化
+      await fetchRecords();
     } catch (e) {
       setSaveMsg({ type: 'error', text: e instanceof Error ? e.message : '保存失敗' });
     } finally {
