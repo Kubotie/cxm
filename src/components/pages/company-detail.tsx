@@ -1938,70 +1938,45 @@ export function CompanyDetail() {
                   )}
 
                   {/* Summary */}
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 mb-1 uppercase tracking-wide">サマリー</p>
-                    <p className="text-sm text-slate-700 leading-relaxed">{summaryResult.summary}</p>
-                  </div>
+                  <p className="text-sm text-slate-700 leading-relaxed">{summaryResult.summary}</p>
 
-                  {/* Section order: 攻略型 → 機会先頭 / リスク監視型 → リスク先頭 / 報告型・標準 → 次アクション先頭 */}
-                  {(() => {
-                    const isExpansion = selectedPolicyId.includes('expansion');
-                    const isRiskWatch = selectedPolicyId.includes('risk_watch');
-                    const isReport    = selectedPolicyId.includes('report');
-
-                    const opportunitiesBlock = (summaryResult.key_opportunities as OpportunityItem[] ?? []).length > 0 && (
-                      <div key="opp">
-                        <p className="text-xs font-semibold text-blue-600 mb-2 uppercase tracking-wide">
-                          {isExpansion ? '🚀 機会・拡大ポイント（主役）' : '機会・拡販ポイント'}
-                        </p>
-                        <div className="space-y-2">
-                          {(summaryResult.key_opportunities as OpportunityItem[]).map((o, i) => (
-                            <div key={i} className="flex items-start gap-2 text-sm">
-                              <TrendingUp className="w-3.5 h-3.5 text-blue-500 flex-shrink-0 mt-0.5" />
-                              <div>
-                                <p className="font-medium text-slate-800">{o.title}</p>
-                                {o.description && <p className="text-xs text-slate-500">{o.description}</p>}
-                              </div>
-                            </div>
-                          ))}
+                  {/* Risks */}
+                  {(summaryResult.key_risks as RiskItem[] ?? []).length > 0 && (
+                    <div className="space-y-1.5">
+                      {(summaryResult.key_risks as RiskItem[]).map((r, i) => (
+                        <div key={i} className="flex items-start gap-2.5 rounded-md bg-red-50 border border-red-100 px-3 py-2">
+                          <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-sm font-medium text-red-800">{r.title}</p>
+                            {r.description && <p className="text-xs text-red-600 mt-0.5 leading-relaxed">{r.description}</p>}
+                          </div>
                         </div>
-                      </div>
-                    );
+                      ))}
+                    </div>
+                  )}
 
-                    const risksBlock = (summaryResult.key_risks as RiskItem[] ?? []).length > 0 && (
-                      <div key="risk">
-                        <p className="text-xs font-semibold text-red-600 mb-2 uppercase tracking-wide">
-                          {isRiskWatch ? '🔍 キーリスク（主役）' : 'キーリスク'}
-                        </p>
-                        <div className="space-y-2">
-                          {(summaryResult.key_risks as RiskItem[]).map((r, i) => (
-                            <div key={i} className="flex items-start gap-2 text-sm">
-                              <AlertTriangle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
-                              <div>
-                                <p className="font-medium text-slate-800">{r.title}</p>
-                                {r.description && <p className="text-xs text-slate-500">{r.description}</p>}
-                              </div>
-                            </div>
-                          ))}
+                  {/* Opportunities */}
+                  {(summaryResult.key_opportunities as OpportunityItem[] ?? []).length > 0 && (
+                    <div className="space-y-1.5">
+                      {(summaryResult.key_opportunities as OpportunityItem[]).map((o, i) => (
+                        <div key={i} className="flex items-start gap-2.5 rounded-md bg-blue-50 border border-blue-100 px-3 py-2">
+                          <TrendingUp className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-sm font-medium text-blue-800">{o.title}</p>
+                            {o.description && <p className="text-xs text-blue-600 mt-0.5 leading-relaxed">{o.description}</p>}
+                          </div>
                         </div>
-                      </div>
-                    );
+                      ))}
+                    </div>
+                  )}
 
-                    const actionBlock = summaryResult.recommended_next_action && (
-                      <AlertBox key="action" variant={isRiskWatch ? 'warning' : isReport ? 'info' : 'policy'}>
-                        <p className="text-xs font-semibold mb-1" style={{ color: isRiskWatch ? '#b45309' : isReport ? '#0369a1' : '#6d28d9' }}>
-                          {isRiskWatch ? '🔥 緊急アクション' : isReport ? '📋 報告・次アクション' : '✨ 推奨次アクション'}
-                        </p>
-                        <p className="text-sm">{summaryResult.recommended_next_action}</p>
-                      </AlertBox>
-                    );
-
-                    // 表示順を切り替え
-                    if (isExpansion) return <>{opportunitiesBlock}{risksBlock}{actionBlock}</>;
-                    if (isRiskWatch) return <>{risksBlock}{actionBlock}{opportunitiesBlock}</>;
-                    if (isReport)    return <>{actionBlock}{opportunitiesBlock}{risksBlock}</>;
-                    return <>{risksBlock}{opportunitiesBlock}{actionBlock}</>;
-                  })()}
+                  {/* Next action */}
+                  {summaryResult.recommended_next_action && (
+                    <div className="rounded-md bg-slate-900 px-3 py-2.5">
+                      <p className="text-xs text-slate-400 mb-1 font-medium">推奨アクション</p>
+                      <p className="text-sm text-white leading-relaxed">{summaryResult.recommended_next_action}</p>
+                    </div>
+                  )}
 
                   {/* Meta */}
                   <div className="text-[10px] text-slate-400 border-t pt-2 space-y-0.5">
