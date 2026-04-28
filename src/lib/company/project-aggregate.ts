@@ -281,10 +281,14 @@ export function buildProjectAISummary(vm: ProjectAggregateVM): string {
 
   const lines: string[] = [];
 
-  // ── 集計サマリー ──────────────────────────────────────────────────────────
+  // ── 集計サマリー（有償プランのみ。FREE は分析対象外のため除外）──────────────
+  const nfProjs   = vm.projects.filter(p => (p.paidType ?? '').toUpperCase() !== 'FREE');
+  const nfTotal   = nfProjs.length;
+  const nfUnused  = nfProjs.filter(p => p.derivedStatus === 'unused').length;
+  const nfStalled = nfProjs.filter(p => p.derivedStatus === 'stalled').length;
+
   lines.push(
-    `合計 ${vm.total}件 | Active: ${vm.active} | 停滞: ${vm.stalled} | 未活用: ${vm.unused}` +
-    ` | 有償Active: ${vm.paidActiveCount} | FREE未活用: ${vm.freeUnusedCount}（シグナル対象外）` +
+    `有償プロジェクト: ${nfTotal}件 | Active: ${vm.paidActiveCount} | 停滞: ${nfStalled} | 未活用(有償): ${nfUnused}` +
     ` | 30日活動イベント合計: ${vm.totalL30Active}`,
   );
 
