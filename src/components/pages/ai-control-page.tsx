@@ -22,7 +22,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Separator } from "@/components/ui/separator";
 import {
   Loader2, Save, RotateCcw, Trash2, Copy, Pencil,
-  AlertTriangle, CheckCircle, Info, BrainCircuit,
+  AlertTriangle, CheckCircle, Info, BrainCircuit, ChevronDown,
+  CheckCircle2, XCircle, Database, Monitor,
 } from "lucide-react";
 
 // ── 定数 ──────────────────────────────────────────────────────────────────────
@@ -32,44 +33,75 @@ interface ConfigMeta {
   label:       string;
   description: string;
   apiRoute:    string;
+  uiLocation:  string;   // プロンプトが影響する UI の場所
+  /** プロンプトで制御できること */
+  canControl:  string[];
+  /** プロンプトでは変えられないこと（構造的な制約） */
+  cannotControl: string[];
+  /** AI に渡すデータ（ユーザープロンプト）の概要 */
+  inputData:   string;
 }
 
 const PREDEFINED_CONFIGS: ConfigMeta[] = [
   {
-    key:         'company_summary_system_prompt',
-    label:       'Company サマリー',
-    description: '企業の証跡・アラート・People を統合して CSM 向け攻略サマリーを生成する',
-    apiRoute:    '/api/company/[uid]/summary/regenerate',
+    key:          'company_summary_system_prompt',
+    label:        'Company サマリー',
+    description:  '企業の証跡・アラート・People・有償プロジェクトを統合して CSM 向け攻略サマリーを生成する',
+    apiRoute:     '/api/company/[uid]/summary/regenerate',
+    uiLocation:   'Company Detail → AI Company Summary パネル',
+    canControl:   ['分析の観点・優先度', '語調・文体', 'セクション内の内容・強調点', 'リスク/機会の判断基準', 'overall_health の評価基準'],
+    cannotControl:['出力フィールド構造（summary / overall_health / key_risks / key_opportunities / recommended_next_action）', 'FREE プランプロジェクト（データレベルで除外済み・AI に渡さない）'],
+    inputData:    '企業基本情報・Evidence（議事録/メール等）・Alerts・People・有償プロジェクト利用状況・Support 件数',
   },
   {
-    key:         'support_alert_system_prompt',
-    label:       'Support アラート',
-    description: 'Support Queue の案件から CSM が優先対応すべき運用アラートを 1 件生成する',
-    apiRoute:    '/api/support/[caseId]/alert',
+    key:          'support_alert_system_prompt',
+    label:        'Support アラート',
+    description:  'Support Queue の案件から CSM が優先対応すべき運用アラートを 1 件生成する',
+    apiRoute:     '/api/support/[caseId]/alert',
+    uiLocation:   'Support 一覧・Company Detail → Support タブ → アラートバッジ',
+    canControl:   ['アラート種別の優先順位', '緊急度の判断基準', '通知メッセージの語調'],
+    cannotControl:['出力フィールド構造（alert_type / severity / title / description）'],
+    inputData:    'Support ケース情報（件名・本文・履歴）・CSE チケット',
   },
   {
-    key:         'support_summary_system_prompt',
-    label:       'Support サマリー',
-    description: 'Support 案件を構造化サマリー（ゴール・ペイン・リスク）に変換する',
-    apiRoute:    '/api/support/[caseId]/summary',
+    key:          'support_summary_system_prompt',
+    label:        'Support サマリー',
+    description:  'Support 案件を構造化サマリー（ゴール・ペイン・リスク）に変換する',
+    apiRoute:     '/api/support/[caseId]/summary',
+    uiLocation:   'Support Detail → AI Summary',
+    canControl:   ['分析の観点（顧客ゴール/ペイン/リスク）', '要約の粒度・文量'],
+    cannotControl:['出力フィールド構造（goal / pain / risk / next_action 等）'],
+    inputData:    'Support ケース情報・Intercom 会話履歴・CSE チケット詳細',
   },
   {
-    key:         'support_triage_system_prompt',
-    label:       'Support トリアージ',
-    description: '案件の緊急度判定・担当チームへのルーティング指示を生成する',
-    apiRoute:    '/api/support/[caseId]/triage',
+    key:          'support_triage_system_prompt',
+    label:        'Support トリアージ',
+    description:  '案件の緊急度判定・担当チームへのルーティング指示を生成する',
+    apiRoute:     '/api/support/[caseId]/triage',
+    uiLocation:   'Support Detail → Triage ステータス',
+    canControl:   ['severity の判断基準', 'ルーティング先チームの定義', 'エスカレーション条件'],
+    cannotControl:['出力フィールド構造（severity / suggested_team / reason）'],
+    inputData:    'Support ケース情報・優先度・製品カテゴリ',
   },
   {
-    key:         'unified_log_signal_system_prompt',
-    label:       'ログシグナル抽出',
-    description: 'Unified Log（Chatwork/Slack/議事録）からリスク・オポチュニティシグナルを抽出する',
-    apiRoute:    '/api/batch/unified-log-signals',
+    key:          'unified_log_signal_system_prompt',
+    label:        'ログシグナル抽出',
+    description:  'Unified Log（Chatwork/Slack/議事録）からリスク・オポチュニティシグナルを抽出する',
+    apiRoute:     '/api/batch/unified-log-signals',
+    uiLocation:   'Company Detail → Overview → Communication Signals',
+    canControl:   ['シグナルの定義（リスク/機会/不足情報）', '重要度の判断基準', '抽出粒度'],
+    cannotControl:['出力フィールド構造（signal_type / severity / description / source_log_id）'],
+    inputData:    'Chatwork/Slack/Notion 議事録ログ（最大30件）',
   },
   {
-    key:         'support_draft_reply_system_prompt',
-    label:       '返信ドラフト作成',
-    description: '顧客サポート問い合わせへの返信ドラフトを生成する（tone/language はリクエスト時に適用）',
-    apiRoute:    '/api/support/[caseId]/draft-reply',
+    key:          'support_draft_reply_system_prompt',
+    label:        '返信ドラフト作成',
+    description:  '顧客サポート問い合わせへの返信ドラフトを生成する（tone/language はリクエスト時に適用）',
+    apiRoute:     '/api/support/[caseId]/draft-reply',
+    uiLocation:   'Support Detail → Draft Reply',
+    canControl:   ['返信の基本方針・構成', '謝罪/共感の表現方針', '情報不足時の対応方針'],
+    cannotControl:['出力フィールド構造（draft_reply / confidence / notes）', 'tone/language（リクエスト時のパラメータで制御）'],
+    inputData:    'Support ケース情報・AI サマリー・過去対応履歴・担当者追加指示',
   },
 ];
 
@@ -126,10 +158,14 @@ function ConfigRow({ meta, record, unavailable, onEdit, onDelete, onDuplicate }:
           )}
         </div>
         <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{desc}</p>
-        <div className="flex items-center gap-3 mt-1">
-          <code className="text-[10px] text-slate-400 font-mono">{key}</code>
+        <div className="flex items-center gap-3 mt-1 flex-wrap">
+          {meta?.uiLocation && (
+            <span className="flex items-center gap-1 text-[10px] text-slate-400">
+              <Monitor className="w-3 h-3" />{meta.uiLocation}
+            </span>
+          )}
           {meta?.apiRoute && (
-            <span className="text-[10px] text-slate-400">{meta.apiRoute}</span>
+            <code className="text-[10px] text-slate-400 font-mono">{meta.apiRoute}</code>
           )}
           {record?.updated_at && (
             <span className="text-[10px] text-slate-400">
@@ -480,13 +516,54 @@ export function AiControlPage() {
             </DialogDescription>
           </DialogHeader>
 
+          {/* 影響範囲・制約パネル */}
+          {(() => {
+            const m = PREDEFINED_CONFIGS.find(c => c.key === editKey);
+            if (!m) return null;
+            return (
+              <details className="border-b bg-slate-50">
+                <summary className="flex items-center gap-2 px-6 py-2.5 text-xs text-slate-500 cursor-pointer select-none list-none hover:bg-slate-100">
+                  <ChevronDown className="w-3.5 h-3.5 shrink-0" />
+                  <span className="font-medium">影響範囲・制約を確認</span>
+                  <span className="ml-auto text-slate-400 flex items-center gap-1">
+                    <Monitor className="w-3 h-3" />{m.uiLocation}
+                  </span>
+                </summary>
+                <div className="px-6 py-3 grid grid-cols-3 gap-4 text-xs border-t bg-white">
+                  <div>
+                    <p className="font-medium text-green-700 flex items-center gap-1 mb-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5" />プロンプトで制御できること
+                    </p>
+                    <ul className="space-y-0.5 text-slate-600">
+                      {m.canControl.map((c, i) => <li key={i}>• {c}</li>)}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="font-medium text-red-600 flex items-center gap-1 mb-1.5">
+                      <XCircle className="w-3.5 h-3.5" />変えられないこと（構造的制約）
+                    </p>
+                    <ul className="space-y-0.5 text-slate-500">
+                      {m.cannotControl.map((c, i) => <li key={i}>• {c}</li>)}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="font-medium text-blue-700 flex items-center gap-1 mb-1.5">
+                      <Database className="w-3.5 h-3.5" />AI に渡すデータ（入力）
+                    </p>
+                    <p className="text-slate-500 leading-relaxed">{m.inputData}</p>
+                  </div>
+                </div>
+              </details>
+            );
+          })()}
+
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 min-h-0">
             <Textarea
               value={editValue}
               onChange={e => { setEditValue(e.target.value); setSaveMsg(null); }}
-              className="min-h-[480px] font-mono text-xs leading-relaxed resize-none"
+              className="min-h-[380px] font-mono text-xs leading-relaxed resize-none"
               placeholder="プロンプトを入力..."
-              style={{ height: 'clamp(480px, 60vh, 700px)' }}
+              style={{ height: 'clamp(380px, 50vh, 600px)' }}
             />
 
             {saveMsg && (

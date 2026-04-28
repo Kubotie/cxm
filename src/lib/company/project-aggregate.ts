@@ -309,8 +309,11 @@ export function buildProjectAISummary(vm: ProjectAggregateVM): string {
     lines.push(`[OPP] ${s.description}`);
   });
 
-  // ── プロジェクト詳細（上位10件）──────────────────────────────────────────
-  const top = vm.projects.slice(0, 10);
+  // ── プロジェクト詳細（有償プランのみ・上位10件）────────────────────────
+  // FREE プランは評価対象外のためリストから除外し、AI に渡さない。
+  const top = vm.projects
+    .filter(p => (p.paidType ?? '').toUpperCase() !== 'FREE')
+    .slice(0, 10);
   if (top.length > 0) {
     lines.push('');
     top.forEach(p => {
