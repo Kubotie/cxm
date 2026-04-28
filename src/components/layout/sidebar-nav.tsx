@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Home, Building2, Headphones, SlidersHorizontal,
+  Home, Building2, Headphones, BrainCircuit,
   Activity, Zap, ClipboardList, Database, Settings,
   ChevronLeft, ChevronRight, UserCircle, CheckSquare, Send,
 } from "lucide-react";
@@ -30,7 +30,7 @@ const NAV_ITEMS: NavItem[] = [
   { title: 'Actions',    icon: CheckSquare,      href: '/actions' },
   { title: 'Outbound',   icon: Send,             href: '/outbound' },
   { title: 'Support',    icon: Headphones,       href: '/support' },
-  { title: 'Policies',   icon: SlidersHorizontal, href: '/ops/policies' },
+  { title: 'AI Control', icon: BrainCircuit,       href: '/ops/ai' },
 
   // ── Ops エリア（セパレータ区切り）──
   { title: 'Summary Ops',  icon: Database,           href: '/ops/company-summary',       group: 'ops' },

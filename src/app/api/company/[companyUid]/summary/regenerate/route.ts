@@ -30,10 +30,10 @@ import { getCompanySummaryState } from '@/lib/nocodb/company-summary-read';
 import { saveCompanySummaryState } from '@/lib/nocodb/company-summary-write';
 import { getOpenAIClient, getOpenAIModel } from '@/lib/openai/client';
 import {
-  COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT,
   COMPANY_EVIDENCE_SUMMARY_JSON_SCHEMA,
   buildCompanyEvidenceSummaryPrompt,
   buildSummaryPolicySystemPrompt,
+  loadCompanySummarySystemPrompt,
 } from '@/lib/prompts/company-evidence-summary';
 import type { CompanyEvidenceSummaryResult } from '@/lib/prompts/company-evidence-summary';
 import { getPolicyById } from '@/lib/nocodb/policy-store';
@@ -104,7 +104,8 @@ export async function POST(
   const effectivePolicy = inlineFocus
     ? { ...(summaryPolicy ?? {}), summary_focus: inlineFocus }
     : summaryPolicy;
-  const systemPrompt = buildSummaryPolicySystemPrompt(effectivePolicy);
+  const basePrompt = await loadCompanySummarySystemPrompt();
+  const systemPrompt = buildSummaryPolicySystemPrompt(effectivePolicy, basePrompt);
 
   // ── AI 生成 ───────────────────────────────────────────────────────────────
   const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people);

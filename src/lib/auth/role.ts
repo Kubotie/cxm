@@ -35,8 +35,8 @@ export function canAccess(route: string, role: AppRole): boolean {
     return true;
   }
 
-  // Policies は CSM も閲覧・使用可能
-  if (route.startsWith('/ops/policies')) return true;
+  // AI Control は admin のみ
+  if (route.startsWith('/ops/ai')) return false;
 
   // その他の Ops エリア: admin / ops のみ
   if (route.startsWith('/ops')) return role === 'ops';

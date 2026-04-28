@@ -74,6 +74,10 @@ export const TABLE_IDS = {
   // ── Outbound キャンペーン管理 ─────────────────────────────────────────────────
   // 下書き・送信済みキャンペーンを管理するテーブル
   outbound_campaigns:          process.env.NOCODB_OUTBOUND_CAMPAIGNS_TABLE_ID        ?? 'mnq1tzg4wsr684p',
+  // ── AI 設定（プロンプト管理）────────────────────────────────────────────────
+  // システムプロンプトなど AI 設定を UI から管理するキーバリューストア。
+  // 未設定の場合はコード内のデフォルトプロンプトにフォールバックする。
+  ai_config:                   process.env.NOCODB_AI_CONFIG_TABLE_ID                 ?? '',
 };
 
 export interface NocoDBResponse<T> {

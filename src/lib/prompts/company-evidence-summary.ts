@@ -208,6 +208,31 @@ paid_type = FREE のプロジェクト（FREE未活用として表示）は：
 - リスク判定・health 評価の対象から **除外**（既にシグナル計算で除外済み）
 - FREE未活用件数は参考情報として利用してよいが、CSM アクションを促す根拠にしない`;
 
+// ── NocoDB からシステムプロンプトを動的ロード ──────────────────────────────────
+//
+// NocoDB の ai_config テーブルに config_key='company_summary_system_prompt' が
+// 存在する場合はそちらを使用する。未設定・エラー時は定数にフォールバック。
+
+/**
+ * AI コントロール画面で管理するシステムプロンプトキー定義。
+ * UI 側でこのキーを使って upsert する。
+ */
+export const AI_CONFIG_KEY_COMPANY_SUMMARY = 'company_summary_system_prompt';
+
+/**
+ * NocoDB の ai_config テーブルからベースシステムプロンプトを取得する。
+ * テーブル未設定・レコードなし・エラー時はコード内定数にフォールバック。
+ */
+export async function loadCompanySummarySystemPrompt(): Promise<string> {
+  try {
+    const { getAiConfig } = await import('@/lib/nocodb/ai-config');
+    const stored = await getAiConfig(AI_CONFIG_KEY_COMPANY_SUMMARY);
+    return stored ?? COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT;
+  } catch {
+    return COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT;
+  }
+}
+
 // ── Summary Policy を反映したシステムプロンプトビルダー ────────────────────────
 //
 // SummaryPolicy の summary_focus と output_schema をベースプロンプトに追記する。
@@ -217,10 +242,11 @@ import type { SummaryPolicy, OutputSchemaField } from '@/lib/policy/types';
 
 export function buildSummaryPolicySystemPrompt(
   policy: Partial<SummaryPolicy> | null,
+  basePrompt: string = COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT,
 ): string {
-  if (!policy) return COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT;
+  if (!policy) return basePrompt;
 
-  const lines: string[] = [COMPANY_EVIDENCE_SUMMARY_SYSTEM_PROMPT];
+  const lines: string[] = [basePrompt];
 
   if (policy.summary_focus) {
     lines.push(
