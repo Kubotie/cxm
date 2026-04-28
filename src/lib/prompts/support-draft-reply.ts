@@ -194,3 +194,17 @@ export function buildDraftReplyPromptFromContext(
 
   return lines.join('\n');
 }
+
+// ── NocoDB 管理プロンプトキー ─────────────────────────────────────────────────
+
+export const AI_CONFIG_KEY_SUPPORT_DRAFT_REPLY = 'support_draft_reply_system_prompt';
+
+/** NocoDB からベースプロンプト（tone/language 適用前のテンプレート）を取得する */
+export async function loadDraftReplyBasePrompt(): Promise<string | null> {
+  try {
+    const { getAiConfig } = await import('@/lib/nocodb/ai-config');
+    return await getAiConfig(AI_CONFIG_KEY_SUPPORT_DRAFT_REPLY);
+  } catch {
+    return null;
+  }
+}

@@ -264,3 +264,17 @@ export function buildUnifiedLogSignalPrompt(
 
   return lines.join('\n');
 }
+
+// ── NocoDB 管理プロンプトキー ─────────────────────────────────────────────────
+
+export const AI_CONFIG_KEY_UNIFIED_LOG_SIGNAL = 'unified_log_signal_system_prompt';
+
+export async function loadUnifiedLogSignalSystemPrompt(): Promise<string> {
+  try {
+    const { getAiConfig } = await import('@/lib/nocodb/ai-config');
+    const stored = await getAiConfig(AI_CONFIG_KEY_UNIFIED_LOG_SIGNAL);
+    return stored ?? UNIFIED_LOG_SIGNAL_SYSTEM_PROMPT;
+  } catch {
+    return UNIFIED_LOG_SIGNAL_SYSTEM_PROMPT;
+  }
+}

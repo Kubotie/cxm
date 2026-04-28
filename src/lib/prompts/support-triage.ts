@@ -179,3 +179,17 @@ export function buildSupportTriagePromptFromContext(
   }
   return lines.join('\n');
 }
+
+// ── NocoDB 管理プロンプトキー ─────────────────────────────────────────────────
+
+export const AI_CONFIG_KEY_SUPPORT_TRIAGE = 'support_triage_system_prompt';
+
+export async function loadSupportTriageSystemPrompt(): Promise<string> {
+  try {
+    const { getAiConfig } = await import('@/lib/nocodb/ai-config');
+    const stored = await getAiConfig(AI_CONFIG_KEY_SUPPORT_TRIAGE);
+    return stored ?? SUPPORT_TRIAGE_SYSTEM_PROMPT;
+  } catch {
+    return SUPPORT_TRIAGE_SYSTEM_PROMPT;
+  }
+}

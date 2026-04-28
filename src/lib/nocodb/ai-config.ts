@@ -15,7 +15,7 @@
 // 未設定時: getAiConfig() は null を返し、呼び出し元でデフォルト値にフォールバック。
 
 import { TABLE_IDS, nocoFetch } from '@/lib/nocodb/client';
-import { nocoCreate, nocoUpdate } from '@/lib/nocodb/write';
+import { nocoCreate, nocoUpdate, nocoDelete } from '@/lib/nocodb/write';
 
 // ── 型定義 ────────────────────────────────────────────────────────────────────
 
@@ -118,5 +118,24 @@ export async function upsertAiConfig(
       updated_at:  now,
       updated_by:  updatedBy,
     });
+  }
+}
+
+// ── 削除 ──────────────────────────────────────────────────────────────────────
+
+export async function deleteAiConfig(key: string): Promise<void> {
+  const tableId = TABLE_IDS.ai_config;
+  if (!tableId) throw new Error('NOCODB_AI_CONFIG_TABLE_ID が未設定です');
+
+  invalidateCache();
+
+  const existing = await nocoFetch<AiConfigRecord>(
+    tableId,
+    { where: `(config_key,eq,${key})`, limit: '1' },
+    false,
+  );
+
+  if (existing.length > 0 && existing[0].Id != null) {
+    await nocoDelete(tableId, existing[0].Id);
   }
 }
