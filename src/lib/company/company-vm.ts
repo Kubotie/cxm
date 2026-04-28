@@ -243,4 +243,8 @@ export interface CompanyDetailApiResponse {
   // ── Evidence ──────────────────────────────────────────────────────────────
   /** 直近 20 件の evidence（drill-down 起点） */
   evidence: AppEvidence[];
+
+  // ── Package Events ────────────────────────────────────────────────────────
+  /** この企業に紐づくパッケージ変動イベント（Metabase, sfId join） */
+  packageEvents?: import('@/lib/metabase/package-events').PackageEvent[];
 }
