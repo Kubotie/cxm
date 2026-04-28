@@ -18,7 +18,6 @@ import { GlobalHeader } from "@/components/layout/global-header";
 import { Button }       from "@/components/ui/button";
 import { Textarea }     from "@/components/ui/textarea";
 import { Badge }        from "@/components/ui/badge";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -469,24 +468,25 @@ export function AiControlPage() {
         </main>
       </div>
 
-      {/* 編集 Sheet */}
-      <Sheet open={editKey !== null} onOpenChange={open => { if (!open) { setEditKey(null); setSaveMsg(null); } }}>
-        <SheetContent side="right" className="w-[600px] sm:w-[700px] flex flex-col p-0">
-          <SheetHeader className="px-6 pt-6 pb-4 border-b">
-            <SheetTitle className="text-base">
+      {/* 編集 Dialog（大型モーダル） */}
+      <Dialog open={editKey !== null} onOpenChange={open => { if (!open) { setEditKey(null); setSaveMsg(null); } }}>
+        <DialogContent className="max-w-4xl w-full flex flex-col p-0 gap-0 max-h-[90vh]">
+          <DialogHeader className="px-6 pt-5 pb-4 border-b shrink-0">
+            <DialogTitle className="text-base">
               {PREDEFINED_CONFIGS.find(c => c.key === editKey)?.label ?? editKey}
-            </SheetTitle>
-            <SheetDescription className="text-xs font-mono text-slate-400">
+            </DialogTitle>
+            <DialogDescription className="text-xs font-mono text-slate-400 mt-0.5">
               {editKey}
-            </SheetDescription>
-          </SheetHeader>
+            </DialogDescription>
+          </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 min-h-0">
             <Textarea
               value={editValue}
               onChange={e => { setEditValue(e.target.value); setSaveMsg(null); }}
-              className="min-h-[500px] font-mono text-xs leading-relaxed resize-y"
+              className="min-h-[480px] font-mono text-xs leading-relaxed resize-none"
               placeholder="プロンプトを入力..."
+              style={{ height: 'clamp(480px, 60vh, 700px)' }}
             />
 
             {saveMsg && (
@@ -502,31 +502,29 @@ export function AiControlPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-2 px-6 py-4 border-t bg-white">
+          <div className="flex items-center gap-2 px-6 py-4 border-t bg-white shrink-0">
             <Button
-              size="sm"
               onClick={handleSave}
               disabled={!editIsDirty || isSaving}
             >
-              {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Save className="w-4 h-4 mr-1.5" />}
               保存
             </Button>
             <Button
-              size="sm"
               variant="outline"
               onClick={handleReset}
               disabled={isResetting}
               title="コードのデフォルト値を読み込む"
             >
-              {isResetting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <RotateCcw className="w-3.5 h-3.5 mr-1.5" />}
+              {isResetting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}
               デフォルトに戻す
             </Button>
             {editIsDirty && (
-              <span className="text-xs text-amber-600 ml-1">未保存の変更あり</span>
+              <span className="text-sm text-amber-600 ml-1">未保存の変更あり</span>
             )}
           </div>
-        </SheetContent>
-      </Sheet>
+        </DialogContent>
+      </Dialog>
 
       {/* 削除確認 Dialog */}
       <Dialog open={deleteKey !== null} onOpenChange={open => { if (!open) setDeleteKey(null); }}>
