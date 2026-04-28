@@ -52,6 +52,8 @@ import { fetchSupportAggregateForCompany } from '@/lib/nocodb/support-by-company
 import { fetchEvidence, sortEvidenceForDisplay } from '@/lib/nocodb/evidence';
 import { fetchAlerts }                from '@/lib/nocodb/alerts';
 import { fetchPeople }                 from '@/lib/nocodb/people';
+import { fetchProjectUserActivityMap } from '@/lib/metabase/project-user-activity';
+import { fetchPackageEventsBySfId }    from '@/lib/metabase/package-events';
 
 // ── VM builders ───────────────────────────────────────────────────────────────
 import {
@@ -110,6 +112,8 @@ export async function GET(
     evidence,
     people,
     alerts,
+    userActivityMap,
+    packageEvents,
   ] = await Promise.all([
     getCompanySummaryState(companyUid).catch(() => null),
     fetchBothPhases(companyUid).catch(() => ({ csmPhase: null, crmPhase: null })),
@@ -122,6 +126,10 @@ export async function GET(
     fetchEvidence(companyUid).catch(() => []),
     fetchPeople(companyUid).catch(() => []),
     fetchAlerts(companyUid).catch(() => []),
+    fetchProjectUserActivityMap().catch(() => new Map()),
+    company.sfAccountId
+      ? fetchPackageEventsBySfId(company.sfAccountId).catch(() => [])
+      : Promise.resolve([]),
   ]);
 
   // ── VM 構築 ──────────────────────────────────────────────────────────────
@@ -133,7 +141,7 @@ export async function GET(
     commLogs.notionMinutes,
   );
   const projectVM        = projects.length > 0
-    ? buildProjectAggregateVM(projects)
+    ? buildProjectAggregateVM(projects, userActivityMap)
     : EMPTY_PROJECT_AGGREGATE;
   const healthVM         = buildHealthSignalVM({
     companyUid,
@@ -188,6 +196,8 @@ export async function GET(
     },
 
     evidence: sortEvidenceForDisplay(evidence).slice(0, 20),
+
+    packageEvents,
   };
 
   return NextResponse.json(response);

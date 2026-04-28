@@ -32,7 +32,7 @@ export async function GET(
 
   const [commLogs, evidenceEntries] = await Promise.all([
     fetchAllCommunicationLogs(companyUid).catch(() => ({
-      chatwork: [], slack: [], notionMinutes: [],
+      chatwork: [], slack: [], notionMinutes: [], intercomMail: [],
     })),
     fetchLogEntries(companyUid).catch(() => []),
   ]);
@@ -41,6 +41,7 @@ export async function GET(
     commLogs.chatwork,
     commLogs.slack,
     commLogs.notionMinutes,
+    commLogs.intercomMail,
   );
 
   return NextResponse.json({

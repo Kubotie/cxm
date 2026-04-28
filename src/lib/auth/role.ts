@@ -1,25 +1,19 @@
 // ─── ロール管理 ──────────────────────────────────────────────────────────────
 //
-// Phase 1: NEXT_PUBLIC_APP_ROLE 環境変数でロールを切り替える（開発・デモ用）。
-// Phase 2: 将来の認証基盤（NextAuth / Clerk 等）に差し替える。
+// ロールは NocoDB の staff_identify.role から取得する（Cookie 経由）。
+// 役割割り当て:
+//   admin   → 窪田（全機能）
+//   manager → 大内（Ops 系を除く全機能）
+//   csm     → 一般 CSM（自分担当データのみ）
+//   viewer  → 閲覧専用
 //
 // 利用例:
-//   const role = getCurrentRole();
+//   const role = profile.role;
 //   if (!canAccess('/ops', role)) return null;
 
-export type AppRole = 'admin' | 'ops' | 'csm' | 'viewer';
+export type AppRole = 'admin' | 'manager' | 'ops' | 'csm' | 'viewer';
 
-const VALID_ROLES: AppRole[] = ['admin', 'ops', 'csm', 'viewer'];
-
-/**
- * 現在のロールを返す。
- * 環境変数 NEXT_PUBLIC_APP_ROLE が未設定または不正値の場合は 'csm' を返す。
- */
-export function getCurrentRole(): AppRole {
-  const raw = process.env.NEXT_PUBLIC_APP_ROLE as AppRole | undefined;
-  if (raw && VALID_ROLES.includes(raw)) return raw;
-  return 'csm';
-}
+export const VALID_ROLES: AppRole[] = ['admin', 'manager', 'ops', 'csm', 'viewer'];
 
 /**
  * 指定ルートへのアクセス可否を返す。
@@ -29,11 +23,26 @@ export function canAccess(route: string, role: AppRole): boolean {
   // Admin は全ルートにアクセス可能
   if (role === 'admin') return true;
 
-  // Ops エリア: admin / ops のみ
+  // Manager: Ops の運用系（バッチ・ログ・SF データ）を除く全ルート
+  if (role === 'manager') {
+    const opsOnlyRoutes = [
+      '/ops/company-summary',
+      '/ops/company-mutation-logs',
+      '/ops/salesforce',
+      '/ops/sf-data-prep',
+    ];
+    if (opsOnlyRoutes.some(r => route.startsWith(r))) return false;
+    return true;
+  }
+
+  // Policies は CSM も閲覧・使用可能
+  if (route.startsWith('/ops/policies')) return true;
+
+  // その他の Ops エリア: admin / ops のみ
   if (route.startsWith('/ops')) return role === 'ops';
 
-  // Settings: admin のみ（ops も不可）
-  if (route === '/settings') return false;
+  // Settings: 全ロールがアクセス可能
+  if (route === '/settings') return true;
 
   // それ以外: viewer も含めて全ロールが閲覧可能
   return true;

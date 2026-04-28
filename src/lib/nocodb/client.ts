@@ -31,7 +31,7 @@ export const TABLE_IDS = {
   // ── Company: derived tables ───────────────────────────────────────────────
   unified_log_signal_state:    process.env.NOCODB_UNIFIED_LOG_SIGNAL_STATE_TABLE_ID    ?? '',
   company_summary_state:       process.env.NOCODB_COMPANY_SUMMARY_STATE_TABLE_ID       ?? '',
-  company_actions:             process.env.NOCODB_COMPANY_ACTIONS_TABLE_ID             ?? '',
+  company_actions:             process.env.NOCODB_COMPANY_ACTIONS_TABLE_ID             ?? 'm3mu9rwf2w7iho3',
   // CXM マネージド連絡先（CSM が追加・編集。既存の people テーブルとは別テーブル）
   company_people:              process.env.NOCODB_COMPANY_PEOPLE_TABLE_ID              ?? '',
   // ── Company: phase management ─────────────────────────────────────────────
@@ -59,6 +59,21 @@ export const TABLE_IDS = {
   // alert_policies / summary_policies を管理する運用テーブル。
   // 未設定の場合は CRUD API が 503 を返す（graceful degradation）。
   policies:                    process.env.NOCODB_POLICIES_TABLE_ID                    ?? '',
+  // ── User profiles ────────────────────────────────────────────────────────────
+  // スタッフ識別テーブル（staff_identify）をユーザープロファイルとして利用する。
+  // owner_name in companies = staff_identify.name2（Roman/nickname 形式）
+  staff_identify:              process.env.NOCODB_STAFF_IDENTIFY_TABLE_ID              ?? 'munjnmflbul56cu',
+  // ── Outbound channel settings ─────────────────────────────────────────────────
+  // 各企業の Slack / Chatwork / Intercom チャンネル設定 SSOT
+  // カラム: company_uid, channel_type('slack'|'chatwork'|'intercom'), channel_id, channel_name, is_active
+  company_channel_identify:    process.env.NOCODB_COMPANY_CHANNEL_IDENTIFY_TABLE_ID   ?? 'm8ssbcn7d8rzzu0',
+  // ── Slack workspace bot tokens ─────────────────────────────────────────────
+  // 外部 Slack ワークスペース（ext_slack_workspace=true）用の bot_token を管理
+  // カラム: slack_team_id, bot_token
+  slack_workspace_tokens:      process.env.NOCODB_SLACK_WORKSPACE_TOKENS_TABLE_ID    ?? 'mcktzoact8duhhm',
+  // ── Outbound キャンペーン管理 ─────────────────────────────────────────────────
+  // 下書き・送信済みキャンペーンを管理するテーブル
+  outbound_campaigns:          process.env.NOCODB_OUTBOUND_CAMPAIGNS_TABLE_ID        ?? 'mnq1tzg4wsr684p',
 };
 
 export interface NocoDBResponse<T> {
@@ -154,12 +169,14 @@ export async function nocoFetchByUids<T extends { company_uid?: string | null }>
   tableId: string,
   uids: string[],
   extraParams: Omit<Record<string, string>, 'where'> = {},
+  ttl: number | false = NOCO_DEFAULT_TTL,
 ): Promise<Map<string, T[]>> {
   if (!tableId || uids.length === 0) return new Map();
   const where = `(company_uid,in,${uids.join(',')})`;
-  // 件数上限: uids × 想定最大件数（project は 50/社程度、log 系は 100/社）
-  const limit = String(Math.min(uids.length * 100, 1000));
-  const rows = await nocoFetch<T>(tableId, { where, limit, ...extraParams });
+  // 件数上限: uids × 想定最大件数。extraParams.limit が指定されていればそちらを優先。
+  // デフォルトは uids × 20（上限 500）。log 系 bulk は呼び出し元で適切に指定すること。
+  const limit = extraParams.limit ?? String(Math.min(uids.length * 20, 500));
+  const rows = await nocoFetch<T>(tableId, { where, limit, ...extraParams }, ttl);
   const result = new Map<string, T[]>();
   for (const uid of uids) result.set(uid, []);
   for (const row of rows) {

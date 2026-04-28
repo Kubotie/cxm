@@ -11,6 +11,7 @@
 // limit        : 最大件数（デフォルト: 100, 最大: 500）
 // company_uids : カンマ区切りの UID 指定（省略=全 CSM 管理企業）
 // summary_type : デフォルト "default"
+// owner        : companies.owner_name でフィルタ（staff_identify.name2 に対応）
 //
 // ── レスポンス ──────────────────────────────────────────────────────────────
 // {
@@ -112,6 +113,7 @@ export async function GET(req: NextRequest) {
   const rawReview    = searchParams.get('review');
   const rawUids      = searchParams.get('company_uids');
   const summaryType  = searchParams.get('summary_type') ?? 'default';
+  const ownerName    = searchParams.get('owner') ?? undefined;
 
   const freshnessFilter = rawFreshness
     ? (rawFreshness.split(',').map(s => s.trim()).filter(s => VALID_FRESHNESS.has(s)) as SummaryFreshnessStatus[])
@@ -136,6 +138,7 @@ export async function GET(req: NextRequest) {
       freshness_filter: freshnessFilter,
       review_filter:   reviewFilter,
       summary_type:    summaryType,
+      owner_name:      ownerName,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

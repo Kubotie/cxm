@@ -43,6 +43,28 @@ import { ACTION_TO_SF_STATUS } from './sync-policy';
 //   SALESFORCE_API_VERSION     : v60.0 等
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Salesforce Event 型 ───────────────────────────────────────────────────────
+
+/** Salesforce REST API が返す Event（行動）レコードの必要フィールド */
+export interface SalesforceEvent {
+  Id:                string;
+  Subject:           string;
+  /** 開始日時 ISO8601 */
+  StartDateTime?:    string;
+  /** 終了日時 ISO8601 */
+  EndDateTime?:      string;
+  /** 活動日 YYYY-MM-DD */
+  ActivityDate?:     string;
+  Description?:      string;
+  /** Salesforce User ID */
+  OwnerId?:          string;
+  /** 関連先オブジェクト（Account / Opportunity）ID */
+  WhatId?:           string;
+  /** 関連コンタクト（Contact / Lead）ID */
+  WhoId?:            string;
+  IsAllDayEvent?:    boolean;
+}
+
 // ── Salesforce Task 型 ────────────────────────────────────────────────────────
 
 /** Salesforce REST API が返す Task レコードの必要フィールド */
@@ -230,6 +252,20 @@ export interface SalesforceTaskAdapter {
   fetchTasksByAccount(sfAccountId: string): Promise<SalesforceTask[]>;
 
   /**
+   * 担当者（OwnerId）に紐づく未完了 Task 一覧を取得する（/actions 画面用）。
+   * @param sfUserId  Salesforce User ID（staff_identify.sf_account_id）
+   * @returns SalesforceTask[]（空の場合は []）
+   */
+  fetchTasksByOwner(sfUserId: string): Promise<SalesforceTask[]>;
+
+  /**
+   * 担当者（OwnerId）に紐づく行動（Event）一覧を取得する（/actions 画面用）。
+   * @param sfUserId  Salesforce User ID（staff_identify.sf_account_id）
+   * @returns SalesforceEvent[]（空の場合は []）
+   */
+  fetchEventsByOwner(sfUserId: string): Promise<SalesforceEvent[]>;
+
+  /**
    * SF Task を CXM Action に紐付ける情報を取得する。
    * sfTaskId → ActionSfTaskLink を返す。
    */
@@ -321,6 +357,28 @@ export const salesforceRestTaskAdapter: SalesforceTaskAdapter = {
     return sfQuery<SalesforceTask>(soql);
   },
 
+  async fetchTasksByOwner(sfUserId: string): Promise<SalesforceTask[]> {
+    const soql = [
+      'SELECT Id,Subject,Status,ActivityDate,Priority,Description,OwnerId,WhoId,WhatId,IsClosed',
+      ' FROM Task',
+      ` WHERE OwnerId='${sfUserId}' AND IsClosed=false`,
+      ' ORDER BY ActivityDate ASC NULLS LAST',
+      ' LIMIT 200',
+    ].join('');
+    return sfQuery<SalesforceTask>(soql);
+  },
+
+  async fetchEventsByOwner(sfUserId: string): Promise<SalesforceEvent[]> {
+    const soql = [
+      'SELECT Id,Subject,ActivityDate,StartDateTime,EndDateTime,Description,OwnerId,WhoId,WhatId,IsAllDayEvent',
+      ' FROM Event',
+      ` WHERE OwnerId='${sfUserId}'`,
+      ' ORDER BY ActivityDate ASC NULLS LAST',
+      ' LIMIT 200',
+    ].join('');
+    return sfQuery<SalesforceEvent>(soql);
+  },
+
   getTaskLink(sfTaskId: string, actionId: string): ActionSfTaskLink {
     return {
       actionId,
@@ -352,6 +410,14 @@ export const placeholderSalesforceTaskAdapter: SalesforceTaskAdapter = {
 
   async fetchTasksByAccount(_sfAccountId: string): Promise<SalesforceTask[]> {
     throw new Error('Salesforce Task adapter is not yet connected.');
+  },
+
+  async fetchTasksByOwner(_sfUserId: string): Promise<SalesforceTask[]> {
+    return []; // 未接続時は空を返す（graceful degradation）
+  },
+
+  async fetchEventsByOwner(_sfUserId: string): Promise<SalesforceEvent[]> {
+    return []; // 未接続時は空を返す（graceful degradation）
   },
 
   getTaskLink(sfTaskId: string, actionId: string): ActionSfTaskLink {

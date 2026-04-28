@@ -62,6 +62,85 @@ export async function fetchOverdueActionSignalsByUids(
 // ── Read ─────────────────────────────────────────────────────────────────────
 
 /**
+ * Salesforce Account ID でアクション一覧を横断取得する（/actions 画面用）。
+ * NocoDB の eq フィルタが不安定なため、status フィルタのみ NocoDB に渡し、
+ * owner_sf_id は JS 側でフィルタリングする。
+ *
+ * @param sfAccountId  staff_identify.sf_account_id（担当者の SF Account ID）
+ * @param includeAll   true の場合 done / cancelled も含む（デフォルトは未完了のみ）
+ */
+export async function fetchAllActionsByOwner(
+  sfAccountId: string,
+  includeAll = false,
+): Promise<AppCompanyAction[]> {
+  const tableId = TABLE_IDS.company_actions;
+  if (!tableId || !sfAccountId) return [];
+
+  const where = includeAll
+    ? undefined
+    : `(status,in,open,in_progress)`;
+
+  const rows = await nocoFetch<RawCompanyAction>(tableId, {
+    ...(where ? { where } : {}),
+    sort:  '-created_at',
+    limit: '500',
+  }, false).catch(() => [] as RawCompanyAction[]); // no-store: 常に最新を取得
+
+  return rows
+    .map(toAppCompanyAction)
+    .filter(a => a.ownerSfId === sfAccountId);
+}
+
+/**
+ * 複数の company_uid に紐づくアクション一覧を取得する（担当顧客フィルタ用）。
+ * /actions 画面で「自分担当企業の全アクション」を表示するために使用する。
+ *
+ * @param companyUids  対象の company_uid 配列
+ * @param includeAll   true の場合 done / cancelled も含む（デフォルトは未完了のみ）
+ */
+export async function fetchActionsByCompanyUids(
+  companyUids: string[],
+  includeAll = false,
+): Promise<AppCompanyAction[]> {
+  const tableId = TABLE_IDS.company_actions;
+  if (!tableId || companyUids.length === 0) return [];
+
+  const statusFilter = includeAll ? '' : `(status,in,open,in_progress)~and`;
+  const where = `${statusFilter}(company_uid,in,${companyUids.join(',')})`;
+
+  const rows = await nocoFetch<RawCompanyAction>(tableId, {
+    where,
+    sort:  '-created_at',
+    limit: '500',
+  }, false).catch(() => [] as RawCompanyAction[]); // no-store: 常に最新を取得
+
+  return rows.map(toAppCompanyAction);
+}
+
+/**
+ * 全ユーザーのアクション一覧を取得する（admin 向け）。
+ * owner フィルタなし・全企業横断。
+ *
+ * @param includeAll  true の場合 done / cancelled も含む（デフォルトは未完了のみ）
+ */
+export async function fetchAllActionsAdmin(
+  includeAll = false,
+): Promise<AppCompanyAction[]> {
+  const tableId = TABLE_IDS.company_actions;
+  if (!tableId) return [];
+
+  const where = includeAll ? undefined : `(status,in,open,in_progress)`;
+
+  const rows = await nocoFetch<RawCompanyAction>(tableId, {
+    ...(where ? { where } : {}),
+    sort:  '-created_at',
+    limit: '500',
+  }, false).catch(() => [] as RawCompanyAction[]);
+
+  return rows.map(toAppCompanyAction);
+}
+
+/**
  * company_uid に紐づく全アクションを取得する。
  * created_at 降順で返す。
  * テーブル未設定時は空配列を返す。
@@ -86,17 +165,30 @@ export async function getCompanyActions(
 export interface CompanyActionCreatePayload {
   action_id:    string;
   company_uid:  string;
+  /** 表示用企業名（非正規化） */
+  company_name?: string | null;
   title:        string;
   /** NocoDB カラム名は description */
   description:  string;
   owner:        string;
+  /** アクション担当者の Salesforce Account ID（フィルタキー）*/
+  owner_sf_id?: string | null;
   due_date:     string | null;
   status:       'open' | 'in_progress' | 'done' | 'cancelled';
+  /** high / medium / low */
+  urgency?:     'high' | 'medium' | 'low' | null;
+  /** call / mail / intercom / slack */
+  recommended_channel?: 'call' | 'mail' | 'intercom' | 'slack' | null;
   created_from: 'manual' | 'risk_signal' | 'opportunity_signal' | 'support_case' | 'people_risk';
   source_ref:   string | null;
   person_ref:   string | null;
   sf_todo_status: 'not_synced' | 'synced' | 'sync_error' | null;
   sf_todo_id:   string | null;
+  poc?:          string | null;
+  activity_type?: string | null;
+  result?:       string | null;
+  event_format?: string | null;
+  action_purpose?: string | null;
   created_at:   string;
 }
 
@@ -123,15 +215,22 @@ export async function createCompanyAction(
 // ── Update ───────────────────────────────────────────────────────────────────
 
 export type CompanyActionPatchPayload = Partial<{
-  title:             string;
+  title:               string;
   /** NocoDB カラム名は description */
-  description:       string;
-  owner:             string;
-  due_date:          string | null;
-  status:            'open' | 'in_progress' | 'done' | 'cancelled';
-  sf_todo_status:    'not_synced' | 'synced' | 'sync_error' | null;
-  sf_todo_id:        string | null;
-  sf_last_synced_at: string | null;
+  description:         string;
+  owner:               string;
+  due_date:            string | null;
+  status:              'open' | 'in_progress' | 'done' | 'cancelled';
+  urgency:             'high' | 'medium' | 'low' | null;
+  recommended_channel: 'call' | 'mail' | 'intercom' | 'slack' | null;
+  sf_todo_status:      'not_synced' | 'synced' | 'sync_error' | null;
+  sf_todo_id:          string | null;
+  sf_last_synced_at:   string | null;
+  poc:                 string | null;
+  activity_type:       string | null;
+  result:              string | null;
+  event_format:        string | null;
+  action_purpose:      string | null;
 }>;
 
 /**

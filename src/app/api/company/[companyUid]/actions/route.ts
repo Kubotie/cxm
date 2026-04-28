@@ -66,9 +66,11 @@ export async function POST(
   const payload: CompanyActionCreatePayload = {
     action_id:      body.action_id!,
     company_uid:    companyUid,
+    company_name:   (rawBody.company_name as string | undefined)?.trim() ?? null,
     title:          body.title!.trim(),
     description:    descriptionValue,
     owner:          (rawBody.owner as string | undefined)?.trim() ?? '',
+    owner_sf_id:    (rawBody.owner_sf_id as string | null | undefined) ?? null,
     due_date:       (rawBody.due_date as string | null | undefined) ?? null,
     status:         (rawBody.status as CompanyActionCreatePayload['status'] | undefined) ?? 'open',
     created_from:   (rawBody.created_from as CompanyActionCreatePayload['created_from'] | undefined) ?? 'manual',
@@ -76,6 +78,11 @@ export async function POST(
     person_ref:     (rawBody.person_ref as string | null | undefined) ?? null,
     sf_todo_status: (rawBody.sf_todo_status as CompanyActionCreatePayload['sf_todo_status'] | undefined) ?? null,
     sf_todo_id:     (rawBody.sf_todo_id as string | null | undefined) ?? null,
+    poc:            (rawBody.poc as string | null | undefined) ?? null,
+    activity_type:  (rawBody.activity_type as string | null | undefined) ?? null,
+    result:         (rawBody.result as string | null | undefined) ?? null,
+    event_format:   (rawBody.event_format as string | null | undefined) ?? null,
+    action_purpose: (rawBody.action_purpose as string | null | undefined) ?? null,
     created_at:     (rawBody.created_at as string | undefined) ?? new Date().toISOString(),
   };
 

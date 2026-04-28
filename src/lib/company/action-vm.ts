@@ -37,25 +37,40 @@ export type ActionSourceType = 'header' | 'signal' | 'summary' | 'people';
 
 export interface LocalAction {
   /** NocoDB row Id（永続化後に設定。未保存の場合は undefined） */
-  rowId?:       number;
-  id:           string;
-  companyUid:   string;
-  title:        string;
-  body:         string;
-  owner:        string;
-  dueDate:      string | null;
+  rowId?:             number;
+  id:                 string;
+  companyUid:         string;
+  companyName?:       string;
+  title:              string;
+  body:               string;
+  owner:              string;
+  /** アクション担当者の Salesforce Account ID（フィルタキー）*/
+  ownerSfId:          string | null;
+  dueDate:            string | null;
   /** 起票元タイプ（詳細分類） */
-  createdFrom:  ActionCreatedFrom;
+  createdFrom:        ActionCreatedFrom;
   /** signal / case title など（参照用） */
-  sourceRef:    string | null;
+  sourceRef:          string | null;
   /** Org Chart 起票時の person 名（参照用） */
-  personRef:    string | null;
+  personRef:          string | null;
+  urgency:            ActionUrgency;
+  recommendedChannel: RecommendedChannel | null;
   /** SF ToDo 連動状態（null = 連動なし） */
-  sfTodoStatus: 'not_synced' | 'synced' | 'sync_error' | null;
+  sfTodoStatus:       'not_synced' | 'synced' | 'sync_error' | null;
   /** Salesforce Task ID（sf_push 時のキー）*/
-  sfTodoId:     string | null;
-  status:       ActionStatus;
-  createdAt:    string;
+  sfTodoId:           string | null;
+  /** SF Event 接点者レベル（POC__c） */
+  poc:                string | null;
+  /** SF Event 形式（Type）: Call / Email / Meeting / Event / Intercom / Chat / Other */
+  activityType:       string | null;
+  /** SF Event 結果（Result__c）: S / A / B / C / D */
+  result:             string | null;
+  /** SF Event 活動形式（Event_format__c）: Web / 訪問 */
+  eventFormat:        string | null;
+  /** SF Event 行動目的・内容（Action_Purpose__c） */
+  actionPurpose:      string | null;
+  status:             ActionStatus;
+  createdAt:          string;
 }
 
 export function createLocalAction(
@@ -72,18 +87,58 @@ export function createLocalAction(
 // ── Action badges / labels ────────────────────────────────────────────────────
 
 export const ACTION_STATUS_BADGE: Record<ActionStatus, { label: string; cls: string; dotCls: string }> = {
-  open:        { label: 'Open',       cls: 'bg-blue-50 text-blue-700 border-blue-200',    dotCls: 'bg-blue-400' },
-  in_progress: { label: '対応中',     cls: 'bg-amber-50 text-amber-700 border-amber-200', dotCls: 'bg-amber-400' },
-  done:        { label: '完了',       cls: 'bg-green-50 text-green-700 border-green-200', dotCls: 'bg-green-400' },
+  open:        { label: '未着手',     cls: 'bg-blue-50 text-blue-700 border-blue-200',    dotCls: 'bg-blue-400' },
+  in_progress: { label: '計画中',     cls: 'bg-amber-50 text-amber-700 border-amber-200', dotCls: 'bg-amber-400' },
+  done:        { label: '実施済み',   cls: 'bg-green-50 text-green-700 border-green-200', dotCls: 'bg-green-400' },
   cancelled:   { label: 'キャンセル', cls: 'bg-gray-50 text-gray-500 border-gray-200',   dotCls: 'bg-gray-300' },
 };
 
+/** 人が理解しやすい文脈ラベル（source_type を前面に出さない）*/
 export const ACTION_CREATED_FROM_LABEL: Record<ActionCreatedFrom, string> = {
-  manual:             '手動',
-  risk_signal:        'リスク起票',
-  opportunity_signal: '機会起票',
-  support_case:       'サポート起票',
-  people_risk:        'People起票',
+  manual:             '手動起票',
+  risk_signal:        'リスク対応',
+  opportunity_signal: '拡張機会',
+  support_case:       'サポート起点',
+  people_risk:        'キーパーソン対応',
+};
+
+// ── Urgency ───────────────────────────────────────────────────────────────────
+
+export type ActionUrgency = 'high' | 'medium' | 'low';
+
+export const ACTION_URGENCY_BADGE: Record<ActionUrgency, { label: string; dotCls: string; textCls: string }> = {
+  high:   { label: '高',   dotCls: 'bg-red-500',    textCls: 'text-red-600' },
+  medium: { label: '中',   dotCls: 'bg-amber-400',  textCls: 'text-amber-600' },
+  low:    { label: '低',   dotCls: 'bg-slate-300',  textCls: 'text-slate-400' },
+};
+
+// ── Recommended Channel ───────────────────────────────────────────────────────
+
+export type RecommendedChannel = 'call' | 'mail' | 'intercom' | 'slack';
+
+export const CHANNEL_LABEL: Record<RecommendedChannel, string> = {
+  call:     '通話',
+  mail:     'メール',
+  intercom: 'Intercom',
+  slack:    'Slack',
+};
+
+// ── Result grade ─────────────────────────────────────────────────────────────
+
+export const RESULT_BADGE: Record<string, { cls: string }> = {
+  S: { cls: 'bg-emerald-100 text-emerald-800 border border-emerald-300' },
+  A: { cls: 'bg-sky-100    text-sky-800    border border-sky-300' },
+  B: { cls: 'bg-slate-100  text-slate-600  border border-slate-300' },
+  C: { cls: 'bg-amber-100  text-amber-800  border border-amber-300' },
+  D: { cls: 'bg-red-100    text-red-800    border border-red-400 font-bold' },
+};
+
+/** 接点者（POC）の略称マップ */
+export const POC_SHORT: Record<string, string> = {
+  '経営層・役員（決裁者）':         '経営層',
+  '本部長・部長（承認者）':         '部長',
+  '課長・マネージャー（推進責任者）': '課長',
+  'リーダー・メンバー（実務担当者）': '担当者',
 };
 
 export const SF_TODO_STATUS_BADGE = {

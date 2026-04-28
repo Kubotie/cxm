@@ -3,7 +3,7 @@
 // ログ（Chatwork / Slack / Notion議事録）のメッセージ送信者・参加者から
 // 会社連絡先の候補を抽出し、CSM が確認して company_people へ反映する仕組み。
 
-export type ContactCandidateSource = 'chatwork' | 'slack' | 'notion_minutes';
+export type ContactCandidateSource = 'chatwork' | 'slack' | 'notion_minutes' | 'intercom_mail';
 
 /** ログから抽出した単一の連絡先候補 */
 export interface ContactCandidate {

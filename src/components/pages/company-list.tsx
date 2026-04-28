@@ -536,6 +536,8 @@ export function CompanyList() {
   const [loadError,   setLoadError]   = useState<string | null>(null);
   const [refreshing,  setRefreshing]  = useState(false);
   const [lastFetched, setLastFetched] = useState<string | null>(null);
+  // ユーザースコープフィルタ（localStorage から読み込む）
+  const [ownerFilter, setOwnerFilter] = useState<string | null>(null);
 
   // ── URL クエリ → 初期セグメント解決 ────────────────────────────────────────
   // ?segment=renewal_30 / renewal_90 / arr_at_risk / expanding / support_high 等を受け取る
@@ -585,10 +587,11 @@ export function CompanyList() {
   }, [searchParams, router, pathname]);
 
   // ── データ取得 ──────────────────────────────────────────────────────────────
-  const load = useCallback((refresh = false) => {
+  const load = useCallback((refresh = false, owner?: string | null) => {
     if (refresh) setRefreshing(true);
     setLoadError(null);
-    apiFetch('/api/company-summary-list?limit=500&sort=priority_desc')
+    const ownerParam = owner ? `&owner=${encodeURIComponent(owner)}` : '';
+    apiFetch(`/api/company-summary-list?limit=500&sort=priority_desc${ownerParam}`)
       .then(r => r.ok ? r.json() : r.json().then((e: {error?:string}) => Promise.reject(e.error ?? '取得エラー')))
       .then((data: { items: CompanyListItemVM[] }) => {
         setItems(data.items ?? []);
@@ -598,7 +601,27 @@ export function CompanyList() {
       .finally(() => setRefreshing(false));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // マウント時: ローカルストレージからユーザースコープを読んでフィルタ適用
+  useEffect(() => {
+    const resolveOwner = async (): Promise<string | null> => {
+      try {
+        const profileRes = await fetch('/api/user/profile');
+        if (!profileRes.ok) return null;
+        const profile = await profileRes.json() as { name2?: string };
+        if (!profile.name2) return null;
+        const prefsRaw = localStorage.getItem(`cxm_prefs_${profile.name2}`);
+        if (!prefsRaw) return null;
+        const prefs = JSON.parse(prefsRaw) as { default_home_scope?: string };
+        return prefs.default_home_scope === 'mine' ? (profile.name2 ?? null) : null;
+      } catch { return null; }
+    };
+
+    resolveOwner().then(owner => {
+      setOwnerFilter(owner);
+      load(false, owner);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // マウント時1回のみ
 
   // ── フィルタ helpers ─────────────────────────────────────────────────────────
   function setFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
@@ -725,10 +748,15 @@ export function CompanyList() {
               </Select>
 
               {/* 更新 */}
-              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => load(true)} disabled={refreshing}>
+              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => load(true, ownerFilter)} disabled={refreshing}>
                 <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
               </Button>
               {lastFetched && <span className="text-[11px] text-slate-400">{lastFetched}</span>}
+              {ownerFilter && (
+                <span className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                  {ownerFilter} 担当
+                </span>
+              )}
             </div>
           </div>
 
@@ -929,7 +957,7 @@ export function CompanyList() {
             <AlertBox variant="error" className="mx-6 mt-4 flex-shrink-0">
               <span className="flex items-center justify-between gap-2 w-full">
                 {loadError}
-                <Button variant="ghost" size="sm" className="h-6 text-xs flex-shrink-0" onClick={() => load()}>再試行</Button>
+                <Button variant="ghost" size="sm" className="h-6 text-xs flex-shrink-0" onClick={() => load(false, ownerFilter)}>再試行</Button>
               </span>
             </AlertBox>
           )}

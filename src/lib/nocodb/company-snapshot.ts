@@ -19,6 +19,33 @@
 import { nocoFetch, nocoFetchByUids, TABLE_IDS } from '@/lib/nocodb/client';
 import { nocoCreate, nocoUpdate } from '@/lib/nocodb/write';
 
+// ── プロセスメモリキャッシュ ──────────────────────────────────────────────────
+// スナップショットは7.9MB/クエリ × 3クエリで Next.js 2MB 上限を超えるため
+// プロセスキャッシュ（5分 TTL）で毎回フェッチを防ぐ。
+// キャッシュキー: "prev" / "YYYY-MM-DD"（targetDate）
+
+const SNAPSHOT_TTL_MS = 5 * 60 * 1000; // 5分
+
+interface SnapshotCacheEntry {
+  data:      Map<string, CompanyDailySnapshot>;
+  cachedAt:  number;
+}
+const _snapshotCache = new Map<string, SnapshotCacheEntry>();
+
+function getSnapshotCache(key: string): Map<string, CompanyDailySnapshot> | null {
+  const entry = _snapshotCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.cachedAt > SNAPSHOT_TTL_MS) {
+    _snapshotCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setSnapshotCache(key: string, data: Map<string, CompanyDailySnapshot>): void {
+  _snapshotCache.set(key, { data, cachedAt: Date.now() });
+}
+
 // ── 型定義 ───────────────────────────────────────────────────────────────────
 
 export interface CompanyDailySnapshot {
@@ -157,7 +184,18 @@ export async function fetchSnapshotsByDate(
   const tableId = TABLE_IDS.company_daily_snapshot;
   if (!tableId || companyUids.length === 0) return new Map();
 
-  // targetDate 以前で最新のスナップショットを uid ごとに1件取得
+  const cacheKey = `date:${targetDate}`;
+  const cached = getSnapshotCache(cacheKey);
+  if (cached) {
+    // キャッシュから要求 uid 分だけ返す
+    const filtered = new Map<string, CompanyDailySnapshot>();
+    for (const uid of companyUids) {
+      const v = cached.get(uid);
+      if (v) filtered.set(uid, v);
+    }
+    return filtered;
+  }
+
   const where = `(company_uid,in,${companyUids.join(',')})~and(snapshot_date,lte,${targetDate})`;
   const limit = String(Math.min(companyUids.length * 2, 1000));
 
@@ -171,8 +209,9 @@ export async function fetchSnapshotsByDate(
   for (const row of rows) {
     const uid = row.company_uid;
     if (!uid) continue;
-    if (!result.has(uid)) result.set(uid, row); // sort 済みで先着1件 = 最新
+    if (!result.has(uid)) result.set(uid, row);
   }
+  setSnapshotCache(cacheKey, result);
   return result;
 }
 
@@ -189,10 +228,19 @@ export async function fetchPreviousSnapshotsByUids(
   const tableId = TABLE_IDS.company_daily_snapshot;
   if (!tableId || companyUids.length === 0) return new Map();
 
-  const today = todayDateStr();
-  // NocoDB フィルタ: company_uid が対象リストに含まれ、かつ snapshot_date < today
+  const today    = todayDateStr();
+  const cacheKey = `prev:${today}`;
+  const cached   = getSnapshotCache(cacheKey);
+  if (cached) {
+    const filtered = new Map<string, CompanyDailySnapshot>();
+    for (const uid of companyUids) {
+      const v = cached.get(uid);
+      if (v) filtered.set(uid, v);
+    }
+    return filtered;
+  }
+
   const where = `(company_uid,in,${companyUids.join(',')})~and(snapshot_date,lt,${today})`;
-  // 1社あたり最大2件取得して最新を選ぶ（同日に複数行がある場合の保険）
   const limit = String(Math.min(companyUids.length * 2, 1000));
 
   const rows = await nocoFetch<CompanyDailySnapshot>(tableId, {
@@ -205,8 +253,8 @@ export async function fetchPreviousSnapshotsByUids(
   for (const row of rows) {
     const uid = row.company_uid;
     if (!uid) continue;
-    // sort 済みで先着1件 = 最新の前日スナップ
     if (!result.has(uid)) result.set(uid, row);
   }
+  setSnapshotCache(cacheKey, result);
   return result;
 }

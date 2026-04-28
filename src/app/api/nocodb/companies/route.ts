@@ -11,7 +11,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(company);
     }
     const limit = Number(searchParams.get("limit") ?? "50");
-    const companies = await fetchAllCompanies(limit);
+    const owner = searchParams.get("owner") ?? undefined;
+    const companies = await fetchAllCompanies(limit, owner);
     return NextResponse.json(companies);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

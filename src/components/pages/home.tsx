@@ -11,7 +11,9 @@
 //
 // データソース: /api/company-summary-list?limit=500&sort=priority_desc
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import type { PackageEventSummary } from "@/lib/metabase/package-events";
+import type { AppUserProfile } from "@/lib/nocodb/user-profile";
 import Link from "next/link";
 import {
   RefreshCw, AlertTriangle,
@@ -429,6 +431,65 @@ function RenewalBarChart({ data, onNavigate }: {
   );
 }
 
+// ── Chart 4: パッケージ変動バー（積み上げ）────────────────────────────────────
+
+interface PackageEventBarData {
+  month:    string;   // "YYYY-MM" → 短縮表示 "M月"
+  churn:    number;
+  downsell: number;
+  upsell:   number;
+  newEntry: number;
+}
+
+function PackageEventChart({ data, onNavigate }: { data: PackageEventBarData[]; onNavigate: (segment: string) => void }) {
+  if (data.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-[180px] text-sm text-slate-400">
+        データなし
+      </div>
+    );
+  }
+  return (
+    <ResponsiveContainer width="100%" height={180}>
+      <BarChart
+        data={data}
+        margin={{ top: 8, right: 8, left: -24, bottom: 0 }}
+        barSize={14}
+        onClick={(e) => {
+          const key = e?.activePayload?.[0]?.dataKey as string | undefined;
+          if (key === 'churn' || key === 'downsell') onNavigate('critical');
+          else if (key === 'upsell' || key === 'newEntry') onNavigate('expanding');
+        }}
+        style={{ cursor: 'pointer' }}
+      >
+        <CartesianGrid vertical={false} stroke="#f1f5f9" />
+        <XAxis dataKey="month" tick={{ fontSize: 10, fill: "#64748b" }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} axisLine={false} tickLine={false} allowDecimals={false} />
+        <Tooltip
+          content={({ active, payload, label }) => {
+            if (!active || !payload?.length) return null;
+            return (
+              <div className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs shadow-sm">
+                <p className="font-medium text-slate-700 mb-1">{label}</p>
+                {payload.map((p) => p.value ? (
+                  <p key={p.dataKey} style={{ color: p.fill as string }}>
+                    {p.name}: {p.value}件
+                  </p>
+                ) : null)}
+              </div>
+            );
+          }}
+          cursor={{ fill: "#f8fafc" }}
+        />
+        <Bar dataKey="churn"    name="Churn"    stackId="a" fill="#ef4444" radius={[0,0,0,0]} />
+        <Bar dataKey="downsell" name="Downsell" stackId="a" fill="#f97316" radius={[0,0,0,0]} />
+        <Bar dataKey="upsell"   name="Upsell"   stackId="b" fill="#6366f1" radius={[4,4,0,0]} />
+        <Bar dataKey="newEntry" name="New"       stackId="b" fill="#22c55e" radius={[0,0,0,0]} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
 // ── ChartCard ─────────────────────────────────────────────────────────────────
 
 function ChartCard({ title, hint, children }: {
@@ -450,28 +511,77 @@ function ChartCard({ title, hint, children }: {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export function Home() {
-  const [items,       setItems]       = useState<CompanyListItemVM[]>([]);
-  const [loading,     setLoading]     = useState(true);
-  const [error,       setError]       = useState<string | null>(null);
-  const [lastFetched, setLastFetched] = useState<string | null>(null);
+  const [items,               setItems]               = useState<CompanyListItemVM[]>([]);
+  const [loading,             setLoading]             = useState(true);
+  const [error,               setError]               = useState<string | null>(null);
+  const [lastFetched,         setLastFetched]         = useState<string | null>(null);
+  const [packageEventSummary, setPackageEventSummary] = useState<PackageEventSummary | null>(null);
+  const [userProfile,  setUserProfile]  = useState<AppUserProfile | null>(null);
+  // フェッチの世代管理（古い fetch の結果を無視するためのカウンタ）
+  const fetchGenRef = useRef(0);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (profile: AppUserProfile | null) => {
+    const gen = ++fetchGenRef.current;
     setLoading(true);
     setError(null);
     try {
-      const res  = await apiFetch("/api/company-summary-list?limit=500&sort=priority_desc");
+      const ownerParam = (profile?.default_home_scope === 'mine' && profile.name2)
+        ? `&owner=${encodeURIComponent(profile.name2)}`
+        : '';
+      const res  = await apiFetch(`/api/company-summary-list?limit=200&sort=priority_desc${ownerParam}`);
       const data = await res.json() as { total: number; items: CompanyListItemVM[] };
+      if (gen !== fetchGenRef.current) return; // より新しい fetch が走ったので破棄
       if (!res.ok) throw new Error((data as unknown as { error?: string }).error ?? res.statusText);
       setItems(data.items ?? []);
       setLastFetched(new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }));
     } catch (e) {
+      if (gen !== fetchGenRef.current) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (gen === fetchGenRef.current) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // マウント時: プロファイル取得と会社データ取得を並列で開始
+  // scope=mine の場合のみ、プロファイル確定後に owner フィルタ付きで再取得
+  useEffect(() => {
+    // 会社データを即時フェッチ開始（フィルタなし）
+    fetchData(null);
+
+    // プロファイルを並列フェッチ
+    fetch('/api/user/profile')
+      .then(r => r.ok ? r.json() as Promise<AppUserProfile> : null)
+      .then(p => {
+        if (!p) { setUserProfile(null); return; }
+        // ローカルストレージの設定でスコープを上書き（NocoDB 拡張列なしでも動作）
+        const prefsRaw = typeof window !== 'undefined'
+          ? localStorage.getItem(`cxm_prefs_${p.name2}`)
+          : null;
+        if (prefsRaw) {
+          try {
+            const prefs = JSON.parse(prefsRaw) as { default_home_scope?: string };
+            if (prefs.default_home_scope) {
+              p = { ...p, default_home_scope: prefs.default_home_scope as 'mine' | 'team' | 'all' };
+            }
+          } catch { /* ignore */ }
+        }
+        setUserProfile(p);
+        // scope=mine の場合のみ、owner フィルタ付きで再フェッチ
+        if (p.default_home_scope === 'mine' && p.name2) {
+          fetchData(p);
+        }
+      })
+      .catch(() => setUserProfile(null));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // マウント時1回のみ（fetchData は安定した関数）
+
+  // パッケージ変動データは独立してフェッチ（company-summary-list と並行）
+  useEffect(() => {
+    apiFetch("/api/package-events-summary")
+      .then(r => r.json())
+      .then((d: PackageEventSummary) => setPackageEventSummary(d))
+      .catch(() => { /* graceful degradation: チャートは空表示 */ });
+  }, []);
 
   const diffGroups      = buildDiffGroups(items);
   const trendGroups     = buildTrendGroups(items);
@@ -552,7 +662,12 @@ export function Home() {
       counts.set(label, (counts.get(label) ?? 0) + 1);
     }
     return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
+      .sort((a, b) => {
+        const numA = parseInt(a[0].match(/^(\d+)/)?.[1] ?? '0', 10);
+        const numB = parseInt(b[0].match(/^(\d+)/)?.[1] ?? '0', 10);
+        if (numA !== numB) return numB - numA;
+        return a[0].localeCompare(b[0]);
+      })
       .map(([name, count]) => ({ name, count }));
   }, [items]);
 
@@ -568,6 +683,18 @@ export function Home() {
       return { name, fill, segment, count: matched.length, mrr: matched.reduce((s, i) => s + (i.mrr ?? 0), 0) };
     });
   }, [items]);
+
+  // パッケージ変動チャートデータ（直近6ヶ月 + 月短縮ラベル）
+  const packageEventChartData: PackageEventBarData[] = useMemo(() => {
+    if (!packageEventSummary) return [];
+    return packageEventSummary.monthly.slice(-6).map(m => ({
+      month:    `${parseInt(m.month.slice(5))}月`,
+      churn:    m.churn,
+      downsell: m.downsell,
+      upsell:   m.upsell,
+      newEntry: m.newEntry,
+    }));
+  }, [packageEventSummary]);
 
   // チャートのバークリック → Company List へ遷移
   function navigateToList(segment: string) {
@@ -591,10 +718,20 @@ export function Home() {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              {/* スコープバッジ */}
+              {userProfile && (
+                <span className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                  {userProfile.default_home_scope === 'mine'
+                    ? `${userProfile.name} 担当`
+                    : userProfile.default_home_scope === 'team' && userProfile.team
+                      ? `${userProfile.team}`
+                      : '全社'}
+                </span>
+              )}
               {lastFetched && (
                 <span className="text-xs text-slate-400">更新: {lastFetched}</span>
               )}
-              <Button variant="outline" size="sm" onClick={fetchData} disabled={loading}>
+              <Button variant="outline" size="sm" onClick={() => fetchData(userProfile ?? null)} disabled={loading}>
                 <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
                 更新
               </Button>
@@ -814,7 +951,7 @@ export function Home() {
                 ポートフォリオ分布
                 <span className="ml-2 normal-case font-normal text-slate-300">— クリックで絞り込み</span>
               </p>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-4 gap-4">
                 <ChartCard title="健全度分布" hint="クリックで絞り込み">
                   <HealthBarChart data={healthChartData} onNavigate={navigateToList} />
                 </ChartCard>
@@ -823,6 +960,40 @@ export function Home() {
                 </ChartCard>
                 <ChartCard title="更新ウィンドウ" hint="クリックで絞り込み">
                   <RenewalBarChart data={renewalChartData} onNavigate={navigateToList} />
+                </ChartCard>
+                <ChartCard title="パッケージ変動（月次）" hint="クリックで絞り込み">
+                  {packageEventSummary ? (
+                    <>
+                      <PackageEventChart data={packageEventChartData} onNavigate={navigateToList} />
+                      {/* 直近30日サマリー（クリックで Companies へ遷移）*/}
+                      <div className="flex gap-3 mt-2 text-[10px] flex-wrap">
+                        {packageEventSummary.last30.churn > 0 && (
+                          <Link href={listUrl('critical')} className="text-red-500 font-medium hover:underline">
+                            Churn {packageEventSummary.last30.churn}件
+                          </Link>
+                        )}
+                        {packageEventSummary.last30.downsell > 0 && (
+                          <Link href={listUrl('at_risk')} className="text-orange-500 font-medium hover:underline">
+                            Downsell {packageEventSummary.last30.downsell}件
+                          </Link>
+                        )}
+                        {packageEventSummary.last30.upsell > 0 && (
+                          <Link href={listUrl('expanding')} className="text-indigo-500 font-medium hover:underline">
+                            Upsell {packageEventSummary.last30.upsell}件
+                          </Link>
+                        )}
+                        {packageEventSummary.last30.newEntry > 0 && (
+                          <Link href="/companies" className="text-green-500 font-medium hover:underline">
+                            New {packageEventSummary.last30.newEntry}件
+                          </Link>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center justify-center h-[180px] text-sm text-slate-400">
+                      読み込み中...
+                    </div>
+                  )}
                 </ChartCard>
               </div>
             </div>
