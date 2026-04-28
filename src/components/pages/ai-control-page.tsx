@@ -114,6 +114,8 @@ interface AiConfigRecord {
   description?: string | null;
   updated_at?:  string | null;
   updated_by?:  string | null;
+  /** API が付与: NocoDB 値がコードデフォルトと異なる場合 true */
+  outdated?:    boolean;
 }
 
 // ── 単一行コンポーネント ──────────────────────────────────────────────────────
@@ -146,9 +148,15 @@ function ConfigRow({ meta, record, unavailable, onEdit, onDelete, onDuplicate }:
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-medium text-slate-900">{label}</span>
-          {isNocoDB && (
+          {isNocoDB && !record?.outdated && (
             <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50 text-[11px] py-0">
               NocoDB 管理
+            </Badge>
+          )}
+          {isNocoDB && record?.outdated && (
+            <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-[11px] py-0 flex items-center gap-1">
+              <AlertTriangle className="w-2.5 h-2.5" />
+              コードと差異あり
             </Badge>
           )}
           {isDefault && (
@@ -515,6 +523,18 @@ export function AiControlPage() {
               {editKey}
             </DialogDescription>
           </DialogHeader>
+
+          {/* outdated 警告 */}
+          {editKey && getRecord(editKey)?.outdated && (
+            <div className="flex items-start gap-2.5 px-6 py-3 bg-amber-50 border-b border-amber-200 shrink-0">
+              <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+              <div className="text-sm text-amber-700">
+                <span className="font-medium">コードと差異があります。</span>
+                {' '}保存済みの NocoDB プロンプトがコード定数より古い可能性があります。
+                「デフォルトに戻す」で最新版に更新してから保存してください。
+              </div>
+            </div>
+          )}
 
           {/* 影響範囲・制約パネル */}
           {(() => {
