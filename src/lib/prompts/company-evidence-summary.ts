@@ -2,7 +2,7 @@
 // このファイルはサーバーサイド専用の API route からのみ import すること。
 // OpenAI SDK は import しない。
 
-import type { AppCompany, AppEvidence, AppAlert, AppPerson } from '@/lib/nocodb/types';
+import type { AppCompany, AppEvidence, AppAlert, AppPerson, AppLogChatwork, AppLogSlack, AppLogNotionMinutes } from '@/lib/nocodb/types';
 import type { ProjectAggregateVM } from '@/lib/company/project-aggregate';
 import type { SupportAggregateVM } from '@/lib/nocodb/support-by-company';
 import { buildProjectAISummary } from '@/lib/company/project-aggregate';
@@ -273,11 +273,19 @@ export function buildSummaryPolicySystemPrompt(
 
 // ── User Prompt ビルダー ──────────────────────────────────────────────────────
 
+export interface CommLogsForPrompt {
+  chatwork:      AppLogChatwork[];
+  slack:         AppLogSlack[];
+  notionMinutes: AppLogNotionMinutes[];
+}
+
 export interface CompanyEvidenceSummaryPromptOptions {
   /** Project 利用状況集計（ProjectAggregateVM）。指定時に ## Projects セクションを追加 */
   projects?: ProjectAggregateVM;
   /** Support / CSE 状況集計（SupportAggregateVM）。指定時に ## Support セクションを追加 */
   support?:  SupportAggregateVM;
+  /** コミュニケーションログ（議事録・Chatwork・Slack）。指定時に ## Communication Logs セクションを追加 */
+  commLogs?: CommLogsForPrompt;
 }
 
 export function buildCompanyEvidenceSummaryPrompt(
@@ -412,6 +420,67 @@ export function buildCompanyEvidenceSummaryPrompt(
       sv.recentCases.slice(0, 5).forEach(c => {
         lines.push(`- [${(c.severity ?? 'UNKNOWN').toUpperCase()}] ${c.title} (${c.routingStatus})`);
       });
+    }
+  }
+
+  // ── Communication Logs（オプション）──────────────────────────────────────
+  // 議事録・Chatwork・Slack のコミュニケーション履歴を AI に伝える。
+  // 顧客との直近の対話内容・課題・アクション項目を把握するための主要情報源。
+  if (options?.commLogs) {
+    const { notionMinutes, chatwork, slack } = options.commLogs;
+    const hasAny = notionMinutes.length > 0 || chatwork.length > 0 || slack.length > 0;
+
+    if (hasAny) {
+      lines.push('');
+      lines.push('## Communication Logs');
+
+      // Notion 議事録（最大5件・本文は最初の300文字）
+      if (notionMinutes.length > 0) {
+        lines.push('');
+        lines.push('### 議事録 (Notion)');
+        notionMinutes.slice(0, 5).forEach(m => {
+          const date  = m.meetingDate ?? m.createdAt ?? '日付不明';
+          const plist = m.participants.length > 0 ? ` 参加者: ${m.participants.join(', ')}` : '';
+          lines.push(`**[${date}] ${m.title}**${plist}`);
+          if (m.body) {
+            const excerpt = m.body.slice(0, 300);
+            lines.push(excerpt.length < m.body.length ? `${excerpt}…` : excerpt);
+          }
+          if (m.actionItems.length > 0) {
+            lines.push(`アクション項目: ${m.actionItems.join(' / ')}`);
+          }
+          lines.push('');
+        });
+      }
+
+      // Chatwork（最大5件・本文は最初の150文字）
+      if (chatwork.length > 0) {
+        lines.push('');
+        lines.push('### Chatwork');
+        chatwork.slice(0, 5).forEach(c => {
+          const dir    = c.isOutbound ? '→送信' : '←受信';
+          const sender = c.senderName ? ` (${c.senderName})` : '';
+          const excerpt = c.body.slice(0, 150);
+          lines.push(`[${c.sentAt ?? '日付不明'}] ${dir}${sender}: ${excerpt.length < c.body.length ? excerpt + '…' : excerpt}`);
+        });
+        lines.push('');
+      }
+
+      // Slack（最大5件・本文は最初の150文字）
+      if (slack.length > 0) {
+        lines.push('');
+        lines.push('### Slack');
+        slack.slice(0, 5).forEach(s => {
+          const dir    = s.isOutbound ? '→送信' : '←受信';
+          const user   = s.userName ? ` (${s.userName})` : '';
+          const excerpt = s.text.slice(0, 150);
+          lines.push(`[${s.sentAt ?? '日付不明'}] ${dir}${user}: ${excerpt.length < s.text.length ? excerpt + '…' : excerpt}`);
+        });
+        lines.push('');
+      }
+    } else {
+      lines.push('');
+      lines.push('## Communication Logs', '（コミュニケーション記録なし）', '');
     }
   }
 

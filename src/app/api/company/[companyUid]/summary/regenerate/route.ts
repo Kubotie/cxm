@@ -26,6 +26,10 @@ import { fetchCompanyByUid } from '@/lib/nocodb/companies';
 import { fetchEvidence }     from '@/lib/nocodb/evidence';
 import { fetchAlerts }       from '@/lib/nocodb/alerts';
 import { fetchPeople }       from '@/lib/nocodb/people';
+import { fetchProjectsByCompany } from '@/lib/nocodb/project-info';
+import { buildProjectAggregateVM } from '@/lib/company/project-aggregate';
+import { fetchSupportAggregateForCompany } from '@/lib/nocodb/support-by-company';
+import { fetchAllCommunicationLogs } from '@/lib/nocodb/communication-logs';
 import { getCompanySummaryState } from '@/lib/nocodb/company-summary-read';
 import { saveCompanySummaryState } from '@/lib/nocodb/company-summary-write';
 import { getOpenAIClient, getOpenAIModel } from '@/lib/openai/client';
@@ -84,12 +88,15 @@ export async function POST(
   }
 
   // ── NocoDB からデータ取得（並列） ────────────────────────────────────────
-  const [company, evidence, alerts, people, policyRecord] = await Promise.all([
+  const [company, evidence, alerts, people, policyRecord, rawProjects, supportAgg, commLogs] = await Promise.all([
     fetchCompanyByUid(companyUid).catch(() => null),
     fetchEvidence(companyUid).catch(() => []),
     fetchAlerts(companyUid).catch(() => []),
     fetchPeople(companyUid).catch(() => []),
     policyId ? getPolicyById(policyId).catch(() => null) : Promise.resolve(null),
+    fetchProjectsByCompany(companyUid).catch(() => []),
+    fetchSupportAggregateForCompany(companyUid).catch(() => null),
+    fetchAllCommunicationLogs(companyUid).catch(() => ({ chatwork: [], slack: [], notionMinutes: [], intercomMail: [] })),
   ]);
 
   if (!company) {
@@ -98,6 +105,8 @@ export async function POST(
       { status: 404 },
     );
   }
+
+  const projectsVM = buildProjectAggregateVM(rawProjects);
 
   // ── Summary Policy の設定を適用 ─────────────────────────────────────────
   const summaryPolicy  = policyRecord?.summaryPolicy ?? null;
@@ -108,7 +117,15 @@ export async function POST(
   const systemPrompt = buildSummaryPolicySystemPrompt(effectivePolicy, basePrompt);
 
   // ── AI 生成 ───────────────────────────────────────────────────────────────
-  const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people);
+  const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people, {
+    projects:  projectsVM,
+    support:   supportAgg ?? undefined,
+    commLogs:  {
+      chatwork:      commLogs.chatwork,
+      slack:         commLogs.slack,
+      notionMinutes: commLogs.notionMinutes,
+    },
+  });
 
   const comp = await openai.chat.completions.create({
     model:    summaryPolicy?.model ?? model,
@@ -164,13 +181,20 @@ export async function POST(
     );
   }
 
+  const commLogCount = commLogs.notionMinutes.length + commLogs.chatwork.length + commLogs.slack.length;
+
   return NextResponse.json({
-    company_uid:    companyUid,
-    model:          comp.model,
-    generated_at:   generatedAt,
-    evidence_count: evidence.length,
-    alert_count:    alerts.length,
-    people_count:   people.length,
+    company_uid:        companyUid,
+    model:              comp.model,
+    generated_at:       generatedAt,
+    evidence_count:     evidence.length,
+    alert_count:        alerts.length,
+    people_count:       people.length,
+    project_count:      projectsVM.total,
+    open_support_count: supportAgg
+      ? supportAgg.openIntercomCount + supportAgg.openCseCount
+      : undefined,
+    comm_log_count:     commLogCount,
     ...result,
     saved:   true,
     created: saveResult.created,
