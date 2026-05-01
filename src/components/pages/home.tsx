@@ -831,6 +831,18 @@ export function Home() {
   const diffGroups      = buildDiffGroups(items);
   const trendGroups     = buildTrendGroups(items);
   const total           = items.length;
+
+  // projectSignals も excludedUids でフィルタ（別 API のため items と別処理）
+  const filteredProjectSignals = useMemo(() =>
+    projectSignals
+      .map(g => ({
+        ...g,
+        items: g.items.filter(i => !excludedUids.includes(i.companyUid)),
+        count: g.items.filter(i => !excludedUids.includes(i.companyUid)).length,
+      }))
+      .filter(g => g.count > 0),
+    [projectSignals, excludedUids],
+  );
   const hasSnapshotDiff = items.some(i => i.snapshotDiff !== undefined);
 
   // ── 変化サマリー: 2段×4列に集約 ──────────────────────────────────────────
@@ -1185,14 +1197,14 @@ export function Home() {
           )}
 
           {/* ══ SECTION 2b: プロジェクトシグナル（有料PJ無活動）────────────── */}
-          {projectSignals.length > 0 && (
+          {filteredProjectSignals.length > 0 && (
             <div className="mb-6">
               <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-2">
                 プロジェクトシグナル
                 <span className="ml-2 normal-case font-normal text-slate-300">— 有料PJのみ</span>
               </p>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                {projectSignals.map(g => (
+                {filteredProjectSignals.map(g => (
                   <ProjectSignalTile
                     key={g.type}
                     group={g}
