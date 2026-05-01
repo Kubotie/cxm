@@ -1,6 +1,12 @@
 import { nocoFetch, TABLE_IDS } from './client';
 import { RawCompany, AppCompany, toAppCompany } from './types';
 
+// ── プロセスメモリキャッシュ（fetchAllCompanies 用）────────────────────────────
+// 全APIルートから繰り返し呼ばれるため、短期キャッシュで NocoDB 呼び出しを削減する。
+// キー: "limit:ownerName"（ownerName 省略時は空文字）
+const _allCompaniesCache = new Map<string, { data: AppCompany[]; ts: number }>();
+const ALL_COMPANIES_TTL_MS = 5 * 60 * 1000; // 5分
+
 /**
  * company_uid に対応する Salesforce Account ID を取得する。
  * companies テーブルの sf_account_id カラムを参照する。
@@ -90,6 +96,10 @@ export async function fetchCanonicalNameMap(uids: string[]): Promise<Map<string,
  *   2. last_contact 降順（最近接点あり＝アクティブ）
  */
 export async function fetchAllCompanies(limit = 50, ownerName?: string): Promise<AppCompany[]> {
+  const cacheKey = `${limit}:${ownerName ?? ''}`;
+  const cached = _allCompaniesCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < ALL_COMPANIES_TTL_MS) return cached.data;
+
   const baseWhere = '(status,eq,active)~and(is_csm_managed,eq,true)';
   const where = ownerName
     ? `${baseWhere}~and(owner_name,eq,${ownerName})`
@@ -99,7 +109,9 @@ export async function fetchAllCompanies(limit = 50, ownerName?: string): Promise
     sort: '-open_alert_count,-last_contact',
     limit: String(limit),
   });
-  return raw.map(toAppCompany);
+  const data = raw.map(toAppCompany);
+  _allCompaniesCache.set(cacheKey, { data, ts: Date.now() });
+  return data;
 }
 
 /**

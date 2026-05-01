@@ -238,6 +238,9 @@ export function CompanyDetail() {
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const [detail, setDetail]         = useState<CompanyDetailApiResponse | null>(null);
+  // coreData: /core エンドポイントから高速取得（company + phase + summary のみ）
+  // detail が揃った後は null にリセットして detail を優先させる
+  const [coreData, setCoreData]     = useState<Pick<CompanyDetailApiResponse, 'company' | 'phase' | 'summary'> | null>(null);
   const [loading, setLoading]       = useState(true);
   const [loadError, setLoadError]   = useState<string | null>(null);
 
@@ -329,7 +332,7 @@ export function CompanyDetail() {
   // ── Derived summary values ────────────────────────────────────────────────
   const savedRecord = savedRecordOverride !== undefined
     ? savedRecordOverride
-    : (detail?.summary?.state ?? null);
+    : (detail?.summary?.state ?? coreData?.summary?.state ?? null);
   const summaryVM   = buildCompanySummaryViewModel(savedRecord);
   const summaryBusy = summaryLoading || summarySaving || summaryReviewing;
 
@@ -391,21 +394,38 @@ export function CompanyDetail() {
   }, [companyId]);
 
   // ── Data fetch ────────────────────────────────────────────────────────────
-  // /api/company/[companyUid] は UI向けルート（Bearer 認証不要）
-  // TODO: サーバーサイドフェッチ or SWR に移行してクライアント再計算を減らすこと
+  // 2段階ロード:
+  //   1. /core → company + phase + summary のみ高速取得（~200ms）→ ヘッダーを即時表示
+  //   2. /[companyUid] → 全データ取得（~500ms）→ タブを描画
   const loadDetail = useCallback((refresh = false) => {
     if (!companyId) return;
     if (!refresh) setLoading(true);
     setLoadError(null);
+
+    // Phase 1: core を高速取得してヘッダーを即時表示
+    if (!refresh) {
+      fetch(`/api/company/${companyId}/core`)
+        .then(r => r.ok ? r.json() : null)
+        .then((data: Pick<CompanyDetailApiResponse, 'company' | 'phase' | 'summary'> | null) => {
+          if (data) {
+            setCoreData(data);
+            setLoading(false); // ヘッダーが表示できるのでローディング解除
+          }
+        })
+        .catch(() => { /* core 失敗時はフル取得で継続 */ });
+    }
+
+    // Phase 2: フル取得（core と並列実行）
     fetch(`/api/company/${companyId}`)
       .then(r => {
-        if (r.status === 503) return r.json().then((e: { error?: string }) => Promise.reject(`データベース接続エラー。しばらく待ってから再試行してください。`));
+        if (r.status === 503) return r.json().then(() => Promise.reject(`データベース接続エラー。しばらく待ってから再試行してください。`));
         if (r.status === 404) throw new Error(`この企業は見つかりませんでした (uid: ${companyId})`);
         if (!r.ok) return r.json().then((e: { error?: string }) => Promise.reject(`company詳細API: ${e.error ?? `HTTP ${r.status}`}`));
         return r.json();
       })
       .then((data: CompanyDetailApiResponse) => {
         setDetail(data);
+        setCoreData(null); // full detail が揃ったので core は不要
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -663,7 +683,8 @@ export function CompanyDetail() {
   }, [activeTab, companyId, commFullEntries, commFullLoading]);
 
   // ── Loading state ─────────────────────────────────────────────────────────
-  if (loading) {
+  // core も full detail も未着の場合のみ全画面スケルトンを表示
+  if (loading && !coreData && !detail) {
     return (
       <div className="flex h-screen bg-slate-50">
         <SidebarNav />
@@ -681,8 +702,9 @@ export function CompanyDetail() {
     );
   }
 
-  const company     = detail?.company;
-  const phase       = detail?.phase;
+  // coreData が先に届いた場合はヘッダーを即時表示し、フル取得を待つ
+  const company     = detail?.company ?? coreData?.company;
+  const phase       = detail?.phase   ?? coreData?.phase;
   const health      = detail?.health;
   const comm        = detail?.communication;
   const projects        = detail?.projects;
@@ -694,6 +716,10 @@ export function CompanyDetail() {
   );
   const regularAlerts: AppAlert[] = (detail?.alerts ?? []).filter(
     a => !a.source?.startsWith('policy:'),
+  );
+  // alert_high / alert_critical は alerts テーブルで直接表示するため除外
+  const displayRiskSignals = (health?.riskSignals ?? []).filter(
+    s => s.type !== 'alert_high' && s.type !== 'alert_critical',
   );
   const healthBadge = getHealthBadge(health?.overallHealth);
 
@@ -1052,7 +1078,13 @@ export function CompanyDetail() {
 
             {/* ── Overview tab ── */}
             <TabsContent value="overview" className="flex-1 overflow-hidden m-0">
-              <div className="h-full overflow-auto p-4 space-y-3">
+              {/* フル取得が完了するまでスケルトンを表示（core のみ到着済みの場合） */}
+              {!detail && (
+                <div className="p-4 space-y-3">
+                  {[1,2,3,4].map(i => <Skeleton key={i} className="h-32 w-full rounded-xl" />)}
+                </div>
+              )}
+              {!!detail && <div className="h-full overflow-auto p-4 space-y-3">
 
                 {/* ════ A: AI インサイト ══════════════════════════════════════ */}
                 {/* AI Summary を主役に: 左列で広く見せ、Phase/Health を右コンパクト列に */}
@@ -1445,15 +1477,15 @@ export function CompanyDetail() {
                     要注意事項
                   </h2>
 
-                  {(health?.riskSignals ?? []).length === 0 && orgVM.peopleRisks.length === 0 && policyAlerts.length === 0 && regularAlerts.length === 0 ? (
+                  {displayRiskSignals.length === 0 && orgVM.peopleRisks.length === 0 && policyAlerts.length === 0 && regularAlerts.length === 0 ? (
                     <p className="text-[11px] text-slate-400">リスクシグナルは検出されていません</p>
                   ) : (
                     <div className="space-y-4">
 
-                      {/* Health Risk signals */}
-                      {(health?.riskSignals ?? []).length > 0 && (
+                      {/* Health Risk signals (alert_high/alert_critical は alerts テーブルで表示するため除外済み) */}
+                      {displayRiskSignals.length > 0 && (
                         <div className="space-y-2">
-                          {(health?.riskSignals ?? []).map(sig => (
+                          {displayRiskSignals.map(sig => (
                             <RiskSignalRow
                               key={sig.id}
                               signal={sig}
@@ -1473,7 +1505,7 @@ export function CompanyDetail() {
                       {/* Regular open alerts (non-policy) */}
                       {regularAlerts.length > 0 && (
                         <div className="space-y-2">
-                          {(health?.riskSignals ?? []).length > 0 && <Separator />}
+                          {displayRiskSignals.length > 0 && <Separator />}
                           <p className={SUBSECTION_HEADER_CLS}>オープンアラート</p>
                           {regularAlerts.map(a => {
                             const dot = a.severity === 'high'
@@ -1507,7 +1539,7 @@ export function CompanyDetail() {
                       {/* Policy-derived alerts */}
                       {policyAlerts.length > 0 && (
                         <div className="space-y-2">
-                          {(health?.riskSignals ?? []).length > 0 && <Separator />}
+                          {(displayRiskSignals.length > 0 || regularAlerts.length > 0) && <Separator />}
                           <p className={SUBSECTION_HEADER_CLS}>Policy アラート</p>
                           {policyAlerts.map(a => {
                             const dot = a.severity === 'high'
@@ -1553,7 +1585,7 @@ export function CompanyDetail() {
                       {/* People risks */}
                       {orgVM.peopleRisks.length > 0 && (
                         <div className="space-y-2">
-                          {((health?.riskSignals ?? []).length > 0 || policyAlerts.length > 0) && <Separator />}
+                          {(displayRiskSignals.length > 0 || regularAlerts.length > 0 || policyAlerts.length > 0) && <Separator />}
                           <p className={SUBSECTION_HEADER_CLS}>People リスク</p>
                           {orgVM.peopleRisks.map((risk, i) => {
                             const person = orgVM.persons.find(p => p.id === risk.personId);
@@ -1730,7 +1762,7 @@ export function CompanyDetail() {
                   </div>
                 </section>
 
-              </div>
+              </div>}
             </TabsContent>
 
             {/* ── Actions tab ── */}

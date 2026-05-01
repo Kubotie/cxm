@@ -688,7 +688,10 @@ function ChartCard({ title, hint, children }: {
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export function Home() {
-  const [items,               setItems]               = useState<CompanyListItemVM[]>([]);
+  const [rawItems,            setRawItems]            = useState<CompanyListItemVM[]>([]);
+  const [ownerFilter,         setOwnerFilter]         = useState<string | null>(null);
+  // ownerFilter をクライアントサイドで適用（scope=mine の再フェッチを排除）
+  const items = ownerFilter ? rawItems.filter(i => i.owner === ownerFilter) : rawItems;
   const [loading,             setLoading]             = useState(true);
   const [error,               setError]               = useState<string | null>(null);
   const [lastFetched,         setLastFetched]         = useState<string | null>(null);
@@ -746,19 +749,17 @@ export function Home() {
     }).catch(() => {}).finally(() => setActionsLoading(false));
   }, []);
 
-  const fetchData = useCallback(async (profile: AppUserProfile | null) => {
+  // owner フィルタはクライアントサイドで適用するため、常に全件取得する
+  const fetchData = useCallback(async () => {
     const gen = ++fetchGenRef.current;
     setLoading(true);
     setError(null);
     try {
-      const ownerParam = (profile?.default_home_scope === 'mine' && profile.name2)
-        ? `&owner=${encodeURIComponent(profile.name2)}`
-        : '';
-      const res  = await apiFetch(`/api/company-summary-list?limit=200&sort=priority_desc${ownerParam}`);
+      const res  = await apiFetch('/api/company-summary-list?limit=200&sort=priority_desc');
       const data = await res.json() as { total: number; items: CompanyListItemVM[] };
       if (gen !== fetchGenRef.current) return; // より新しい fetch が走ったので破棄
       if (!res.ok) throw new Error((data as unknown as { error?: string }).error ?? res.statusText);
-      setItems(data.items ?? []);
+      setRawItems(data.items ?? []);
       setLastFetched(new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }));
     } catch (e) {
       if (gen !== fetchGenRef.current) return;
@@ -769,10 +770,10 @@ export function Home() {
   }, []);
 
   // マウント時: プロファイル取得と会社データ取得を並列で開始
-  // scope=mine の場合のみ、プロファイル確定後に owner フィルタ付きで再取得
+  // scope=mine の場合はクライアントサイドでフィルタ適用（再フェッチなし）
   useEffect(() => {
-    // 会社データを即時フェッチ開始（フィルタなし）
-    fetchData(null);
+    // 会社データを即時フェッチ開始（全件取得）
+    fetchData();
 
     // プロファイルを並列フェッチ
     fetch('/api/user/profile')
@@ -780,7 +781,6 @@ export function Home() {
       .then(p => {
         if (!p) {
           setUserProfile(null);
-          // プロファイル取得失敗でもシグナルはフィルタなしで表示
           fetchProjectSignals(null);
           return;
         }
@@ -797,9 +797,9 @@ export function Home() {
           } catch { /* ignore */ }
         }
         setUserProfile(p);
-        // scope=mine の場合のみ owner フィルタ付きで再フェッチ。それ以外はフィルタなし。
+        // scope=mine の場合はクライアントサイドでフィルタ適用（再フェッチ不要）
         if (p.default_home_scope === 'mine' && p.name2) {
-          fetchData(p);
+          setOwnerFilter(p.name2);
           fetchProjectSignals(p);
         } else {
           fetchProjectSignals(null);
@@ -990,7 +990,7 @@ export function Home() {
               {lastFetched && (
                 <span className="text-xs text-slate-400">更新: {lastFetched}</span>
               )}
-              <Button variant="outline" size="sm" onClick={() => fetchData(userProfile ?? null)} disabled={loading}>
+              <Button variant="outline" size="sm" onClick={() => fetchData()} disabled={loading}>
                 <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
                 更新
               </Button>

@@ -532,12 +532,16 @@ export function CompanyList() {
   const pathname     = usePathname();
 
   // ── データ ──────────────────────────────────────────────────────────────────
-  const [items,       setItems]       = useState<CompanyListItemVM[] | null>(null);
+  const [allItems,    setAllItems]    = useState<CompanyListItemVM[] | null>(null);
   const [loadError,   setLoadError]   = useState<string | null>(null);
   const [refreshing,  setRefreshing]  = useState(false);
   const [lastFetched, setLastFetched] = useState<string | null>(null);
-  // ユーザースコープフィルタ（localStorage から読み込む）
+  // ユーザースコープフィルタ（profile 確定後にクライアントサイドで適用）
   const [ownerFilter, setOwnerFilter] = useState<string | null>(null);
+  // ownerFilter をクライアントサイドで適用（profile 待ちなしでデータ表示可能にする）
+  const items = (ownerFilter !== null && allItems !== null)
+    ? allItems.filter(i => i.owner === ownerFilter)
+    : allItems;
 
   // ── URL クエリ → 初期セグメント解決 ────────────────────────────────────────
   // ?segment=renewal_30 / renewal_90 / arr_at_risk / expanding / support_high 等を受け取る
@@ -587,39 +591,41 @@ export function CompanyList() {
   }, [searchParams, router, pathname]);
 
   // ── データ取得 ──────────────────────────────────────────────────────────────
-  const load = useCallback((refresh = false, owner?: string | null) => {
+  // owner フィルタはクライアントサイドで適用するため、常に全件取得する
+  const load = useCallback((refresh = false) => {
     if (refresh) setRefreshing(true);
     setLoadError(null);
-    const ownerParam = owner ? `&owner=${encodeURIComponent(owner)}` : '';
-    apiFetch(`/api/company-summary-list?limit=500&sort=priority_desc${ownerParam}`)
+    apiFetch('/api/company-summary-list?limit=500&sort=priority_desc')
       .then(r => r.ok ? r.json() : r.json().then((e: {error?:string}) => Promise.reject(e.error ?? '取得エラー')))
       .then((data: { items: CompanyListItemVM[] }) => {
-        setItems(data.items ?? []);
+        setAllItems(data.items ?? []);
         setLastFetched(new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }));
       })
       .catch((err: unknown) => setLoadError(String(err)))
       .finally(() => setRefreshing(false));
   }, []);
 
-  // マウント時: ローカルストレージからユーザースコープを読んでフィルタ適用
+  // マウント時: データ取得を即時開始し、プロファイルを並列取得してオーナーフィルタを適用
+  // 以前はプロファイル待ちで直列実行していたが、並列化によりロード時間を短縮
   useEffect(() => {
-    const resolveOwner = async (): Promise<string | null> => {
-      try {
-        const profileRes = await fetch('/api/user/profile');
-        if (!profileRes.ok) return null;
-        const profile = await profileRes.json() as { name2?: string };
-        if (!profile.name2) return null;
-        const prefsRaw = localStorage.getItem(`cxm_prefs_${profile.name2}`);
-        if (!prefsRaw) return null;
-        const prefs = JSON.parse(prefsRaw) as { default_home_scope?: string };
-        return prefs.default_home_scope === 'mine' ? (profile.name2 ?? null) : null;
-      } catch { return null; }
-    };
+    // データ取得を即時開始（プロファイル取得を待たない）
+    load(false);
 
-    resolveOwner().then(owner => {
-      setOwnerFilter(owner);
-      load(false, owner);
-    });
+    // プロファイルを並列取得してクライアントサイドフィルタを設定
+    fetch('/api/user/profile')
+      .then(r => r.ok ? r.json() : null)
+      .then((profile: { name2?: string } | null) => {
+        if (!profile?.name2) return;
+        const prefsRaw = localStorage.getItem(`cxm_prefs_${profile.name2}`);
+        if (!prefsRaw) return;
+        try {
+          const prefs = JSON.parse(prefsRaw) as { default_home_scope?: string };
+          if (prefs.default_home_scope === 'mine') {
+            setOwnerFilter(profile.name2);
+          }
+        } catch { /* ignore */ }
+      })
+      .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // マウント時1回のみ
 
@@ -748,7 +754,7 @@ export function CompanyList() {
               </Select>
 
               {/* 更新 */}
-              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => load(true, ownerFilter)} disabled={refreshing}>
+              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => load(true)} disabled={refreshing}>
                 <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
               </Button>
               {lastFetched && <span className="text-[11px] text-slate-400">{lastFetched}</span>}
@@ -957,7 +963,7 @@ export function CompanyList() {
             <AlertBox variant="error" className="mx-6 mt-4 flex-shrink-0">
               <span className="flex items-center justify-between gap-2 w-full">
                 {loadError}
-                <Button variant="ghost" size="sm" className="h-6 text-xs flex-shrink-0" onClick={() => load(false, ownerFilter)}>再試行</Button>
+                <Button variant="ghost" size="sm" className="h-6 text-xs flex-shrink-0" onClick={() => load(false)}>再試行</Button>
               </span>
             </AlertBox>
           )}

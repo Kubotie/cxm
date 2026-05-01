@@ -10,6 +10,13 @@ import { TABLE_IDS, nocoFetch } from './client';
 import type { RawCompanySummaryState, AppCompanySummaryState } from './types';
 import { toAppCompanySummaryState } from './types';
 
+// ── プロセスメモリキャッシュ（getCompanySummaryStatesByUids 用）────────────────
+// company-summary-list の毎リクエストで呼ばれる重いクエリをキャッシュして削減する。
+// AI サマリー更新が即座に反映されなくても UX への影響は小さい（バッチ更新前提）。
+// キー: sortedUids:summaryType
+const _summaryStatesCache = new Map<string, { data: Map<string, AppCompanySummaryState>; ts: number }>();
+const SUMMARY_STATES_TTL_MS = 3 * 60 * 1000; // 3分
+
 /**
  * 複数企業の summary state を一括取得する（N+1 回避版）。
  *
@@ -35,6 +42,11 @@ export async function getCompanySummaryStatesByUids(
   const tableId = TABLE_IDS.company_summary_state;
   if (!tableId || companyUids.length === 0) return new Map();
 
+  // キャッシュキー: UID のソート済みリスト + summaryType（順序に依存しない）
+  const cacheKey = [...companyUids].sort().join(',') + ':' + summaryType;
+  const cached = _summaryStatesCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < SUMMARY_STATES_TTL_MS) return cached.data;
+
   // summaryType='default' のとき: null/blank も 'default' として扱う
   const typeFilter = summaryType === 'default'
     ? `(summary_type,eq,default)~or(summary_type,blank)`
@@ -53,6 +65,7 @@ export async function getCompanySummaryStatesByUids(
       map.set(raw.company_uid, toAppCompanySummaryState(raw));
     }
   }
+  _summaryStatesCache.set(cacheKey, { data: map, ts: Date.now() });
   return map;
 }
 
