@@ -17,8 +17,11 @@ import { Label }    from "@/components/ui/label";
 import { Badge }    from "@/components/ui/badge";
 import {
   Building2, ExternalLink, Check, RotateCcw, Loader2, Calendar as CalendarIcon,
+  Sparkles, BookOpen, FileText, ChevronRight,
 } from "lucide-react";
+import { toast } from "sonner";
 import type { ActionListItem } from "@/app/api/actions/route";
+import type { CsmAsset } from "@/lib/nocodb/assets";
 import {
   ACTION_STATUS_BADGE,
   ACTION_CREATED_FROM_LABEL,
@@ -132,6 +135,11 @@ export function ActionDetailSheet({
   const [actionPurpose, setActionPurpose] = useState('');
   const [saving,        setSaving]        = useState(false);
   const [saved,         setSaved]         = useState(false);
+  const [reviewText,    setReviewText]    = useState('');
+  const [reviewing,     setReviewing]     = useState(false);
+  const [reviewSaved,   setReviewSaved]   = useState(false);
+  const [linkedAssets,  setLinkedAssets]  = useState<CsmAsset[]>([]);
+  const [loadingAssets, setLoadingAssets] = useState(false);
 
   const isReadOnly = action?._source === 'sf';
 
@@ -147,7 +155,20 @@ export function ActionDetailSheet({
     setEventFormat(action.eventFormat ?? '');
     setActionPurpose(action.actionPurpose ?? '');
     setSaved(false);
+    setReviewSaved(false);
+    setReviewText('');
   }, [action?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // action が変わったら関連アセットをフェッチ
+  useEffect(() => {
+    if (!action?.id) { setLinkedAssets([]); return; }
+    setLoadingAssets(true);
+    fetch(`/api/assets?linked_action_id=${encodeURIComponent(action.id)}&limit=10`)
+      .then(r => r.ok ? r.json() : { assets: [] })
+      .then((d: { assets: CsmAsset[] }) => setLinkedAssets(d.assets ?? []))
+      .catch(() => setLinkedAssets([]))
+      .finally(() => setLoadingAssets(false));
+  }, [action?.id]);
 
   async function handleSave() {
     if (!action || isReadOnly || !action.companyUid || !action.rowId) return;
@@ -188,6 +209,41 @@ export function ActionDetailSheet({
       }
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleReview() {
+    if (!action || !reviewText.trim()) return;
+    setReviewing(true);
+    try {
+      const res = await fetch(`/api/actions/${action.id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          review_text:   reviewText.trim(),
+          action_title:  action.title,
+          company_name:  action.companyName ?? undefined,
+          original_plan: action.body ?? undefined,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      setReviewSaved(true);
+      setReviewText('');
+      toast.success('レビューをCSMアセットに保存しました');
+      // 関連アセットを再フェッチして即時反映
+      if (action?.id) {
+        fetch(`/api/assets?linked_action_id=${encodeURIComponent(action.id)}&limit=10`)
+          .then(r => r.ok ? r.json() : { assets: [] })
+          .then((d: { assets: CsmAsset[] }) => setLinkedAssets(d.assets ?? []))
+          .catch(() => {});
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'レビューの保存に失敗しました');
+    } finally {
+      setReviewing(false);
     }
   }
 
@@ -340,6 +396,109 @@ export function ActionDetailSheet({
             )}
           </div>
 
+          {/* 関連アセット（AI計画・レビュー） */}
+          {(loadingAssets || linkedAssets.length > 0) && (
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <BookOpen className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="text-xs font-medium text-slate-600">関連アセット</span>
+                </div>
+                <Link
+                  href={`/assets?linked_action_id=${action?.id ?? ''}`}
+                  className="text-[10px] text-violet-600 hover:underline flex items-center gap-0.5"
+                  onClick={() => onOpenChange(false)}
+                >
+                  すべて表示
+                  <ChevronRight className="w-3 h-3" />
+                </Link>
+              </div>
+              {loadingAssets ? (
+                <div className="flex items-center gap-1.5 text-[10px] text-slate-400 py-1">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  読み込み中...
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {linkedAssets.map(asset => (
+                    <Link
+                      key={asset.asset_id}
+                      href={`/assets?source_type=${asset.source_type ?? ''}`}
+                      onClick={() => onOpenChange(false)}
+                      className="flex items-start gap-2 rounded-md border border-slate-100 bg-slate-50 p-2.5 hover:bg-slate-100 transition-colors"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-slate-700 truncate">{asset.title}</p>
+                        {asset.summary && (
+                          <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">{asset.summary}</p>
+                        )}
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={[
+                          "text-[9px] flex-shrink-0 self-center",
+                          asset.source_type === 'ai_plan'
+                            ? "text-violet-700 border-violet-200 bg-violet-50"
+                            : asset.source_type === 'review'
+                            ? "text-green-700 border-green-200 bg-green-50"
+                            : "text-slate-500 border-slate-200",
+                        ].join(" ")}
+                      >
+                        {asset.source_type === 'ai_plan' ? 'AI計画' : asset.source_type === 'review' ? 'レビュー' : 'ファイル'}
+                      </Badge>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 実施後レビュー（doneの場合のみ表示） */}
+          {isDone && !isReadOnly && (
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-violet-500" />
+                <Label className="text-xs font-medium text-violet-700">実施後レビューを記録</Label>
+                <span className="text-[10px] text-slate-400">（AIが要約してアセットに保存）</span>
+              </div>
+              {reviewSaved ? (
+                <div className="flex items-center gap-2 rounded-md bg-green-50 border border-green-200 p-3 text-sm text-green-700">
+                  <Check className="w-4 h-4 flex-shrink-0" />
+                  <div>
+                    <p className="font-medium text-xs">レビューをアセットに保存しました</p>
+                    <Link href="/assets?source_type=review" className="text-[10px] underline mt-0.5 inline-flex items-center gap-1">
+                      <BookOpen className="w-3 h-3" />
+                      アセットライブラリで確認
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <Textarea
+                    value={reviewText}
+                    onChange={e => setReviewText(e.target.value)}
+                    placeholder="何がうまくいったか、何を学んだか、次回への改善点などを記録してください"
+                    className="text-xs min-h-[80px] resize-none"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-violet-700 border-violet-300 hover:bg-violet-50 text-xs"
+                    onClick={handleReview}
+                    disabled={!reviewText.trim() || reviewing}
+                  >
+                    {reviewing
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />
+                      : <Sparkles className="w-3.5 h-3.5 mr-1" />
+                    }
+                    AI要約して資産に保存
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
+
           {/* メタ情報 */}
           <div className="text-[10px] text-slate-400 space-y-0.5 pt-1 border-t border-slate-100">
             <div>起票: {new Date(action.createdAt).toLocaleDateString('ja-JP')}</div>
@@ -359,7 +518,7 @@ export function ActionDetailSheet({
               size="sm"
               variant="outline"
               className="text-green-700 border-green-300 hover:bg-green-50"
-              onClick={() => { onDone(action); onOpenChange(false); }}
+              onClick={() => onDone(action)}
             >
               <Check className="w-3.5 h-3.5 mr-1" />
               実施済みにする

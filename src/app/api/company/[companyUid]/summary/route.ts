@@ -31,6 +31,7 @@ import { getCompanySummaryState } from '@/lib/nocodb/company-summary-read';
 import { fetchProjectsByCompany } from '@/lib/nocodb/project-info';
 import { buildProjectAggregateVM } from '@/lib/company/project-aggregate';
 import { fetchSupportAggregateForCompany } from '@/lib/nocodb/support-by-company';
+import { fetchAllCommunicationLogs } from '@/lib/nocodb/communication-logs';
 import { getOpenAIClient, getOpenAIModel } from '@/lib/openai/client';
 import {
   COMPANY_EVIDENCE_SUMMARY_JSON_SCHEMA,
@@ -89,7 +90,7 @@ export async function POST(
   }
 
   // ── NocoDB からデータ取得（並列）+ Summary Policy 取得 ───────────────────
-  const [company, evidence, alerts, people, policyRecord, rawProjects, supportAgg] = await Promise.all([
+  const [company, evidence, alerts, people, policyRecord, rawProjects, supportAgg, commLogs] = await Promise.all([
     fetchCompanyByUid(companyUid).catch(() => null),
     fetchEvidence(companyUid).catch(() => []),
     fetchAlerts(companyUid).catch(() => []),
@@ -97,6 +98,7 @@ export async function POST(
     policyId ? getPolicyById(policyId).catch(() => null) : Promise.resolve(null),
     fetchProjectsByCompany(companyUid).catch(() => []),
     fetchSupportAggregateForCompany(companyUid).catch(() => null),
+    fetchAllCommunicationLogs(companyUid).catch(() => ({ chatwork: [], slack: [], notionMinutes: [], intercomMail: [] })),
   ]);
 
   if (!company) {
@@ -119,8 +121,13 @@ export async function POST(
 
   // ── プロンプト構築 & OpenAI 呼び出し ────────────────────────────────────
   const userPrompt = buildCompanyEvidenceSummaryPrompt(company, evidence, alerts, people, {
-    projects: projectsVM,
-    support:  supportAgg ?? undefined,
+    projects:  projectsVM,
+    support:   supportAgg ?? undefined,
+    commLogs:  {
+      chatwork:      commLogs.chatwork,
+      slack:         commLogs.slack,
+      notionMinutes: commLogs.notionMinutes,
+    },
   });
 
   const comp = await openai.chat.completions.create({
@@ -140,6 +147,8 @@ export async function POST(
   const result: CompanyEvidenceSummaryResult = JSON.parse(raw);
   const generatedAt = new Date().toISOString();
 
+  const commLogCount = commLogs.notionMinutes.length + commLogs.chatwork.length + commLogs.slack.length;
+
   return NextResponse.json({
     company_uid:         companyUid,
     model:               comp.model,
@@ -151,6 +160,7 @@ export async function POST(
     open_support_count:  supportAgg
       ? supportAgg.openIntercomCount + supportAgg.openCseCount
       : undefined,
+    comm_log_count:      commLogCount,
     // Summary Policy が適用された場合はメタを追加（UI tooltip 用に summary_focus も含める）
     ...(summaryPolicy ? {
       applied_policy_id:            policyId,

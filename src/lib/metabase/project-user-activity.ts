@@ -5,7 +5,7 @@
 // CSV カラム（インデックス順）:
 //   0: Project ID
 //   1: Count                              — 総メンバー数
-//   2: l30_active_users                   — 先月アクティブユーザー数
+//   2: l30_active_users                   — 過去30日アクティブユーザー数（ローリング）
 //   3: Max of ...Last Active Date: Week   — メンバー中の最終ログイン日（週粒度、ISO datetime）
 //   4: l7_active_users                    — 今週アクティブユーザー数
 //

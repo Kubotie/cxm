@@ -50,6 +50,8 @@ export const TABLE_IDS = {
   // 日次バッチ（/api/batch/company-snapshot）で書き込む。
   // 未設定の場合はスナップショット機能が無効になるが、他の機能には影響しない。
   company_daily_snapshot:      process.env.NOCODB_COMPANY_DAILY_SNAPSHOT_TABLE_ID ?? '',
+  // プロジェクト単位の日次スナップショット（新規ユーザー追加・Campaign急増の差分検出用）
+  project_user_snapshots:      process.env.NOCODB_PROJECT_USER_SNAPSHOTS_TABLE_ID ?? 'm9nw1u7b0fztc9v',
   // ── Ops: 監査ログ ──────────────────────────────────────────────────────────
   // 未設定の場合は writeBatchRunLog が console.log fallback になる
   audit_logs:                  process.env.NOCODB_AUDIT_LOGS_TABLE_ID                  ?? '',
@@ -78,6 +80,11 @@ export const TABLE_IDS = {
   // システムプロンプトなど AI 設定を UI から管理するキーバリューストア。
   // 未設定の場合はコード内のデフォルトプロンプトにフォールバックする。
   ai_config:                   process.env.NOCODB_AI_CONFIG_TABLE_ID                 ?? '',
+  // ── CSM Asset 管理 ────────────────────────────────────────────────────────────
+  // MDファイル資産ライブラリ（アップロード・AI分析・資料作成に使用）
+  csm_assets:                  process.env.NOCODB_CSM_ASSETS_TABLE_ID                ?? '',
+  // 生成済み資料の記録（テンプレート・参照アセット・Blob URL）
+  csm_documents:               process.env.NOCODB_CSM_DOCUMENTS_TABLE_ID             ?? '',
 };
 
 export interface NocoDBResponse<T> {

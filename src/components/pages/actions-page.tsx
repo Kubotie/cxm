@@ -22,9 +22,10 @@ import {
   ChevronDown, ChevronUp, ListTodo, Calendar, Plus, CalendarDays,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ActionCreateDialog } from "@/components/company/action-create-dialog";
-import { ActionDetailSheet }  from "@/components/actions/action-detail-sheet";
-import { ActionsCalendarView } from "@/components/actions/actions-calendar-view";
+import { ActionCreateDialog }    from "@/components/company/action-create-dialog";
+import { ActionDetailSheet }     from "@/components/actions/action-detail-sheet";
+import { ActionCompleteDialog }  from "@/components/actions/action-complete-dialog";
+import { ActionsCalendarView }   from "@/components/actions/actions-calendar-view";
 import type { LocalAction } from "@/lib/company/action-vm";
 import type { AppCompanyAction } from "@/lib/nocodb/types";
 import type { ActionListItem }   from "@/app/api/actions/route";
@@ -414,10 +415,12 @@ export function ActionsPage() {
   const [error,          setError]          = useState<string | null>(null);
   const [filter,         setFilter]         = useState<FilterKey>('all');
   const [processing,     setProcessing]     = useState<Set<string>>(new Set());
-  const [createOpen,     setCreateOpen]     = useState(false);
-  const [viewMode,       setViewMode]       = useState<ViewMode>('list');
-  const [selectedAction, setSelectedAction] = useState<ActionListItem | null>(null);
-  const [sheetOpen,      setSheetOpen]      = useState(false);
+  const [createOpen,           setCreateOpen]           = useState(false);
+  const [viewMode,             setViewMode]             = useState<ViewMode>('list');
+  const [selectedAction,       setSelectedAction]       = useState<ActionListItem | null>(null);
+  const [sheetOpen,            setSheetOpen]            = useState(false);
+  const [completeDialogOpen,   setCompleteDialogOpen]   = useState(false);
+  const [completeTargetAction, setCompleteTargetAction] = useState<ActionListItem | null>(null);
 
   const today = getTodayStr();
 
@@ -511,9 +514,23 @@ export function ActionsPage() {
   }
 
   const handlePlan   = (action: ActionListItem) => patchStatus(action, 'in_progress');
-  const handleDone   = (action: ActionListItem) =>
-    action._source === 'sf' ? markSfDone(action) : patchStatus(action, 'done');
   const handleReopen = (action: ActionListItem) => patchStatus(action, 'open');
+
+  // 完了ダイアログを開く（SF-only も含め全アクション対象）
+  function handleDone(action: ActionListItem) {
+    setCompleteTargetAction(action);
+    setCompleteDialogOpen(true);
+  }
+
+  // レビューなし完了 — 従来の処理を委譲
+  function handleCompleteWithoutReview(action: ActionListItem) {
+    void (action._source === 'sf' ? markSfDone(action) : patchStatus(action, 'done'));
+  }
+
+  // レビューあり完了 — review API は Dialog 内で完結済み → done 遷移だけ
+  function handleCompleteWithReview(action: ActionListItem) {
+    void patchStatus(action, 'done');
+  }
 
   // ── 1日延期 ───────────────────────────────────────────────────────────────
 
@@ -669,7 +686,12 @@ export function ActionsPage() {
   }
 
   function handleSheetDone(action: ActionListItem) {
-    void (action._source === 'sf' ? markSfDone(action) : patchStatus(action, 'done'));
+    // シートを閉じてからダイアログを開く（z-index 競合回避）
+    setSheetOpen(false);
+    setTimeout(() => {
+      setCompleteTargetAction(action);
+      setCompleteDialogOpen(true);
+    }, 150);
   }
 
   function handleSheetReopen(action: ActionListItem) {
@@ -988,6 +1010,18 @@ export function ActionsPage() {
         onUpdated={handleActionUpdated}
         onDone={handleSheetDone}
         onReopen={handleSheetReopen}
+      />
+
+      {/* アクション完了ダイアログ（レビューあり/なし 2択） */}
+      <ActionCompleteDialog
+        action={completeTargetAction}
+        open={completeDialogOpen}
+        onOpenChange={(open) => {
+          setCompleteDialogOpen(open);
+          if (!open) setCompleteTargetAction(null);
+        }}
+        onCompleteWithoutReview={handleCompleteWithoutReview}
+        onCompleteWithReview={handleCompleteWithReview}
       />
     </div>
   );

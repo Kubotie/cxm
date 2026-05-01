@@ -2753,7 +2753,7 @@ function ProjectsTab({ projects, companyUid, packageEvents }: {
                   {/* ユーザー採用率 */}
                   {ua && ua.totalUsers > 0 && (
                     <span className={`flex-shrink-0 font-medium ${adoptionCls}`}>
-                      {ua.l30ActiveUsers}/{ua.totalUsers}人 先月アクティブ
+                      {ua.l30ActiveUsers}/{ua.totalUsers}人 L30アクティブ
                     </span>
                   )}
                   {/* 離脱トレンド */}

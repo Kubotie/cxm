@@ -341,6 +341,14 @@ export async function GET(req: NextRequest) {
         (monthlyBucket === '91-180' || monthlyBucket === '180+') &&
         (renewalBucket === '31-90'  || renewalBucket === '0-30');
 
+      // ── プロジェクト傾向（スナップショット保存済みの場合のみ）───────────────
+      const currentActivePj  = projectVM.paidActiveCount;
+      const weeklyActivePj   = weeklySnap?.active_project_count  ?? null;
+      const currentStalled   = projectVM.stalled;
+      const monthlyStalled   = monthlySnap?.stalled_project_count ?? null;
+      const currentL30       = projectVM.totalL30Active;
+      const monthlyL30       = monthlySnap?.total_l30_active       ?? null;
+
       snapshotDiff = {
         // 前日差分
         phaseChanged:         prevSnap !== null && currentMPhase !== null && prevSnap.m_phase !== null && currentMPhase !== prevSnap.m_phase,
@@ -366,6 +374,11 @@ export async function GET(req: NextRequest) {
         monthlyMrrDelta,
         monthlyMrrIncreased:  monthlyMrrDelta !== null && monthlyMrrDelta > 0,
         monthlyMrrDecreased:  monthlyMrrDelta !== null && monthlyMrrDelta < 0,
+        // プロジェクト傾向
+        weeklyActivePjDeclined: weeklyActivePj !== null && currentActivePj < weeklyActivePj,
+        weeklyActivePjGrew:     weeklyActivePj !== null && currentActivePj > weeklyActivePj,
+        monthlyStallGrew:       monthlyStalled !== null && currentStalled > monthlyStalled,
+        monthlyL30ActiveDelta:  monthlyL30 !== null ? currentL30 - monthlyL30 : null,
       };
     }
 

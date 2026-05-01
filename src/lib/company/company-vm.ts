@@ -144,6 +144,16 @@ export interface CompanyListItemVM extends CompanySummaryListItemViewModel {
     monthlyMrrIncreased:     boolean;
     /** 30日間で MRR が減少したか */
     monthlyMrrDecreased:     boolean;
+
+    // ── Project trend ─────────────────────────────────────────────────────
+    /** 週間でアクティブPJ数が減少したか（7日前スナップと比較） */
+    weeklyActivePjDeclined:  boolean;
+    /** 週間でアクティブPJ数が増加したか */
+    weeklyActivePjGrew:      boolean;
+    /** 月間で停滞PJ数が増加したか（30日前スナップと比較） */
+    monthlyStallGrew:        boolean;
+    /** l30Active の月間合計変化量（null = いずれかのスナップが null） */
+    monthlyL30ActiveDelta:   number | null;
   };
 
   // ── Basic ───────────────────────────────────────────────────────────────

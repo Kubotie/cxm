@@ -3,14 +3,19 @@
 // 日次スナップショットテーブルへのアクセスを担う。
 //
 // ── NocoDB テーブル構造 ────────────────────────────────────────────────────────
-//   company_uid        : Single line text
-//   snapshot_date      : Single line text  "YYYY-MM-DD"
-//   m_phase            : Single line text
-//   overall_health     : Single line text  "critical" | "at_risk" | "healthy" | "expanding"
-//   mrr                : Number
-//   open_support_count : Number
-//   renewal_bucket     : Single line text  "0-30" | "31-90" | "91-180" | "180+" | "expired"
-//   renewal_date       : Single line text  "YYYY-MM-DD"
+//   company_uid              : Single line text
+//   snapshot_date            : Single line text  "YYYY-MM-DD"
+//   m_phase                  : Single line text
+//   overall_health           : Single line text  "critical" | "at_risk" | "healthy" | "expanding"
+//   mrr                      : Number
+//   open_support_count       : Number
+//   renewal_bucket           : Single line text  "0-30" | "31-90" | "91-180" | "180+" | "expired"
+//   renewal_date             : Single line text  "YYYY-MM-DD"
+//   active_project_count     : Number  有料アクティブPJ数
+//   stalled_project_count    : Number  停滞PJ数（paid かつ stalled/unused）
+//   total_l30_active         : Number  全PJのl30Active合計
+//   running_campaign_total   : Number  Running Campaign合計（Metabase取得後）
+//   pv_ceiling_alert_count   : Number  PV上限90%超PJ数（Metabase取得後）
 //
 // ── 利用パターン ──────────────────────────────────────────────────────────────
 //   書き込み: /api/batch/company-snapshot が日次で upsert
@@ -58,6 +63,18 @@ export interface CompanyDailySnapshot {
   open_support_count: number | null;
   renewal_bucket:     string | null;
   renewal_date:       string | null;
+
+  // ── プロジェクト集計（NocoDB に同名カラムを追加すること）──────────────────
+  /** 有料アクティブPJ数（PTI-PAID / PTX-PAID かつ active） */
+  active_project_count:    number | null;
+  /** 停滞PJ数（paid かつ stalled または unused） */
+  stalled_project_count:   number | null;
+  /** 全PJのl30Active合計 */
+  total_l30_active:        number | null;
+  /** Running Campaign合計（Metabase取得後。未設定時 null） */
+  running_campaign_total:  number | null;
+  /** PV上限90%超PJ数（Metabase取得後。未設定時 null） */
+  pv_ceiling_alert_count:  number | null;
 }
 
 // ── 書き込み ─────────────────────────────────────────────────────────────────
@@ -81,14 +98,19 @@ export async function upsertCompanySnapshot(
   }).catch(() => [] as CompanyDailySnapshot[]);
 
   const payload: Omit<CompanyDailySnapshot, 'Id'> = {
-    company_uid:        snapshot.company_uid,
-    snapshot_date:      snapshot.snapshot_date,
-    m_phase:            snapshot.m_phase,
-    overall_health:     snapshot.overall_health,
-    mrr:                snapshot.mrr,
-    open_support_count: snapshot.open_support_count,
-    renewal_bucket:     snapshot.renewal_bucket,
-    renewal_date:       snapshot.renewal_date,
+    company_uid:             snapshot.company_uid,
+    snapshot_date:           snapshot.snapshot_date,
+    m_phase:                 snapshot.m_phase,
+    overall_health:          snapshot.overall_health,
+    mrr:                     snapshot.mrr,
+    open_support_count:      snapshot.open_support_count,
+    renewal_bucket:          snapshot.renewal_bucket,
+    renewal_date:            snapshot.renewal_date,
+    active_project_count:    snapshot.active_project_count    ?? null,
+    stalled_project_count:   snapshot.stalled_project_count   ?? null,
+    total_l30_active:        snapshot.total_l30_active        ?? null,
+    running_campaign_total:  snapshot.running_campaign_total  ?? null,
+    pv_ceiling_alert_count:  snapshot.pv_ceiling_alert_count  ?? null,
   };
 
   if (existing.length > 0 && existing[0].Id != null) {
