@@ -64,7 +64,8 @@ export async function GET() {
     );
   }
 
-  const records = await listAiConfigs();
+  // admin UI からのリクエストは常に最新を返す（プロセスキャッシュをバイパス）
+  const records = await listAiConfigs(true);
   // コードデフォルトと差異があるレコードに outdated フラグを付与
   const recordsWithStatus = records.map(r => ({
     ...r,

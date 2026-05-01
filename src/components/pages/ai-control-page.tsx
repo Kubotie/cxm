@@ -236,6 +236,7 @@ export function AiControlPage() {
   const [editKey, setEditKey]         = useState<string | null>(null);
   const [editValue, setEditValue]     = useState('');
   const [editSaved, setEditSaved]     = useState('');
+  const [isEditLoading, setIsEditLoading] = useState(false);
   const [isSaving, setIsSaving]       = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [saveMsg, setSaveMsg]         = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -246,20 +247,26 @@ export function AiControlPage() {
 
   // 複製メッセージ
   const [dupMsg, setDupMsg]           = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const dupMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dupMsgTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // handleEdit の非同期ロード中にダイアログが閉じられた場合のキャンセル用
+  const editSessionRef = useRef<string | null>(null);
 
-  const fetchRecords = useCallback(async () => {
+  const fetchRecords = useCallback(async (): Promise<AiConfigRecord[]> => {
     setIsLoading(true);
     try {
-      const res  = await fetch('/api/ops/ai-config');
+      // cache: 'no-store' でブラウザキャッシュ・Next.js キャッシュを両方バイパス
+      const res  = await fetch('/api/ops/ai-config', { cache: 'no-store' });
       const json = await res.json() as { records?: AiConfigRecord[]; error?: string };
       if (json.error?.includes('未設定')) {
         setUnavailable(true);
+        return [];
       } else {
-        setRecords(json.records ?? []);
+        const fresh = json.records ?? [];
+        setRecords(fresh);
+        return fresh;
       }
     } catch {
-      // degraded
+      return [];
     } finally {
       setIsLoading(false);
     }
@@ -274,27 +281,50 @@ export function AiControlPage() {
   const customRecords  = records.filter(r => !predefinedKeys.has(r.config_key));
 
   // ── 編集 Sheet を開く ─────────────────────────────────────────────────────
-  async function handleEdit(key: string) {
-    const rec = getRecord(key);
-    if (rec) {
-      setEditValue(rec.value);
-      setEditSaved(rec.value);
-      setEditKey(key);
-      setSaveMsg(null);
-    } else {
-      // NocoDB に未登録 → デフォルト値を取得してから開く
+  function handleEdit(key: string) {
+    // ダイアログを即座に開き、ロード中状態でコンテンツを非同期取得する
+    editSessionRef.current = key;
+    setEditKey(key);
+    setSaveMsg(null);
+    setEditValue('');
+    setEditSaved('');
+    setIsEditLoading(true);
+
+    void (async () => {
+      let value: string | null = null;
       try {
-        const res  = await fetch(`/api/ops/ai-config/default?key=${encodeURIComponent(key)}`);
-        const json = await res.json() as { value?: string };
-        setEditValue(json.value ?? '');
-        setEditSaved(json.value ?? '');
-      } catch {
-        setEditValue('');
-        setEditSaved('');
+        const res = await fetch('/api/ops/ai-config', { cache: 'no-store' });
+        if (res.ok) {
+          const json = await res.json() as { records?: AiConfigRecord[] };
+          const rec  = (json.records ?? []).find(r => r.config_key === key);
+          if (rec) value = rec.value;
+        }
+      } catch { /* フォールバックへ */ }
+
+      // API 失敗時は既存 records ステートから取得
+      if (value === null) {
+        const cached = records.find(r => r.config_key === key);
+        if (cached) value = cached.value;
       }
-      setEditKey(key);
-      setSaveMsg(null);
-    }
+
+      if (value === null) {
+        // NocoDB に未登録 → コードデフォルト値を取得
+        try {
+          const res  = await fetch(`/api/ops/ai-config/default?key=${encodeURIComponent(key)}`);
+          const json = await res.json() as { value?: string };
+          value = json.value ?? '';
+        } catch {
+          value = '';
+        }
+      }
+
+      // ダイアログが閉じられた or 別のキーで開かれた場合は更新しない
+      if (editSessionRef.current !== key) return;
+
+      setEditValue(value ?? '');
+      setEditSaved(value ?? '');
+      setIsEditLoading(false);
+    })();
   }
 
   // ── 保存 ─────────────────────────────────────────────────────────────────
@@ -504,7 +534,7 @@ export function AiControlPage() {
       </div>
 
       {/* 編集 Dialog（大型モーダル） */}
-      <Dialog open={editKey !== null} onOpenChange={open => { if (!open) { setEditKey(null); setSaveMsg(null); } }}>
+      <Dialog open={editKey !== null} onOpenChange={open => { if (!open) { editSessionRef.current = null; setEditKey(null); setSaveMsg(null); setIsEditLoading(false); } }}>
         <DialogContent className="max-w-4xl w-full flex flex-col p-0 gap-0 max-h-[90vh]">
           <DialogHeader className="px-6 pt-5 pb-4 border-b shrink-0">
             <DialogTitle className="text-base">
@@ -569,13 +599,22 @@ export function AiControlPage() {
           })()}
 
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 min-h-0">
-            <Textarea
-              value={editValue}
-              onChange={e => { setEditValue(e.target.value); setSaveMsg(null); }}
-              className="min-h-[380px] font-mono text-xs leading-relaxed resize-none"
-              placeholder="プロンプトを入力..."
-              style={{ height: 'clamp(380px, 50vh, 600px)' }}
-            />
+            {isEditLoading ? (
+              <div className="flex items-center justify-center min-h-[380px]">
+                <div className="flex flex-col items-center gap-3 text-slate-400">
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                  <span className="text-xs">NocoDB から最新プロンプトを取得中...</span>
+                </div>
+              </div>
+            ) : (
+              <Textarea
+                value={editValue}
+                onChange={e => { setEditValue(e.target.value); setSaveMsg(null); }}
+                className="min-h-[380px] font-mono text-xs leading-relaxed resize-none"
+                placeholder="プロンプトを入力..."
+                style={{ height: 'clamp(380px, 50vh, 600px)' }}
+              />
+            )}
 
             {saveMsg && (
               <div className={`flex items-center gap-2 text-sm rounded-md px-3 py-2 ${
@@ -593,7 +632,7 @@ export function AiControlPage() {
           <div className="flex items-center gap-2 px-6 py-4 border-t bg-white shrink-0">
             <Button
               onClick={handleSave}
-              disabled={!editIsDirty || isSaving}
+              disabled={isEditLoading || !editIsDirty || isSaving}
             >
               {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Save className="w-4 h-4 mr-1.5" />}
               保存
@@ -601,7 +640,7 @@ export function AiControlPage() {
             <Button
               variant="outline"
               onClick={handleReset}
-              disabled={isResetting}
+              disabled={isEditLoading || isResetting}
               title="コードのデフォルト値を読み込む"
             >
               {isResetting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}

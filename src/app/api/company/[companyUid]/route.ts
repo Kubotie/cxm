@@ -121,6 +121,7 @@ export async function GET(
     fetchAllCommunicationLogs(companyUid).catch(() => ({ chatwork: [], slack: [], notionMinutes: [] })),
     fetchSupportAggregateForCompany(companyUid).catch(() => ({
       openIntercomCount: 0, openCseCount: 0, waitingCseCount: 0, criticalCount: 0, highCount: 0,
+      recentOpenCount: 0, recentCriticalCount: 0, staleOpenCount: 0,
       recentSupportCount: 0, recentCases: [], cseTickets: [], aiStates: [],
     })),
     fetchEvidence(companyUid).catch(() => []),
@@ -149,7 +150,8 @@ export async function GET(
     phaseVM,
     communicationVM,
     projectVM,
-    openCriticalSupport: support.criticalCount,
+    // recentCriticalCount: 90日以内のcriticalのみ（古いオープンチケットを除外）
+    openCriticalSupport: support.recentCriticalCount ?? support.criticalCount,
     openHighSupport:     support.highCount,
     openAlertCount:      company.openAlerts,
   });
