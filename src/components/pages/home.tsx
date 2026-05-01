@@ -718,23 +718,9 @@ export function Home() {
   }
 
   // ── プロジェクトシグナル ────────────────────────────────────────────────────
-  // profile 確定後に1回だけ fetch する（世代カウンタで古いレスポンスを破棄）。
+  // マウント時に即時 fetch（owner フィルタはクライアントサイドで適用）
   const [projectSignals,    setProjectSignals]    = useState<ProjectSignalGroup[]>([]);
   const [expandedSignal,    setExpandedSignal]    = useState<ProjectSignalType | null>(null);
-  const signalFetchGenRef = useRef(0);
-  const fetchProjectSignals = useCallback((profile: AppUserProfile | null) => {
-    const gen = ++signalFetchGenRef.current;
-    const ownerParam = (profile?.default_home_scope === 'mine' && profile.name2)
-      ? `?owner=${encodeURIComponent(profile.name2)}`
-      : '';
-    fetch(`/api/home/project-signals${ownerParam}`)
-      .then(r => r.json())
-      .then((d: { groups?: ProjectSignalGroup[] }) => {
-        if (gen !== signalFetchGenRef.current) return; // より新しい fetch が走ったので破棄
-        setProjectSignals(d.groups ?? []);
-      })
-      .catch(() => {});
-  }, []);
 
   // ── アクション ────────────────────────────────────────────────────────────
   const [pendingActions,    setPendingActions]    = useState<ActionListItem[]>([]);
@@ -776,18 +762,20 @@ export function Home() {
   // マウント時: プロファイル取得と会社データ取得を並列で開始
   // scope=mine の場合はクライアントサイドでフィルタ適用（再フェッチなし）
   useEffect(() => {
-    // 会社データを即時フェッチ開始（全件取得）
+    // 全データを並列フェッチ開始
     fetchData();
+
+    // プロジェクトシグナルを即時フェッチ（プロファイル待ちなし）
+    fetch('/api/home/project-signals')
+      .then(r => r.json())
+      .then((d: { groups?: ProjectSignalGroup[] }) => setProjectSignals(d.groups ?? []))
+      .catch(() => {});
 
     // プロファイルを並列フェッチ
     fetch('/api/user/profile')
       .then(r => r.ok ? r.json() as Promise<AppUserProfile> : null)
       .then(p => {
-        if (!p) {
-          setUserProfile(null);
-          fetchProjectSignals(null);
-          return;
-        }
+        if (!p) { setUserProfile(null); return; }
         // ローカルストレージの設定でスコープを上書き（NocoDB 拡張列なしでも動作）
         const prefsRaw = typeof window !== 'undefined'
           ? localStorage.getItem(`cxm_prefs_${p.name2}`)
@@ -808,15 +796,9 @@ export function Home() {
         // scope=mine の場合はクライアントサイドでフィルタ適用（再フェッチ不要）
         if (p.default_home_scope === 'mine' && p.name2) {
           setOwnerFilter(p.name2);
-          fetchProjectSignals(p);
-        } else {
-          fetchProjectSignals(null);
         }
       })
-      .catch(() => {
-        setUserProfile(null);
-        fetchProjectSignals(null);
-      });
+      .catch(() => { setUserProfile(null); });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // マウント時1回のみ（fetchData は安定した関数）
 
@@ -833,15 +815,23 @@ export function Home() {
   const total           = items.length;
 
   // projectSignals も excludedUids でフィルタ（別 API のため items と別処理）
+  // ownerFilter 対象の companyUid セット（scope=mine 時のみ）
+  const ownerUidSet = useMemo(() => {
+    if (!ownerFilter) return null;
+    return new Set(rawItems.filter(i => i.owner === ownerFilter).map(i => i.companyUid));
+  }, [ownerFilter, rawItems]);
+
   const filteredProjectSignals = useMemo(() =>
     projectSignals
-      .map(g => ({
-        ...g,
-        items: g.items.filter(i => !excludedUids.includes(i.companyUid)),
-        count: g.items.filter(i => !excludedUids.includes(i.companyUid)).length,
-      }))
+      .map(g => {
+        const filteredItems = g.items.filter(i =>
+          !excludedUids.includes(i.companyUid) &&
+          (!ownerUidSet || ownerUidSet.has(i.companyUid))
+        );
+        return { ...g, items: filteredItems, count: filteredItems.length };
+      })
       .filter(g => g.count > 0),
-    [projectSignals, excludedUids],
+    [projectSignals, excludedUids, ownerUidSet],
   );
   const hasSnapshotDiff = items.some(i => i.snapshotDiff !== undefined);
 

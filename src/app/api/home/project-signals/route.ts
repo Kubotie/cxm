@@ -33,6 +33,9 @@ import { fetchProjectUserActivityMap }    from '@/lib/metabase/project-user-acti
 import { fetchProjectSignalMap }          from '@/lib/metabase/project-signals';
 import { fetchProjectSnapshotsByDate }    from '@/lib/nocodb/project-user-snapshots';
 
+// 5分間 Next.js ルートキャッシュ（CDN/サーバーレベルでキャッシュされ Metabase CSV 再取得を回避）
+export const revalidate = 300;
+
 // ── 型定義 ────────────────────────────────────────────────────────────────────
 
 export type ProjectSignalType =
@@ -129,14 +132,13 @@ function isPaidProject(paidType: string | null | undefined): boolean {
 
 // ── ルートハンドラ ─────────────────────────────────────────────────────────────
 
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const period    = (searchParams.get('period') ?? 'week') as string;
-  const ownerName = searchParams.get('owner') ?? undefined;
+export async function GET() {
+  const period = 'week';
 
   // ── データ取得（並列）───────────────────────────────────────────────────────
+  // owner フィルタはクライアントサイドで適用するため全件取得
   const [companies, activityMap, signalDataMap] = await Promise.all([
-    fetchAllCompanies(300, ownerName).catch(() => []),
+    fetchAllCompanies(300).catch(() => []),
     fetchProjectUserActivityMap().catch(() => new Map<string, import('@/lib/metabase/project-user-activity').ProjectUserActivity>()),
     fetchProjectSignalMap().catch(() => new Map<string, import('@/lib/metabase/project-signals').ProjectSignalData>()),
   ]);
