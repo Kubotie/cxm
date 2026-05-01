@@ -14,12 +14,14 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { PackageEventSummary } from "@/lib/metabase/package-events";
 import type { AppUserProfile } from "@/lib/nocodb/user-profile";
+import type { ActionListItem } from "@/app/api/actions/route";
 import Link from "next/link";
+import { differenceInCalendarDays } from "date-fns";
 import {
   RefreshCw, AlertTriangle,
   Headphones, TrendingUp, ArrowRight,
   Building2, Calendar,
-  TrendingDown, GitBranch,
+  TrendingDown, GitBranch, ClipboardCheck,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -31,12 +33,53 @@ import { Badge }          from "@/components/ui/badge";
 import { Button }         from "@/components/ui/button";
 import { Skeleton }       from "@/components/ui/skeleton";
 import { AlertBox }       from "@/components/ui/alert-box";
-import { getHealthBadge } from "@/lib/company/badges";
-import { priorityReason } from "@/lib/company/priority-reason";
 import type { CompanyListItemVM } from "@/lib/company/company-vm";
+import type {
+  ProjectSignalGroup,
+  ProjectSignalType,
+} from "@/app/api/home/project-signals/route";
 
 function apiFetch(path: string) {
   return fetch(path, { headers: { "Content-Type": "application/json" } });
+}
+
+// ── 時間軸タブ ────────────────────────────────────────────────────────────────
+
+type Period = 'day' | 'week' | 'month' | 'quarter';
+
+const PERIODS: { value: Period; label: string }[] = [
+  { value: 'day',     label: '今日'     },
+  { value: 'week',    label: '今週'     },
+  { value: 'month',   label: '今月'     },
+  { value: 'quarter', label: '今四半期'  },
+];
+
+/** period に応じて期限内（または超過）アクションを返す。期限未設定は除外。 */
+function filterByPeriod(actions: ActionListItem[], period: Period): ActionListItem[] {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const cutoff = new Date(today);
+  if (period === 'week')    cutoff.setDate(today.getDate() + 7);
+  else if (period === 'month')   cutoff.setDate(today.getDate() + 30);
+  else if (period === 'quarter') cutoff.setDate(today.getDate() + 90);
+  // 'day': cutoff = today (今日期限 or 超過)
+
+  return actions
+    .filter(a => a.status !== 'done' && a.status !== 'cancelled')
+    .filter(a => {
+      if (!a.dueDate) return false;
+      const d = new Date(a.dueDate);
+      d.setHours(0, 0, 0, 0);
+      return d <= cutoff;
+    })
+    .sort((a, b) => (a.dueDate ?? '') < (b.dueDate ?? '') ? -1 : 1);
+}
+
+function DueDateBadge({ dueDate }: { dueDate: string | null }) {
+  if (!dueDate) return null;
+  const days = differenceInCalendarDays(new Date(dueDate), new Date());
+  if (days < 0)  return <span className="text-[10px] font-bold text-red-600 flex-shrink-0 w-8 text-right">超過</span>;
+  if (days === 0) return <span className="text-[10px] font-bold text-rose-600 flex-shrink-0 w-8 text-right">今日</span>;
+  return <span className="text-[10px] text-amber-600 flex-shrink-0 w-8 text-right tabular-nums">{days}日後</span>;
 }
 
 // ── MRR フォーマット ─────────────────────────────────────────────────────────
@@ -275,6 +318,85 @@ function DiffTile({ group }: { group: DiffGroup }) {
           <span className="text-[10px] text-slate-300">変化なし</span>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── ProjectSignalTile ─────────────────────────────────────────────────────────
+
+/** シグナル種別ごとに detailValue から短縮表示文字列を生成 */
+function signalShortValue(type: ProjectSignalType, value: number | undefined): string {
+  if (value === undefined) return '';
+  switch (type) {
+    case 'inactive_30d':
+    case 'inactive_20d':
+    case 'inactive_10d':
+    case 'inactive_7d':    return `${value}日`;
+    case 'pv_ceiling_90':  return `${value}%`;
+    case 'campaign_surge': return `+${value}件`;
+    case 'campaign_drop':  return `-${value}件`;
+    case 'heatmap_first_use': return `${value}日前`;
+    case 'new_users':      return `+${value}名`;
+    default:               return String(value);
+  }
+}
+
+function ProjectSignalTile({
+  group, expanded, onToggle,
+}: {
+  group:    ProjectSignalGroup;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const colors = group.severity === 'critical'
+    ? { bg: 'bg-red-50',   border: 'border-red-100',   accent: 'border-l-red-400',   text: 'text-red-600',   badge: 'bg-red-100 text-red-700',     row: 'hover:bg-red-50/60'   }
+    : group.severity === 'info'
+    ? { bg: 'bg-blue-50',  border: 'border-blue-100',  accent: 'border-l-blue-400',  text: 'text-blue-600',  badge: 'bg-blue-100 text-blue-700',    row: 'hover:bg-blue-50/60'  }
+    : { bg: 'bg-amber-50', border: 'border-amber-100', accent: 'border-l-amber-400', text: 'text-amber-600', badge: 'bg-amber-100 text-amber-700',  row: 'hover:bg-amber-50/60' };
+
+  return (
+    <div className={`rounded-xl border-l-[3px] border ${colors.bg} ${colors.border} ${colors.accent} overflow-hidden`}>
+      {/* ── ヘッダー ── */}
+      <button className="w-full text-left px-4 py-3" onClick={onToggle}>
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-[11px] font-semibold text-slate-600 leading-tight">{group.label}</span>
+          <span className={`text-2xl font-bold tabular-nums leading-none ${colors.text}`}>{group.count}</span>
+        </div>
+        <p className="text-[10px] text-slate-400 mt-1.5 flex items-center gap-1">
+          <span>{group.count} プロジェクト</span>
+          <span className={`ml-auto ${colors.text}`}>{expanded ? '▲' : '▼'}</span>
+        </p>
+      </button>
+
+      {/* ── 展開リスト ── */}
+      {expanded && (
+        <div className="border-t border-slate-100 max-h-64 overflow-y-auto">
+          {group.items.map(item => (
+            <Link
+              key={`${item.companyUid}-${item.projectId}`}
+              href={`/companies/${item.companyUid}`}
+              title={item.detail}
+              className={`flex items-center gap-3 px-4 py-2 border-b border-slate-100/80 last:border-b-0 transition-colors ${colors.row}`}
+            >
+              {/* 会社名・PJ名（縦積み） */}
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-medium text-slate-700 truncate leading-tight">
+                  {item.companyName}
+                </p>
+                <p className="text-[10px] text-slate-400 truncate leading-tight mt-0.5">
+                  {item.projectName}
+                </p>
+              </div>
+              {/* 短縮メトリクスバッジ */}
+              {item.detailValue !== undefined && (
+                <span className={`flex-shrink-0 text-[11px] font-semibold tabular-nums px-1.5 py-0.5 rounded-md ${colors.badge}`}>
+                  {signalShortValue(item.signalType, item.detailValue)}
+                </span>
+              )}
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -520,6 +642,55 @@ export function Home() {
   // フェッチの世代管理（古い fetch の結果を無視するためのカウンタ）
   const fetchGenRef = useRef(0);
 
+  // ── 時間軸タブ ────────────────────────────────────────────────────────────
+  const [period, setPeriodState] = useState<Period>('week');
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get('period') as Period | null;
+    if (p && ['day', 'week', 'month', 'quarter'].includes(p)) setPeriodState(p);
+  }, []);
+  function setPeriod(p: Period) {
+    setPeriodState(p);
+    const url = new URL(window.location.href);
+    url.searchParams.set('period', p);
+    window.history.replaceState({}, '', url.toString());
+  }
+
+  // ── プロジェクトシグナル ────────────────────────────────────────────────────
+  // profile 確定後に1回だけ fetch する（世代カウンタで古いレスポンスを破棄）。
+  const [projectSignals,    setProjectSignals]    = useState<ProjectSignalGroup[]>([]);
+  const [expandedSignal,    setExpandedSignal]    = useState<ProjectSignalType | null>(null);
+  const signalFetchGenRef = useRef(0);
+  const fetchProjectSignals = useCallback((profile: AppUserProfile | null) => {
+    const gen = ++signalFetchGenRef.current;
+    const ownerParam = (profile?.default_home_scope === 'mine' && profile.name2)
+      ? `?owner=${encodeURIComponent(profile.name2)}`
+      : '';
+    fetch(`/api/home/project-signals${ownerParam}`)
+      .then(r => r.json())
+      .then((d: { groups?: ProjectSignalGroup[] }) => {
+        if (gen !== signalFetchGenRef.current) return; // より新しい fetch が走ったので破棄
+        setProjectSignals(d.groups ?? []);
+      })
+      .catch(() => {});
+  }, []);
+
+  // ── アクション ────────────────────────────────────────────────────────────
+  const [pendingActions,    setPendingActions]    = useState<ActionListItem[]>([]);
+  const [unreviewedActions, setUnreviewedActions] = useState<ActionListItem[]>([]);
+  const [actionsLoading,    setActionsLoading]    = useState(true);
+  useEffect(() => {
+    setActionsLoading(true);
+    Promise.all([
+      fetch('/api/actions').then(r => r.json()) as Promise<{ actions?: ActionListItem[] }>,
+      fetch('/api/actions?include_done=1').then(r => r.json()) as Promise<{ actions?: ActionListItem[] }>,
+    ]).then(([openData, allData]) => {
+      const open = openData.actions ?? [];
+      const all  = allData.actions  ?? [];
+      setPendingActions(open);
+      setUnreviewedActions(all.filter(a => a.status === 'done' && !a.result));
+    }).catch(() => {}).finally(() => setActionsLoading(false));
+  }, []);
+
   const fetchData = useCallback(async (profile: AppUserProfile | null) => {
     const gen = ++fetchGenRef.current;
     setLoading(true);
@@ -552,7 +723,12 @@ export function Home() {
     fetch('/api/user/profile')
       .then(r => r.ok ? r.json() as Promise<AppUserProfile> : null)
       .then(p => {
-        if (!p) { setUserProfile(null); return; }
+        if (!p) {
+          setUserProfile(null);
+          // プロファイル取得失敗でもシグナルはフィルタなしで表示
+          fetchProjectSignals(null);
+          return;
+        }
         // ローカルストレージの設定でスコープを上書き（NocoDB 拡張列なしでも動作）
         const prefsRaw = typeof window !== 'undefined'
           ? localStorage.getItem(`cxm_prefs_${p.name2}`)
@@ -566,12 +742,18 @@ export function Home() {
           } catch { /* ignore */ }
         }
         setUserProfile(p);
-        // scope=mine の場合のみ、owner フィルタ付きで再フェッチ
+        // scope=mine の場合のみ owner フィルタ付きで再フェッチ。それ以外はフィルタなし。
         if (p.default_home_scope === 'mine' && p.name2) {
           fetchData(p);
+          fetchProjectSignals(p);
+        } else {
+          fetchProjectSignals(null);
         }
       })
-      .catch(() => setUserProfile(null));
+      .catch(() => {
+        setUserProfile(null);
+        fetchProjectSignals(null);
+      });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // マウント時1回のみ（fetchData は安定した関数）
 
@@ -585,7 +767,6 @@ export function Home() {
 
   const diffGroups      = buildDiffGroups(items);
   const trendGroups     = buildTrendGroups(items);
-  const topItems        = items.slice(0, 7);
   const total           = items.length;
   const hasSnapshotDiff = items.some(i => i.snapshotDiff !== undefined);
 
@@ -701,6 +882,26 @@ export function Home() {
     window.location.href = listUrl(segment);
   }
 
+  // ── period フィルタ済みアクション ──────────────────────────────────────────
+  const periodActions = useMemo(
+    () => filterByPeriod(pendingActions, period).slice(0, 10),
+    [pendingActions, period],
+  );
+
+  // ── period に対応するポートフォリオシグナルタイル ─────────────────────────
+  const signalTiles = useMemo(() => {
+    if (period === 'day')   return urgentTiles;
+    if (period === 'week')  return contextTiles;
+    return trendGroups; // month / quarter
+  }, [period, urgentTiles, contextTiles, trendGroups]);
+
+  const signalLabel: string = {
+    day:     '今日の変化',
+    week:    '今週の文脈',
+    month:   '今月のトレンド',
+    quarter: '四半期のトレンド',
+  }[period];
+
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <SidebarNav />
@@ -710,7 +911,7 @@ export function Home() {
         <main className="flex-1 overflow-y-auto p-6">
 
           {/* ── ページヘッダー ──────────────────────────────────────────── */}
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-4">
             <div>
               <h1 className="text-xl font-semibold text-slate-800">変動コックピット</h1>
               <p className="text-sm text-slate-500 mt-0.5">
@@ -738,81 +939,78 @@ export function Home() {
             </div>
           </div>
 
+          {/* ── 時間軸タブ ──────────────────────────────────────────────── */}
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-lg mb-6 w-fit">
+            {PERIODS.map(p => (
+              <button
+                key={p.value}
+                onClick={() => setPeriod(p.value)}
+                className={[
+                  "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
+                  period === p.value
+                    ? "bg-white text-slate-800 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700",
+                ].join(" ")}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
           {error && <AlertBox variant="error" className="mb-4">{error}</AlertBox>}
 
-          {/* ══ SECTION 1: 優先アクションキュー（ヒーロー）─────────────── */}
+          {/* ══ SECTION 1: 今やるべきアクション（ヒーロー）────────────── */}
           <div className="grid grid-cols-5 gap-5 mb-6">
 
-            {/* 優先アクションキュー（col-span-3） */}
+            {/* アクションキュー（col-span-3） */}
             <div className="col-span-3">
               <div className="flex items-center justify-between mb-3">
                 <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest">
-                  今週の優先アクション
+                  今やるべきアクション
                 </p>
                 <Link
-                  href="/companies"
+                  href="/actions"
                   className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1"
                 >
-                  全企業を見る <ArrowRight className="w-3 h-3" />
+                  すべて見る <ArrowRight className="w-3 h-3" />
                 </Link>
               </div>
 
-              {loading ? (
+              {actionsLoading ? (
                 <div className="space-y-2">
-                  {[0,1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-12 rounded-lg" />)}
+                  {[0,1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-11 rounded-lg" />)}
                 </div>
-              ) : topItems.length === 0 ? (
-                <div className="p-6 text-center text-sm text-slate-400 bg-white rounded-lg border border-slate-200">
-                  表示できる企業がありません
+              ) : periodActions.length === 0 ? (
+                <div className="p-6 text-center text-sm text-slate-400 bg-white rounded-lg border border-dashed border-slate-200">
+                  この期間に期限を迎えるアクションはありません
                 </div>
               ) : (
                 <div className="space-y-1">
-                  {topItems.map((item, idx) => {
-                    const badge  = getHealthBadge(item.overallHealth);
-                    const reason = priorityReason(item.priorityBreakdown ?? []);
-                    return (
-                      <Link
-                        key={item.companyUid}
-                        href={`/companies/${item.companyUid}`}
-                        className="flex items-center gap-3 bg-white border border-slate-200 rounded-lg px-3 py-2.5 hover:border-slate-300 hover:shadow-sm transition-all group"
-                      >
-                        {/* 順位 */}
-                        <span className="text-[11px] text-slate-300 w-4 text-right flex-shrink-0 tabular-nums font-medium">
-                          {idx + 1}
-                        </span>
-                        {/* Health badge */}
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] px-1.5 py-0 flex-shrink-0 font-medium ${badge.className}`}
-                        >
-                          {badge.label}
+                  {periodActions.map(a => (
+                    <Link
+                      key={a.id}
+                      href={`/companies/${a.companyUid}`}
+                      className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2.5 hover:border-slate-300 hover:shadow-sm transition-all group"
+                    >
+                      {/* 期限 */}
+                      <DueDateBadge dueDate={a.dueDate} />
+                      {/* urgency */}
+                      {a.urgency === 'high' && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 flex-shrink-0 font-medium text-red-600 border-red-200">
+                          高
                         </Badge>
-                        {/* 企業名 */}
-                        <span className="text-sm font-medium text-slate-800 flex-1 truncate min-w-0">
-                          {item.companyName}
-                        </span>
-                        {/* 更新日 */}
-                        {item.renewalBucket === "0-30" && (
-                          <span className="text-[10px] text-rose-600 font-medium flex-shrink-0 flex items-center gap-0.5">
-                            <Calendar className="w-3 h-3" />{item.renewalDaysLeft}日
-                          </span>
-                        )}
-                        {/* フェーズ */}
-                        {item.activePhaseLabel && (
-                          <span className="text-[11px] text-slate-400 flex-shrink-0 w-24 truncate text-right">
-                            {item.activePhaseLabel}
-                          </span>
-                        )}
-                        {/* 優先理由 */}
-                        {reason && (
-                          <span className="text-[10px] text-slate-400 flex-shrink-0 hidden xl:block max-w-[120px] truncate">
-                            {reason}
-                          </span>
-                        )}
-                        <ArrowRight className="w-3 h-3 text-slate-300 group-hover:text-slate-500 flex-shrink-0 transition-colors" />
-                      </Link>
-                    );
-                  })}
+                      )}
+                      {/* タイトル */}
+                      <span className="text-sm font-medium text-slate-800 flex-1 truncate min-w-0">
+                        {a.title}
+                      </span>
+                      {/* 企業名 */}
+                      <span className="text-[11px] text-slate-400 flex-shrink-0 max-w-[120px] truncate">
+                        {a.companyName}
+                      </span>
+                      <ArrowRight className="w-3 h-3 text-slate-300 group-hover:text-slate-500 flex-shrink-0 transition-colors" />
+                    </Link>
+                  ))}
                 </div>
               )}
             </div>
@@ -880,62 +1078,110 @@ export function Home() {
             </div>
           </div>
 
-          {/* ══ SECTION 2: 変化サマリー（2段 × 4列）──────────────────────── */}
+          {/* ══ SECTION 2: 未レビューアクション ────────────────────────── */}
+          {!actionsLoading && unreviewedActions.length > 0 && (
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest">
+                  未レビューアクション
+                  <span className="ml-2 normal-case font-normal text-slate-300">— 完了済みだが結果が未記録</span>
+                </p>
+                <Link
+                  href="/actions"
+                  className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1"
+                >
+                  すべて見る <ArrowRight className="w-3 h-3" />
+                </Link>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {unreviewedActions.slice(0, 4).map(a => (
+                  <Link
+                    key={a.id}
+                    href={`/companies/${a.companyUid}`}
+                    className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 hover:bg-amber-100 transition-colors group"
+                  >
+                    <ClipboardCheck className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                    <span className="text-xs font-medium text-slate-700 flex-1 truncate">{a.title}</span>
+                    <span className="text-[10px] text-slate-400 flex-shrink-0 max-w-[100px] truncate">{a.companyName}</span>
+                    <ArrowRight className="w-3 h-3 text-amber-300 group-hover:text-amber-500 flex-shrink-0 transition-colors" />
+                  </Link>
+                ))}
+              </div>
+              {unreviewedActions.length > 4 && (
+                <p className="text-[10px] text-slate-400 mt-1.5 text-right">
+                  他 {unreviewedActions.length - 4} 件 →{" "}
+                  <Link href="/actions" className="underline hover:text-slate-600">
+                    すべて確認
+                  </Link>
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ══ SECTION 2b: プロジェクトシグナル（有料PJ無活動）────────────── */}
+          {projectSignals.length > 0 && (
+            <div className="mb-6">
+              <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-2">
+                プロジェクトシグナル
+                <span className="ml-2 normal-case font-normal text-slate-300">— 有料PJのみ</span>
+              </p>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                {projectSignals.map(g => (
+                  <ProjectSignalTile
+                    key={g.type}
+                    group={g}
+                    expanded={expandedSignal === g.type}
+                    onToggle={() => setExpandedSignal(expandedSignal === g.type ? null : g.type)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ══ SECTION 3: ポートフォリオシグナル（period 対応）──────────── */}
           <div className="mb-6">
-            {/* Tier 1: 今日の変化（緊急・前日差分ベース） */}
             <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-2">
-              今日の変化
+              {signalLabel}
+              {(period === 'week') && (
+                <span className="ml-2 normal-case font-normal text-slate-300">— 現況シグナル + 週次傾向</span>
+              )}
             </p>
             {loading ? (
-              <div className="grid grid-cols-4 gap-3 mb-3">
+              <div className="grid grid-cols-4 gap-3">
                 {[0,1,2,3].map(i => <Skeleton key={i} className="h-28 rounded-xl" />)}
               </div>
-            ) : !hasSnapshotDiff ? (
-              // スナップショット未蓄積 → 空カードを並べず1行で案内
-              <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 rounded-xl px-4 py-3 mb-3">
-                <span className="text-[11px] text-slate-400">
-                  前日比データ蓄積中
-                </span>
+            ) : !hasSnapshotDiff && (period === 'day' || period === 'week') ? (
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-100 rounded-xl px-4 py-3">
+                <span className="text-[11px] text-slate-400">前日比データ蓄積中</span>
                 <span className="text-[11px] text-slate-300">—</span>
                 <span className="text-[11px] text-slate-300">
                   スナップショットバッチ実行後（翌日〜）から差分が表示されます
                 </span>
               </div>
             ) : (
-              <div className="grid grid-cols-4 gap-3 mb-3">
-                {urgentTiles.map(g => <DiffTile key={g.id} group={g} />)}
-              </div>
-            )}
-
-            {/* Tier 2: 今週の文脈（現況シグナル + 週次傾向） */}
-            <p className="text-[10px] font-medium text-slate-400 uppercase tracking-widest mb-2">
-              今週の文脈
-              <span className="ml-2 normal-case font-normal text-slate-300">— 現況シグナル + 週次傾向</span>
-            </p>
-            {loading ? (
               <div className="grid grid-cols-4 gap-3">
-                {[0,1,2,3].map(i => <Skeleton key={i} className="h-28 rounded-xl" />)}
-              </div>
-            ) : (
-              <div className="grid grid-cols-4 gap-3">
-                {/* 現況シグナル 3枚（常に live data）*/}
-                {contextTiles.filter(g => g.id !== "trendWeeklyWorsened").map(g => (
-                  <DiffTile key={g.id} group={g} />
-                ))}
-                {/* 週次悪化タイル: スナップショット蓄積中は破線プレースホルダー */}
-                {hasSnapshotDiff
-                  ? contextTiles.filter(g => g.id === "trendWeeklyWorsened").map(g => (
+                {period === 'week' ? (
+                  <>
+                    {contextTiles.filter(g => g.id !== "trendWeeklyWorsened").map(g => (
                       <DiffTile key={g.id} group={g} />
-                    ))
-                  : (
-                    <div className="flex flex-col items-center justify-center gap-1 p-3 rounded-xl border border-dashed border-slate-200 bg-white">
-                      <span className="text-[10px] text-slate-300 font-medium">週次悪化</span>
-                      <span className="text-[10px] text-slate-200 text-center leading-snug">
-                        7日分蓄積後<br />から表示
-                      </span>
-                    </div>
-                  )
-                }
+                    ))}
+                    {hasSnapshotDiff
+                      ? contextTiles.filter(g => g.id === "trendWeeklyWorsened").map(g => (
+                          <DiffTile key={g.id} group={g} />
+                        ))
+                      : (
+                        <div className="flex flex-col items-center justify-center gap-1 p-3 rounded-xl border border-dashed border-slate-200 bg-white">
+                          <span className="text-[10px] text-slate-300 font-medium">週次悪化</span>
+                          <span className="text-[10px] text-slate-200 text-center leading-snug">
+                            7日分蓄積後<br />から表示
+                          </span>
+                        </div>
+                      )
+                    }
+                  </>
+                ) : (
+                  signalTiles.slice(0, 4).map(g => <DiffTile key={g.id} group={g} />)
+                )}
               </div>
             )}
           </div>

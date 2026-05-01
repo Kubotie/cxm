@@ -51,7 +51,11 @@ import { fetchCsmPhasesByUids, fetchCrmPhasesByUids } from '@/lib/nocodb/phases'
 import { fetchProjectsByUids }         from '@/lib/nocodb/project-info';
 import { fetchSupportCountsByUids }    from '@/lib/nocodb/support-by-company';
 import { fetchProjectMrrMap }          from '@/lib/metabase/mrr';
+import { fetchProjectUserActivityMap } from '@/lib/metabase/project-user-activity';
+import { fetchProjectSignalMap }       from '@/lib/metabase/project-signals';
+import { buildProjectAggregateVM }     from '@/lib/company/project-aggregate';
 import { upsertCompanySnapshot, todayDateStr } from '@/lib/nocodb/company-snapshot';
+import { upsertProjectUserSnapshot }   from '@/lib/nocodb/project-user-snapshots';
 import type { CompanyDailySnapshot }   from '@/lib/nocodb/company-snapshot';
 import { getCompanySummaryStatesByUids } from '@/lib/nocodb/company-summary-read';
 
@@ -117,7 +121,7 @@ async function runSnapshotJob(
   console.log(`[batch/company-snapshot] 対象企業数: ${allUids.length}`);
 
   // ── Step 2: 並列データ取得 ───────────────────────────────────────────────────
-  const [csmMap, crmMap, projectMap, mrrMap, supportMap, summaryStateMap] = await Promise.all([
+  const [csmMap, crmMap, projectMap, mrrMap, supportMap, summaryStateMap, activityMap, signalDataMap] = await Promise.all([
     fetchCsmPhasesByUids(allUids).catch(() =>
       new Map() as Awaited<ReturnType<typeof fetchCsmPhasesByUids>>,
     ),
@@ -135,6 +139,10 @@ async function runSnapshotJob(
     getCompanySummaryStatesByUids(allUids).catch(() =>
       new Map() as Awaited<ReturnType<typeof getCompanySummaryStatesByUids>>,
     ),
+    // Metabase ユーザー活動（プロジェクト停滞集計用）
+    fetchProjectUserActivityMap().catch(() => new Map()),
+    // Metabase シグナル（Campaign・PV上限集計用）
+    fetchProjectSignalMap().catch(() => new Map()),
   ]);
 
   // ── Step 3: 各企業のスナップショットを構築して upsert ──────────────────────
@@ -172,15 +180,37 @@ async function runSnapshotJob(
     const support = supportMap.get(uid);
     const openSupportCount = support?.openCount ?? 0;
 
+    // ── プロジェクト集計（project-signals に蓄積）──────────────────────────────
+    const projectVM = projList.length > 0
+      ? buildProjectAggregateVM(projList, activityMap)
+      : null;
+
+    // Metabase シグナルから企業単位の Campaign 合計・PV上限アラート数を集計
+    let runningCampaignTotal = 0;
+    let pvCeilingAlertCount  = 0;
+    for (const p of projList) {
+      const sd = signalDataMap.get(p.id);
+      if (!sd) continue;
+      runningCampaignTotal += sd.runningCampaignWithGoalCount;
+      if (sd.pvCeiling && sd.pvCeiling > 0 && sd.monthPvForecast != null) {
+        if (sd.monthPvForecast / sd.pvCeiling >= 0.9) pvCeilingAlertCount++;
+      }
+    }
+
     const snapshot: Omit<CompanyDailySnapshot, 'Id'> = {
-      company_uid:        uid,
-      snapshot_date:      snapshotDate,
-      m_phase:            mPhase,
-      overall_health:     overallHealth,
-      mrr:                totalMrr > 0 ? totalMrr : null,
-      open_support_count: openSupportCount,
-      renewal_bucket:     renewalBucket,
-      renewal_date:       renewalDate,
+      company_uid:             uid,
+      snapshot_date:           snapshotDate,
+      m_phase:                 mPhase,
+      overall_health:          overallHealth,
+      mrr:                     totalMrr > 0 ? totalMrr : null,
+      open_support_count:      openSupportCount,
+      renewal_bucket:          renewalBucket,
+      renewal_date:            renewalDate,
+      active_project_count:    projectVM?.paidActiveCount   ?? null,
+      stalled_project_count:   projectVM?.stalled           ?? null,
+      total_l30_active:        projectVM?.totalL30Active    ?? null,
+      running_campaign_total:  runningCampaignTotal > 0 ? runningCampaignTotal : null,
+      pv_ceiling_alert_count:  pvCeilingAlertCount  > 0 ? pvCeilingAlertCount  : null,
     };
 
     if (!dryRun) {
@@ -190,6 +220,24 @@ async function runSnapshotJob(
       } catch (err) {
         console.error(`[batch/company-snapshot] upsert 失敗 ${uid}:`, err);
         failedCount++;
+      }
+
+      // ── プロジェクト単位スナップショット（新規ユーザー・Campaign急増の差分検出用）
+      for (const p of projList) {
+        const activity = activityMap.get(p.id);
+        const sd       = signalDataMap.get(p.id);
+        if (!activity && !sd) continue;
+        await upsertProjectUserSnapshot({
+          project_id:             p.id,
+          company_uid:            uid,
+          snapshot_date:          snapshotDate,
+          total_users:            activity?.totalUsers            ?? null,
+          l30_active_users:       activity?.l30ActiveUsers        ?? sd?.l30Active        ?? null,
+          l7_active_users:        activity?.l7ActiveUsers         ?? sd?.l7EventCount     ?? null,
+          running_campaign_count: sd?.runningCampaignWithGoalCount ?? null,
+        }).catch(err => {
+          console.warn(`[batch/company-snapshot] project snapshot upsert 失敗 ${p.id}:`, err);
+        });
       }
     } else {
       writtenCount++;
