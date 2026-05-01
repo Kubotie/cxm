@@ -392,7 +392,6 @@ export const ALERT_CONDITION_FIELDS: Record<
   open_support_count:           { label: 'サポートオープン総数',               type: 'number',  objectTypes: ['company'] },
   decision_maker_count:         { label: '意思決定者数',                       type: 'number',  objectTypes: ['company'] },
   overall_health:               { label: '健全性（overall_health）',          type: 'string',  objectTypes: ['company'] },
-  phase_stagnation_days:        { label: 'フェーズ停滞日数',                   type: 'number',  objectTypes: ['company'] },
   open_alert_count:             { label: 'オープンアラート数',                  type: 'number',  objectTypes: ['company'] },
   open_action_count:            { label: 'オープンアクション数',                type: 'number',  objectTypes: ['company'] },
   case_severity:                { label: 'ケース重要度',                        type: 'string',  objectTypes: ['support_case'] },

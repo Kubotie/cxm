@@ -692,6 +692,9 @@ export function CompanyDetail() {
   const policyAlerts: AppAlert[] = (detail?.alerts ?? []).filter(
     a => a.source?.startsWith('policy:'),
   );
+  const regularAlerts: AppAlert[] = (detail?.alerts ?? []).filter(
+    a => !a.source?.startsWith('policy:'),
+  );
   const healthBadge = getHealthBadge(health?.overallHealth);
 
   const supportTabLabel = support
@@ -1185,9 +1188,9 @@ export function CompanyDetail() {
                           >
                             <AlertTriangle className="w-2.5 h-2.5" />
                             アラート {detail!.alerts!.length}件
-                            {policyAlerts.length > 0 && (
+                            {regularAlerts.length > 0 && policyAlerts.length > 0 && (
                               <span className="text-slate-400 font-normal ml-0.5">
-                                （Policy {policyAlerts.length}）
+                                （通常 {regularAlerts.length} / Policy {policyAlerts.length}）
                               </span>
                             )}
                           </button>
@@ -1442,7 +1445,7 @@ export function CompanyDetail() {
                     要注意事項
                   </h2>
 
-                  {(health?.riskSignals ?? []).length === 0 && orgVM.peopleRisks.length === 0 && policyAlerts.length === 0 ? (
+                  {(health?.riskSignals ?? []).length === 0 && orgVM.peopleRisks.length === 0 && policyAlerts.length === 0 && regularAlerts.length === 0 ? (
                     <p className="text-[11px] text-slate-400">リスクシグナルは検出されていません</p>
                   ) : (
                     <div className="space-y-4">
@@ -1454,6 +1457,7 @@ export function CompanyDetail() {
                             <RiskSignalRow
                               key={sig.id}
                               signal={sig}
+                              activeTab={activeTab}
                               onTabSwitch={setActiveTab}
                               onActionCTA={(s, cta) => openActionDialog(buildRiskSignalPrefill(s, cta))}
                               onSfTodoCTA={(s, cta) => openSfTodoDialog({
@@ -1463,6 +1467,40 @@ export function CompanyDetail() {
                               })}
                             />
                           ))}
+                        </div>
+                      )}
+
+                      {/* Regular open alerts (non-policy) */}
+                      {regularAlerts.length > 0 && (
+                        <div className="space-y-2">
+                          {(health?.riskSignals ?? []).length > 0 && <Separator />}
+                          <p className={SUBSECTION_HEADER_CLS}>オープンアラート</p>
+                          {regularAlerts.map(a => {
+                            const dot = a.severity === 'high'
+                              ? 'bg-orange-500'
+                              : a.severity === 'low'
+                              ? 'bg-slate-400'
+                              : 'bg-amber-400';
+                            return (
+                              <div key={a.id} className="flex items-start gap-2 text-sm">
+                                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5 ${dot}`} />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-slate-700 font-medium text-xs">{a.title}</span>
+                                    <Badge variant="outline" className="text-[10px] py-0 border-orange-200 text-orange-600 bg-orange-50">
+                                      {a.severity}
+                                    </Badge>
+                                  </div>
+                                  {a.description && (
+                                    <p className="text-[11px] text-slate-500 mt-0.5">{a.description}</p>
+                                  )}
+                                  {a.timestamp && a.timestamp !== '—' && (
+                                    <p className="text-[10px] text-slate-400 mt-0.5">{a.timestamp}</p>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
 
@@ -2217,37 +2255,52 @@ export function CompanyDetail() {
 
 // ── Risk signal row ──────────────────────────────────────────────────────────
 
-const SIGNAL_TAB_MAP: Record<string, string> = {
-  phase_gap:          'overview',
-  phase_stagnation:   'overview',
-  communication_blank: 'communication',
-  project_stalled:    'projects',
-  support_critical:   'support',
-  support_high_volume: 'support',
-  alert_critical:     'support',
-  alert_high:         'support',
-  summary_stale:      'overview',
+const SIGNAL_NAV_MAP: Record<string, { tab: string; sectionId?: string }> = {
+  phase_gap:            { tab: 'overview' },
+  phase_stagnation:     { tab: 'overview' },
+  communication_blank:  { tab: 'communication' },
+  project_stalled:      { tab: 'projects' },
+  support_critical:     { tab: 'support' },
+  support_high_volume:  { tab: 'support' },
+  alert_critical:       { tab: 'overview', sectionId: 'alerts-section' },
+  alert_high:           { tab: 'overview', sectionId: 'alerts-section' },
+  summary_stale:        { tab: 'overview' },
 };
 
 function RiskSignalRow({
   signal,
+  activeTab,
   onTabSwitch,
   onActionCTA,
   onSfTodoCTA,
 }: {
   signal:      RiskSignal;
+  activeTab:   string;
   onTabSwitch: (tab: string) => void;
   onActionCTA: (signal: RiskSignal, cta: SignalCTASpec) => void;
   onSfTodoCTA: (signal: RiskSignal, cta: SignalCTASpec) => void;
 }) {
-  const cfg       = RISK_SEVERITY_BADGE[signal.severity] ?? RISK_SEVERITY_BADGE.medium;
-  const targetTab = SIGNAL_TAB_MAP[signal.type];
-  const cta       = getRiskSignalCTA(signal);
+  const cfg = RISK_SEVERITY_BADGE[signal.severity] ?? RISK_SEVERITY_BADGE.medium;
+  const nav = SIGNAL_NAV_MAP[signal.type];
+  const cta = getRiskSignalCTA(signal);
 
   // alert signal のソース説明（alerts テーブル、status=open）
   const alertSourceHint = (signal.type === 'alert_critical' || signal.type === 'alert_high')
     ? 'alerts テーブル / status=open'
     : null;
+
+  // 矢印を表示する条件: 別タブへの遷移 or 同タブ内セクションへのスクロール
+  const showArrow = nav && (nav.tab !== activeTab || !!nav.sectionId);
+
+  function handleNavigate() {
+    if (!nav) return;
+    if (nav.tab !== activeTab) onTabSwitch(nav.tab);
+    if (nav.sectionId) {
+      setTimeout(() => {
+        document.getElementById(nav.sectionId!)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, nav.tab !== activeTab ? 50 : 0);
+    }
+  }
 
   return (
     <div className="flex items-start gap-2 text-sm">
@@ -2285,10 +2338,10 @@ function RiskSignalRow({
           </div>
         )}
       </div>
-      {targetTab && targetTab !== 'overview' && (
+      {showArrow && (
         <button
           className="text-[10px] text-indigo-500 hover:underline flex-shrink-0 mt-0.5"
-          onClick={() => onTabSwitch(targetTab)}
+          onClick={handleNavigate}
         >
           <ArrowRight className="w-3 h-3" />
         </button>

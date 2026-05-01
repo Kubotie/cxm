@@ -480,10 +480,28 @@ function HealthBarChart({ data, onNavigate }: {
 // ── Chart 2: フェーズ分布バー（横向き）───────────────────────────────────────
 
 interface PhaseBarData {
-  name: string; count: number;
+  name: string;
+  count: number;
+  companies: { uid: string; name: string }[];
 }
 
 function PhaseBarChart({ data }: { data: PhaseBarData[] }) {
+  const [activePhase, setActivePhase] = useState<PhaseBarData | null>(null);
+  const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearHideTimer() {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }
+
+  function scheduleHide() {
+    clearHideTimer();
+    hideTimerRef.current = setTimeout(() => setActivePhase(null), 150);
+  }
+
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center h-[180px] text-sm text-slate-400">
@@ -491,30 +509,67 @@ function PhaseBarChart({ data }: { data: PhaseBarData[] }) {
       </div>
     );
   }
+
   return (
-    <ResponsiveContainer width="100%" height={Math.max(180, data.length * 36 + 16)}>
-      <BarChart
-        data={data}
-        layout="vertical"
-        margin={{ top: 0, right: 32, left: 4, bottom: 0 }}
-        barSize={18}
-      >
-        <CartesianGrid horizontal={false} stroke="#f1f5f9" />
-        <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} allowDecimals={false} />
-        <YAxis
-          type="category"
-          dataKey="name"
-          tick={{ fontSize: 11, fill: "#64748b" }}
-          axisLine={false}
-          tickLine={false}
-          width={80}
-        />
-        <Tooltip content={<ChartTooltip />} cursor={{ fill: "#f8fafc" }} />
-        <Bar dataKey="count" fill="#6366f1" radius={[0, 4, 4, 0]}>
-          <LabelList dataKey="count" position="right" style={{ fontSize: 11, fill: "#475569", fontWeight: 600 }} />
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+    <div className="relative">
+      <ResponsiveContainer width="100%" height={Math.max(180, data.length * 36 + 16)}>
+        <BarChart
+          data={data}
+          layout="vertical"
+          margin={{ top: 0, right: 32, left: 4, bottom: 0 }}
+          barSize={18}
+          onMouseMove={(e: any) => {
+            const payload = e?.activePayload?.[0]?.payload as PhaseBarData | undefined;
+            if (payload) {
+              clearHideTimer();
+              if (payload.name !== activePhase?.name) {
+                setActivePhase(payload);
+                if (e.chartX != null && e.chartY != null) {
+                  setTooltipPos({ x: e.chartX, y: e.chartY });
+                }
+              }
+            }
+          }}
+          onMouseLeave={scheduleHide}
+        >
+          <CartesianGrid horizontal={false} stroke="#f1f5f9" />
+          <XAxis type="number" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} allowDecimals={false} />
+          <YAxis
+            type="category"
+            dataKey="name"
+            tick={{ fontSize: 11, fill: "#64748b" }}
+            axisLine={false}
+            tickLine={false}
+            width={80}
+          />
+          <Bar dataKey="count" fill="#6366f1" radius={[0, 4, 4, 0]}>
+            <LabelList dataKey="count" position="right" style={{ fontSize: 11, fill: "#475569", fontWeight: 600 }} />
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+      {activePhase && (
+        <div
+          className="absolute bg-white border border-slate-200 rounded-lg shadow-lg px-3 py-2 text-xs max-h-56 overflow-y-auto min-w-[180px] z-50"
+          style={{ left: tooltipPos.x + 12, top: Math.max(0, tooltipPos.y - 20) }}
+          onMouseEnter={clearHideTimer}
+          onMouseLeave={() => setActivePhase(null)}
+        >
+          <p className="font-semibold text-slate-700 mb-2">{activePhase.name}（{activePhase.companies.length}社）</p>
+          <ul className="space-y-1">
+            {activePhase.companies.map(c => (
+              <li key={c.uid}>
+                <Link
+                  href={`/companies/${c.uid}`}
+                  className="text-indigo-600 hover:text-indigo-800 hover:underline block truncate max-w-[220px]"
+                >
+                  {c.name}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -837,19 +892,22 @@ export function Home() {
   ];
 
   const phaseChartData: PhaseBarData[] = useMemo(() => {
-    const counts = new Map<string, number>();
+    const map = new Map<string, { count: number; companies: { uid: string; name: string }[] }>();
     for (const item of items) {
       const label = item.activePhaseLabel ?? "未設定";
-      counts.set(label, (counts.get(label) ?? 0) + 1);
+      const entry = map.get(label) ?? { count: 0, companies: [] };
+      entry.count++;
+      entry.companies.push({ uid: item.companyUid, name: item.companyName });
+      map.set(label, entry);
     }
-    return [...counts.entries()]
+    return [...map.entries()]
       .sort((a, b) => {
         const numA = parseInt(a[0].match(/^(\d+)/)?.[1] ?? '0', 10);
         const numB = parseInt(b[0].match(/^(\d+)/)?.[1] ?? '0', 10);
         if (numA !== numB) return numB - numA;
         return a[0].localeCompare(b[0]);
       })
-      .map(([name, count]) => ({ name, count }));
+      .map(([name, { count, companies }]) => ({ name, count, companies }));
   }, [items]);
 
   const renewalChartData: RenewalBarData[] = useMemo(() => {

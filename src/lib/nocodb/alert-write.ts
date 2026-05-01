@@ -47,7 +47,7 @@ export async function savePolicyAlert(
 
   let existing: RawAlert[];
   try {
-    existing = await nocoFetch<RawAlert>(tableId, { where, limit: '1' });
+    existing = await nocoFetch<RawAlert>(tableId, { where, limit: '1' }, false);
   } catch (err) {
     return { ok: false, skipped: false, error: err instanceof Error ? err.message : String(err) };
   }
