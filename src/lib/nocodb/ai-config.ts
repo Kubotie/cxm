@@ -46,15 +46,26 @@ function invalidateCache(): void {
 
 // ── 全件取得（キャッシュ付き）──────────────────────────────────────────────────
 
-export async function listAiConfigs(): Promise<AiConfigRecord[]> {
+export async function listAiConfigs(bypassCache = false): Promise<AiConfigRecord[]> {
   const tableId = TABLE_IDS.ai_config;
   if (!tableId) return [];
 
-  if (isCacheValid()) {
+  if (!bypassCache && isCacheValid()) {
     return Array.from(_cache!.values());
   }
 
-  const records = await nocoFetch<AiConfigRecord>(tableId, { sort: 'config_key' }, false);
+  // sort: '-CreatedAt' で最新レコードを先頭に。同一 config_key の重複レコードがある場合に
+  // 古いレコードが返ってしまう問題を防ぐ（重複は create/update 競合で稀に発生する）。
+  const allRecords = await nocoFetch<AiConfigRecord>(tableId, { sort: '-CreatedAt' }, false);
+
+  // 重複 config_key は最新（CreatedAt 最大）のものだけ残す（-CreatedAt ソートで先頭が最新）
+  const seen    = new Set<string>();
+  const records = allRecords.filter(r => {
+    if (seen.has(r.config_key)) return false;
+    seen.add(r.config_key);
+    return true;
+  });
+
   _cache = new Map(records.map(r => [r.config_key, r]));
   _cacheAt = Date.now();
   return records;
@@ -92,10 +103,10 @@ export async function upsertAiConfig(
 
   invalidateCache();
 
-  // 既存レコード検索
+  // 既存レコード検索（-CreatedAt ソートで最新を先頭に → 重複時も最新を更新）
   const existing = await nocoFetch<AiConfigRecord>(
     tableId,
-    { where: `(config_key,eq,${key})`, limit: '1' },
+    { where: `(config_key,eq,${key})`, sort: '-CreatedAt', limit: '1' },
     false,
   );
 

@@ -6,6 +6,7 @@ import {
   Home, Building2, Headphones, BrainCircuit,
   Activity, Zap, ClipboardList, Database, Settings,
   ChevronLeft, ChevronRight, UserCircle, CheckSquare, Send,
+  BookOpen, FileText,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,8 @@ const NAV_ITEMS: NavItem[] = [
   { title: 'Home',       icon: Home,            href: '/' },
   { title: 'Companies',  icon: Building2,        href: '/companies' },
   { title: 'Actions',    icon: CheckSquare,      href: '/actions' },
+  { title: 'Assets',     icon: BookOpen,         href: '/assets' },
+  { title: 'Documents',  icon: FileText,         href: '/documents' },
   { title: 'Outbound',   icon: Send,             href: '/outbound' },
   { title: 'Support',    icon: Headphones,       href: '/support' },
   { title: 'AI Control', icon: BrainCircuit,       href: '/ops/ai' },

@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
@@ -9,7 +10,8 @@ import { Textarea }   from "@/components/ui/textarea";
 import { Badge }      from "@/components/ui/badge";
 import { Label }      from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { CheckCircle2, Zap, Sparkles, User, Users, X } from "lucide-react";
+import { CheckCircle2, Zap, Sparkles, User, Users, X, Loader2, BookOpen } from "lucide-react";
+import { toast } from "sonner";
 import {
   createLocalAction,
   type LocalAction,
@@ -172,6 +174,9 @@ export function ActionCreateDialog({
   const [eventFormat,   setEventFormat]   = useState('');
   const [actionPurpose, setActionPurpose] = useState('');
   const [done,          setDone]          = useState(false);
+  const [generatingPlan, setGeneratingPlan] = useState(false);
+  const [aiPlan,         setAiPlan]         = useState<string | null>(null);
+  const [planAssetId,    setPlanAssetId]    = useState<string | null>(null);
 
   // 企業ピッカー（companyUid が渡されていない場合のみ使用）
   const needCompanyPicker = !companyUid;
@@ -240,9 +245,47 @@ export function ActionCreateDialog({
   const displaySourceType = resolveSourceType(createdFrom, sourceType);
   const resolvedCreatedFrom: ActionCreatedFrom = createdFrom ?? 'manual';
 
+  async function handleGeneratePlan() {
+    if (!title.trim()) return;
+    setGeneratingPlan(true);
+    setAiPlan(null);
+    try {
+      const res = await fetch('/api/actions/ai-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title:          title.trim(),
+          company_name:   effectiveName || undefined,
+          action_purpose: actionPurpose || undefined,
+          created_by:     owner || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json() as { plan: { md_content: string }; asset_id: string };
+      setAiPlan(data.plan.md_content);
+      setPlanAssetId(data.asset_id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'AI計画の生成に失敗しました');
+    } finally {
+      setGeneratingPlan(false);
+    }
+  }
+
+  function applyPlanToBody() {
+    if (aiPlan) {
+      setBody(aiPlan);
+      setAiPlan(null);
+    }
+  }
+
   function reset() {
     setTitle(prefillTitle);
     setBody(prefillBody);
+    setAiPlan(null);
+    setPlanAssetId(null);
     setDueDate('');
     setPoc('');
     setActivityType('');
@@ -333,8 +376,8 @@ export function ActionCreateDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[520px] flex flex-col max-h-[90vh] overflow-hidden">
-        <DialogHeader className="flex-shrink-0">
+      <DialogContent className="sm:max-w-[520px] flex flex-col h-[90vh] max-h-[90vh] overflow-hidden p-0">
+        <DialogHeader className="flex-shrink-0 px-6 pt-6 pb-4 border-b border-slate-100">
           <DialogTitle className="flex items-center gap-2">
             {SOURCE_ICON[displaySourceType]}
             行動を記録
@@ -363,7 +406,7 @@ export function ActionCreateDialog({
         </DialogHeader>
 
         {(done || bulkDone) ? (
-          <div className="flex flex-col items-center py-8 gap-3 text-green-600">
+          <div className="flex flex-col items-center py-8 px-6 gap-3 text-green-600">
             <CheckCircle2 className="w-10 h-10" />
             <p className="text-sm font-medium">
               {bulkDone ? `${bulkCount}社に行動を記録しました` : '行動を記録しました'}
@@ -371,8 +414,8 @@ export function ActionCreateDialog({
           </div>
         ) : (
           <>
-            <ScrollArea className="flex-1 min-h-0">
-              <div className="space-y-4 py-2 px-0.5">
+            <ScrollArea className="flex-1 min-h-0 overflow-y-auto">
+              <div className="space-y-4 py-4 px-6">
 
                 {/* 企業選択（companyUid が渡されていない場合のみ） */}
                 {needCompanyPicker && (
@@ -469,17 +512,71 @@ export function ActionCreateDialog({
 
                 {/* Title */}
                 <div className="space-y-1.5">
-                  <Label htmlFor="action-title" className="text-xs">
-                    件名 <span className="text-red-500">*</span>
-                  </Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="action-title" className="text-xs">
+                      件名 <span className="text-red-500">*</span>
+                    </Label>
+                    {title.trim().length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleGeneratePlan}
+                        disabled={generatingPlan}
+                        className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border border-violet-300 text-violet-600 hover:bg-violet-50 transition-colors disabled:opacity-50"
+                      >
+                        {generatingPlan
+                          ? <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                          : <Sparkles className="w-2.5 h-2.5" />
+                        }
+                        AI計画を生成
+                      </button>
+                    )}
+                  </div>
                   <Input
                     id="action-title"
                     value={title}
-                    onChange={e => setTitle(e.target.value)}
+                    onChange={e => { setTitle(e.target.value); setAiPlan(null); }}
                     placeholder="例: フォローアップMTGのアレンジ"
                     className="text-sm"
                     autoFocus
                   />
+                  {/* AI計画生成結果 */}
+                  {aiPlan && (
+                    <div className="rounded-md bg-violet-50 border border-violet-200 p-3 text-xs space-y-2">
+                      <p className="font-medium text-violet-700 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3" />
+                        AI生成計画
+                      </p>
+                      <pre className="text-slate-700 whitespace-pre-wrap font-sans leading-relaxed max-h-40 overflow-auto">
+                        {aiPlan}
+                      </pre>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={applyPlanToBody}
+                          className="text-[10px] px-2 py-1 rounded bg-violet-600 text-white hover:bg-violet-700 transition-colors"
+                        >
+                          メモ欄に適用
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAiPlan(null)}
+                          className="text-[10px] px-2 py-1 rounded border border-slate-300 text-slate-500 hover:bg-slate-50 transition-colors"
+                        >
+                          閉じる
+                        </button>
+                        {planAssetId && (
+                          <Link
+                            href="/assets?source_type=ai_plan"
+                            target="_blank"
+                            className="text-[10px] text-violet-600 hover:underline self-center ml-auto flex items-center gap-0.5"
+                          >
+                            <BookOpen className="w-3 h-3" />
+                            アセットで確認
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Owner + Due date */}
@@ -559,7 +656,7 @@ export function ActionCreateDialog({
               </div>
             </ScrollArea>
 
-            <DialogFooter className="flex-shrink-0 border-t pt-3 mt-1">
+            <DialogFooter className="flex-shrink-0 border-t px-6 py-4 bg-white">
               <Button variant="outline" onClick={() => handleOpenChange(false)}>キャンセル</Button>
               <Button
                 onClick={handleSubmit}

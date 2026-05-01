@@ -44,8 +44,16 @@ const INTERCOM_OPEN_STATUSES = new Set(['open', 'snoozed', '']);
 /** cse_ticket がクローズとみなされる status 値 */
 const CSE_CLOSED_STATUSES = new Set(['resolved', 'closed']);
 
-/** 直近 N 日以内 = 「recent」の定義 */
+/** 直近 N 日以内 = 「recent」の定義（activity 表示用） */
 const RECENT_DAYS = 7;
+
+/**
+ * リスクシグナル判定に使う「有効期間」。
+ * この日数を超えて作成されたオープンチケットは、クローズし忘れた放置ケースとみなし
+ * criticalCount / health シグナルの対象から除外する。
+ * AI プロンプトにも stale として明示することで過剰なリスク判定を防ぐ。
+ */
+export const SUPPORT_RISK_WINDOW_DAYS = 90;
 
 function isIntercomOpen(routingStatus: string | null | undefined): boolean {
   const s = String(routingStatus ?? '').toLowerCase();
@@ -63,6 +71,14 @@ function isRecent(createdAt: string | null | undefined): boolean {
   return (Date.now() - ms) / (1000 * 60 * 60 * 24) <= RECENT_DAYS;
 }
 
+/** リスク判定ウィンドウ内（SUPPORT_RISK_WINDOW_DAYS 以内）に作成されたか */
+function isWithinRiskWindow(createdAt: string | null | undefined): boolean {
+  if (!createdAt) return true; // 作成日不明は保守的に含める
+  const ms = new Date(String(createdAt).trim().replace(' ', 'T')).getTime();
+  if (isNaN(ms)) return true;
+  return (Date.now() - ms) / (1000 * 60 * 60 * 24) <= SUPPORT_RISK_WINDOW_DAYS;
+}
+
 // ── 型定義 ────────────────────────────────────────────────────────────────────
 
 export interface SupportAggregateVM {
@@ -72,10 +88,22 @@ export interface SupportAggregateVM {
   openCseCount:       number;
   /** cse_tickets の中で waiting_customer のチケット数 */
   waitingCseCount:    number;
-  /** log_intercom の severity=critical かつオープンなケース数 */
+  /** log_intercom の severity=critical かつオープンなケース数（全期間） */
   criticalCount:      number;
-  /** log_intercom の severity=high かつオープンなケース数 */
+  /** log_intercom の severity=high かつオープンなケース数（全期間） */
   highCount:          number;
+  /**
+   * リスク判定有効ウィンドウ（SUPPORT_RISK_WINDOW_DAYS 以内）のオープンケース数。
+   * AI プロンプト・health シグナルのリスク判定はこちらを使う。
+   */
+  recentOpenCount:    number;
+  /** リスク判定ウィンドウ内の critical オープン数（health シグナル用） */
+  recentCriticalCount: number;
+  /**
+   * リスク判定ウィンドウ外（SUPPORT_RISK_WINDOW_DAYS 超）のオープン件数。
+   * クローズし忘れ等の放置ケース。AI には参考値として渡すがリスク根拠にしない。
+   */
+  staleOpenCount:     number;
   /** 直近 RECENT_DAYS 日以内に作成されたオープンケース数 */
   recentSupportCount: number;
   /** 直近 N 件のケース（Detail API で使用） */
@@ -171,16 +199,26 @@ export async function fetchSupportAggregateForCompany(
   const openCseList    = cseTickets.filter(t => isCseOpen(t.status));
   const criticalCount  = openCases.filter(c => String(c.severity ?? '').toLowerCase() === 'critical').length;
   const highCount      = openCases.filter(c => String(c.severity ?? '').toLowerCase() === 'high').length;
-  const waitingCseCount   = cseTickets.filter(t => String(t.status ?? '').toLowerCase() === 'waiting_customer').length;
+  const waitingCseCount = cseTickets.filter(t => String(t.status ?? '').toLowerCase() === 'waiting_customer').length;
   const recentSupportCount = openCases.filter(c => isRecent(c.createdAt)).length
     + openCseList.filter(t => isRecent(t.createdAt)).length;
 
+  // リスク判定ウィンドウ内のオープンケース（90日以内）
+  const recentOpenCases = openCases.filter(c => isWithinRiskWindow(c.createdAt));
+  const recentOpenCseList = openCseList.filter(t => isWithinRiskWindow(t.createdAt));
+  const recentOpenCount   = recentOpenCases.length + recentOpenCseList.length;
+  const recentCriticalCount = recentOpenCases.filter(c => String(c.severity ?? '').toLowerCase() === 'critical').length;
+  const staleOpenCount    = (openCases.length + openCseList.length) - recentOpenCount;
+
   return {
-    openIntercomCount:  openCases.length,
-    openCseCount:       openCseList.length,
+    openIntercomCount:   openCases.length,
+    openCseCount:        openCseList.length,
     waitingCseCount,
     criticalCount,
     highCount,
+    recentOpenCount,
+    recentCriticalCount,
+    staleOpenCount,
     recentSupportCount,
     recentCases:  cases.slice(0, 5),
     cseTickets:   cseTickets.slice(0, 5),
@@ -226,7 +264,12 @@ export async function fetchSupportCountsByUids(
   for (const [uid, cases] of intercomMap) {
     const existing    = result.get(uid) ?? { openCount: 0, waitingCseCount: 0, criticalCount: 0, recentSupportCount: 0 };
     const openCases   = cases.filter(c => isIntercomOpen(c.routing_status));
-    const critical    = openCases.filter(c => String(c.severity ?? '').toLowerCase() === 'critical').length;
+    // criticalCount: リスク判定ウィンドウ内（90日以内）の critical のみカウント
+    // 古いオープンチケットはクローズし忘れとみなしシグナル対象から除外
+    const critical    = openCases.filter(c =>
+      String(c.severity ?? '').toLowerCase() === 'critical' &&
+      isWithinRiskWindow(c.CreatedAt as string | null),
+    ).length;
     const recentCount = openCases.filter(c => isRecent(c.CreatedAt as string | null)).length;
     result.set(uid, {
       openCount:          existing.openCount + openCases.length,

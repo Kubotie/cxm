@@ -391,10 +391,18 @@ export function buildCompanyEvidenceSummaryPrompt(
     const sv = options.support;
     lines.push('');
     lines.push('## Support / CSE 状況');
+    // recentOpenCount / recentCriticalCount が存在する場合は90日ウィンドウ版を優先して表示
+    const recentOpen     = sv.recentOpenCount     ?? (sv.openIntercomCount + sv.openCseCount);
+    const recentCritical = sv.recentCriticalCount ?? sv.criticalCount;
+    const staleOpen      = sv.staleOpenCount      ?? 0;
     lines.push(
-      `Intercom オープン: ${sv.openIntercomCount}件 | CSE オープン: ${sv.openCseCount}件` +
-      ` | Critical: ${sv.criticalCount} | High: ${sv.highCount} | CSE待ち: ${sv.waitingCseCount}件`,
+      `直近90日オープン: ${recentOpen}件 | Critical（90日内）: ${recentCritical} | High: ${sv.highCount} | CSE待ち: ${sv.waitingCseCount}件`,
     );
+    if (staleOpen > 0) {
+      lines.push(
+        `※ 90日超の放置オープン: ${staleOpen}件（クローズし忘れの可能性が高く、リスク判定には使用しない）`,
+      );
+    }
 
     // CSE チケット（上位5件、待機時間付き）
     if (sv.cseTickets.length > 0) {
