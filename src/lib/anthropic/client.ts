@@ -36,3 +36,32 @@ export function getAnthropicClient(): OpenAI {
 export function getAnthropicModel(): string {
   return process.env.ANTHROPIC_MODEL ?? 'anthropic/claude-sonnet-4-5';
 }
+
+/**
+ * Extended Thinking を有効にした chat.completions.create を実行する。
+ * OpenRouter 経由で thinking パラメータを extra_body として渡す。
+ * thinking + tool_use の場合、budget_tokens 分だけ先に思考してからツールを呼ぶ。
+ *
+ * @param client   getAnthropicClient() の戻り値
+ * @param params   通常の chat.completions.create パラメータ
+ * @param thinkingBudget  thinking に割り当てるトークン数（デフォルト 8,000）
+ */
+export async function createWithThinking(
+  client: OpenAI,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  params: Record<string, any>,
+  thinkingBudget = 8_000,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  // OpenRouter は thinking パラメータを直接受け付ける
+  // thinking 使用時は max_tokens を budget 分多く確保する
+  const maxTokens = (params.max_tokens ?? 4096) + thinkingBudget;
+
+  return client.chat.completions.create({
+    ...params,
+    max_tokens: maxTokens,
+    stream: false,
+    thinking: { type: 'enabled', budget_tokens: thinkingBudget },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any);
+}

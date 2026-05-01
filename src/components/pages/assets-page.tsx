@@ -10,7 +10,7 @@ import { AssetCard }         from "@/components/assets/asset-card";
 import { AssetDetailSheet }  from "@/components/assets/asset-detail-sheet";
 import { SidebarNav }  from "@/components/layout/sidebar-nav";
 import { GlobalHeader } from "@/components/layout/global-header";
-import { Upload, Search, FileText, SortAsc, Tag, X } from "lucide-react";
+import { Upload, Search, FileText, SortAsc, Tag, X, User } from "lucide-react";
 import type { CsmAsset } from "@/lib/nocodb/assets";
 import type { AssetSortBy } from "@/lib/nocodb/assets";
 
@@ -47,6 +47,7 @@ export function AssetsPage() {
   const [uploadOpen, setUploadOpen]   = useState(false);
   const [selected, setSelected]       = useState<CsmAsset | null>(null);
   const [currentUser, setCurrentUser] = useState("");
+  const [myOnly, setMyOnly]           = useState(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ログインユーザー取得
@@ -72,14 +73,16 @@ export function AssetsPage() {
     tag: string,
     off: number,
     append = false,
+    authorFilter = "",
   ) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (searchQ) params.set("q", searchQ);
-      if (cat)     params.set("category", cat);
-      if (tag)     params.set("tag", tag);
+      if (searchQ)      params.set("q", searchQ);
+      if (cat)          params.set("category", cat);
+      if (tag)          params.set("tag", tag);
       if (linkedActionId) params.set("linked_action_id", linkedActionId);
+      if (authorFilter) params.set("author", authorFilter);
       params.set("sort_by", sort);
       params.set("limit",  String(PAGE_SIZE));
       params.set("offset", String(off));
@@ -101,9 +104,9 @@ export function AssetsPage() {
   // 初回ロード + フィルタ変更時
   useEffect(() => {
     setOffset(0);
-    fetchAssets(q, category, sortBy, activeTag, 0, false);
+    fetchAssets(q, category, sortBy, activeTag, 0, false, myOnly ? currentUser : "");
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, sortBy, activeTag, fetchAssets]);
+  }, [category, sortBy, activeTag, myOnly, fetchAssets]);
 
   // 検索: debounce 400ms
   function handleSearchChange(v: string) {
@@ -111,14 +114,14 @@ export function AssetsPage() {
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
       setOffset(0);
-      fetchAssets(v, category, sortBy, activeTag, 0, false);
+      fetchAssets(v, category, sortBy, activeTag, 0, false, myOnly ? currentUser : "");
     }, 400);
   }
 
   function handleLoadMore() {
     const nextOffset = offset + PAGE_SIZE;
     setOffset(nextOffset);
-    fetchAssets(q, category, sortBy, activeTag, nextOffset, true);
+    fetchAssets(q, category, sortBy, activeTag, nextOffset, true, myOnly ? currentUser : "");
   }
 
   function handleUploaded(asset: CsmAsset) {
@@ -137,7 +140,7 @@ export function AssetsPage() {
   }
 
   // アクティブなフィルター数（検索ワード除く）
-  const activeFilterCount = [category, activeTag].filter(Boolean).length;
+  const activeFilterCount = [category, activeTag, myOnly ? "my" : ""].filter(Boolean).length;
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
@@ -212,7 +215,7 @@ export function AssetsPage() {
               {activeFilterCount > 0 && (
                 <button
                   type="button"
-                  onClick={() => { setCategory(""); setActiveTag(""); }}
+                  onClick={() => { setCategory(""); setActiveTag(""); setMyOnly(false); }}
                   className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-500 transition-colors"
                 >
                   <X className="w-3 h-3" />
@@ -221,7 +224,7 @@ export function AssetsPage() {
               )}
             </div>
 
-            {/* 2行目: カテゴリ */}
+            {/* 2行目: カテゴリ + 自分のみ */}
             <div className="flex items-center gap-3 flex-wrap">
               <div className="flex items-center gap-1 flex-wrap">
                 {CATEGORY_OPTIONS.map(opt => (
@@ -241,6 +244,22 @@ export function AssetsPage() {
                 ))}
               </div>
 
+              {/* 自分のみトグル */}
+              {currentUser && (
+                <button
+                  type="button"
+                  onClick={() => setMyOnly(v => !v)}
+                  className={[
+                    "flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border transition-colors",
+                    myOnly
+                      ? "bg-violet-600 text-white border-violet-600"
+                      : "text-slate-500 border-slate-200 hover:border-violet-400 hover:text-violet-600",
+                  ].join(" ")}
+                >
+                  <User className="w-3 h-3" />
+                  自分のみ
+                </button>
+              )}
             </div>
 
             {/* 3行目: タグフィルター（タグが存在する場合のみ表示） */}
@@ -281,19 +300,19 @@ export function AssetsPage() {
               <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-400">
                 <FileText className="w-10 h-10" />
                 <p className="text-sm">
-                  {q || category || activeTag
+                  {q || category || activeTag || myOnly
                     ? "条件に一致するアセットがありません"
                     : "アセットがありません"}
                 </p>
-                {(q || category || activeTag) && (
+                {(q || category || activeTag || myOnly) && (
                   <Button
                     variant="outline" size="sm"
-                    onClick={() => { setQ(""); setCategory(""); setActiveTag(""); }}
+                    onClick={() => { setQ(""); setCategory(""); setActiveTag(""); setMyOnly(false); }}
                   >
                     フィルターをクリア
                   </Button>
                 )}
-                {!q && !category && !activeTag && (
+                {!q && !category && !activeTag && !myOnly && (
                   <Button variant="outline" size="sm" onClick={() => setUploadOpen(true)}>
                     最初のファイルをアップロード
                   </Button>

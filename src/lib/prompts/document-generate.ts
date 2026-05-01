@@ -303,6 +303,77 @@ export const DOCUMENT_GENERATE_TOOL = {
   },
 };
 
+// ─── アセット深読みツール ─────────────────────────────────────────────────────
+
+export const ASSET_EXTRACT_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'extract_insights',
+    description: 'アセットから資料作成に役立つ情報を構造化して抽出する',
+    parameters: {
+      type: 'object',
+      properties: {
+        headline: {
+          type: 'string',
+          description: 'このアセットを1行で表す最重要メッセージ（20字以内）',
+        },
+        key_numbers: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '数値・KPI・指標を含む情報（例："導入3ヶ月でCVR 28%改善"）。最大6件。',
+        },
+        case_points: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '具体的な事例・エピソード・事実（2〜5件）。スライドの bullet として使える粒度で。',
+        },
+        insights: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '重要な洞察・示唆・提言（2〜4件）。exec_summary や next_steps に使える内容。',
+        },
+        before_after: {
+          type: 'object',
+          description: '導入前後・改善前後の変化（あれば）',
+          properties: {
+            before: { type: 'string', description: '導入前・課題' },
+            after:  { type: 'string', description: '導入後・成果' },
+          },
+          required: ['before', 'after'],
+        },
+      },
+      required: ['headline', 'key_numbers', 'case_points', 'insights'],
+    },
+  },
+};
+
+export interface AssetInsights {
+  headline: string;
+  key_numbers: string[];
+  case_points: string[];
+  insights: string[];
+  before_after?: { before: string; after: string };
+}
+
+export function buildAssetExtractPrompt(
+  asset: { title: string; content: string },
+  context: { templateName?: string; userInstruction?: string; companyName?: string },
+): string {
+  const lines = [
+    `アセット「${asset.title}」から、以下の資料作成に役立つ情報を extract_insights ツールで抽出してください。`,
+    '',
+    '## 作成する資料のコンテキスト',
+    context.templateName    ? `- テンプレート: ${context.templateName}` : '',
+    context.userInstruction ? `- ユーザー指示: ${context.userInstruction}` : '',
+    context.companyName     ? `- 対象会社: ${context.companyName}` : '',
+    '',
+    '## アセット全文',
+    asset.content.slice(0, 4000),
+  ].filter(l => l !== undefined);
+
+  return lines.join('\n');
+}
+
 /** アセット推薦ツール */
 export const ASSET_RECOMMEND_TOOL = {
   type: 'function' as const,
@@ -322,7 +393,7 @@ export const ASSET_RECOMMEND_TOOL = {
 
 export function buildDocumentGeneratePrompt(
   promptGuidance: string | undefined,
-  assets: { title: string; summary: string; content: string }[],
+  assets: { title: string; summary: string; content: string; insights?: AssetInsights }[],
   companyName?: string,
   userInstruction?: string,
 ): string {
@@ -335,7 +406,20 @@ export function buildDocumentGeneratePrompt(
 6. まとめ・次のステップ`;
 
   const assetContext = assets.length > 0
-    ? assets.map((a, i) => `### 参考資料${i + 1}: ${a.title}\n${a.summary ?? ''}\n\n${a.content.slice(0, 2000)}`).join('\n\n---\n\n')
+    ? assets.map((a, i) => {
+        if (a.insights) {
+          const { headline, key_numbers, case_points, insights, before_after } = a.insights;
+          return [
+            `### 参考資料${i + 1}: ${a.title}`,
+            `**ヘッドライン**: ${headline}`,
+            key_numbers.length > 0  ? `\n**数値・KPI**:\n${key_numbers.map(n => `- ${n}`).join('\n')}` : '',
+            case_points.length > 0  ? `\n**事例・エピソード**:\n${case_points.map(p => `- ${p}`).join('\n')}` : '',
+            insights.length > 0     ? `\n**重要洞察**:\n${insights.map(ins => `- ${ins}`).join('\n')}` : '',
+            before_after            ? `\n**Before → After**: ${before_after.before} → ${before_after.after}` : '',
+          ].filter(Boolean).join('\n');
+        }
+        return `### 参考資料${i + 1}: ${a.title}\n${a.summary ?? ''}\n\n${a.content.slice(0, 2000)}`;
+      }).join('\n\n---\n\n')
     : '（参考資料なし — テンプレートのみで生成）';
 
   return `あなたはプレゼンテーション作成AIです。generate_slides ツールを使ってスライドを作成してください。
@@ -388,6 +472,194 @@ ${assetContext}
 - 参考資料の具体的な数値・事例・固有名詞を積極的に活用する
 - タイトルは体言止めまたは短い動詞止め（20字以内）
 - 全体として聴衆に価値が伝わる構成にする`;
+}
+
+// ─── MD / Docs 用ツール定義 ───────────────────────────────────────────────────
+
+/** Markdown / Word 文書生成ツール */
+export const DOCUMENT_GENERATE_TEXT_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'generate_document',
+    description: 'Markdown または Word 形式の文書を生成する',
+    parameters: {
+      type: 'object',
+      properties: {
+        title:    { type: 'string', description: '文書タイトル' },
+        content:  { type: 'string', description: 'Markdown 形式の本文（見出し・箇条書き・表を活用する）' },
+      },
+      required: ['title', 'content'],
+    },
+  },
+};
+
+export interface TextDocument {
+  title: string;
+  content: string; // Markdown
+}
+
+/** MD / Docs 向けプロンプト */
+export function buildTextDocumentPrompt(
+  outputType: 'md' | 'docs',
+  assets: { title: string; summary: string; content: string }[],
+  companyName?: string,
+  userInstruction?: string,
+): string {
+  const format = outputType === 'md' ? 'Markdown' : 'Word（Markdown形式で出力）';
+  const assetContext = assets.length > 0
+    ? assets.map((a, i) => `### 参考資料${i + 1}: ${a.title}\n${a.summary ?? ''}\n\n${a.content.slice(0, 2000)}`).join('\n\n---\n\n')
+    : '（参考資料なし — 指示のみで生成）';
+
+  return `あなたはCSMドキュメント作成AIです。generate_document ツールを使って${format}文書を作成してください。
+
+${userInstruction ? `## ユーザーの指示（最優先で反映すること）\n${userInstruction}\n` : ''}
+${companyName ? `## 対象会社: ${companyName}\n` : ''}
+
+## 構成ガイドライン
+- 見出し（# ## ###）を使って構造化する
+- 数値・事例は箇条書きまたは表で見やすく整理する
+- 参考資料の具体的な数値・固有名詞を積極的に活用する
+- 全体として読み手に価値が伝わる構成にする
+- 分量の目安: 1,000〜3,000字
+
+## 参考資料
+${assetContext}`;
+}
+
+// ─── スライドレビューツール ───────────────────────────────────────────────────
+
+export const SLIDE_REVIEW_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'review_slides',
+    description: '生成されたスライド構造の問題点を特定し、修正指示を出す',
+    parameters: {
+      type: 'object',
+      properties: {
+        has_issues: {
+          type: 'boolean',
+          description: '修正が必要な問題がある場合 true',
+        },
+        score: {
+          type: 'number',
+          description: '品質スコア 1〜10（7以上なら合格）',
+        },
+        issues: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              slide_number: { type: 'number' },
+              type: {
+                type: 'string',
+                enum: ['text_overflow', 'missing_field', 'duplicate_title', 'wrong_layout', 'bullets_overuse', 'content_quality'],
+              },
+              description: { type: 'string', description: '問題の説明' },
+              fix:         { type: 'string', description: '具体的な修正指示' },
+            },
+            required: ['slide_number', 'type', 'description', 'fix'],
+          },
+        },
+        overall_feedback: {
+          type: 'string',
+          description: '全体的なフィードバック（修正プロンプトに添付する）',
+        },
+      },
+      required: ['has_issues', 'score', 'issues', 'overall_feedback'],
+    },
+  },
+};
+
+export interface SlideReview {
+  has_issues: boolean;
+  score: number;
+  issues: Array<{
+    slide_number: number;
+    type: string;
+    description: string;
+    fix: string;
+  }>;
+  overall_feedback: string;
+}
+
+export function buildSlideReviewPrompt(structure: SlideStructure): string {
+  const bulletCount = structure.slides.filter(s => !s.layout || s.layout === 'bullets').length;
+  const bulletRatio = Math.round((bulletCount / structure.slides.length) * 100);
+
+  return `あなたはプレゼンテーション品質レビュアーです。以下のスライド構造を review_slides ツールで評価してください。
+
+## レビュー観点
+
+### 1. テキスト過多（text_overflow）
+- content 配列が5項目を超えている
+- KPI の value が15文字を超えている
+- タイトルが20文字を超えている
+- before_items / after_items が5項目を超えている
+- columns の items が4項目を超えている
+
+### 2. 必須フィールド不足（missing_field）
+- layout=three_column なのに columns が3件ない
+- layout=kpi_grid なのに kpis が設定されていない
+- layout=section_divider なのに section_number が未設定
+- layout=before_after なのに before_title/before_items/after_title/after_items のいずれかが欠けている
+- layout=timeline なのに phases が設定されていない
+- layout=next_steps なのに steps が3件ない
+- layout=exec_summary なのに achievement/challenge/next_move のいずれかが欠けている
+- layout=four_grid なのに cards が設定されていない
+- layout=formula_flow なのに variables が設定されていない
+- layout=decomposition_grid なのに cells が設定されていない
+
+### 3. タイトル重複（duplicate_title）
+- 2枚以上のスライドで全く同じタイトルを使っている
+
+### 4. bullets 多用（bullets_overuse）
+- bullets レイアウトが全体の20%を超えている
+- 現在: bullets=${bulletCount}枚 / 全体=${structure.slides.length}枚 = ${bulletRatio}%
+
+### 5. eyebrow 未設定（content_quality）
+- eyebrow が空のスライドが多い（全体の半数以上に eyebrow を設定すべき）
+
+### 判定基準
+- score 8〜10: 問題なし（has_issues=false）
+- score 5〜7: 軽微な問題あり（has_issues=true、重大なものだけ報告）
+- score 1〜4: 重大な問題あり（has_issues=true）
+
+## 評価対象スライド構造
+
+\`\`\`json
+${JSON.stringify(structure, null, 2).slice(0, 8000)}
+\`\`\``;
+}
+
+export function buildSlideFixPrompt(
+  originalPrompt: string,
+  structure: SlideStructure,
+  review: SlideReview,
+): string {
+  const issueList = review.issues
+    .map(i => `- スライド${i.slide_number}（${i.type}）: ${i.description} → 修正: ${i.fix}`)
+    .join('\n');
+
+  return `${originalPrompt}
+
+---
+
+## ★ 前回生成のレビュー結果（品質スコア: ${review.score}/10）
+
+以下の問題が見つかりました。修正してスライドを再生成してください。
+
+### 発見された問題
+${issueList}
+
+### 全体フィードバック
+${review.overall_feedback}
+
+## 前回生成したスライド（参考）
+\`\`\`json
+${JSON.stringify(structure, null, 2).slice(0, 6000)}
+\`\`\`
+
+上記の問題を修正し、generate_slides ツールで改善版を出力してください。問題のないスライドはそのまま保持し、問題のあるスライドのみ修正すること。`;
 }
 
 export function buildAssetRecommendPrompt(
