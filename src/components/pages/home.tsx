@@ -690,8 +690,12 @@ function ChartCard({ title, hint, children }: {
 export function Home() {
   const [rawItems,            setRawItems]            = useState<CompanyListItemVM[]>([]);
   const [ownerFilter,         setOwnerFilter]         = useState<string | null>(null);
-  // ownerFilter をクライアントサイドで適用（scope=mine の再フェッチを排除）
-  const items = ownerFilter ? rawItems.filter(i => i.owner === ownerFilter) : rawItems;
+  const [excludedUids,        setExcludedUids]        = useState<string[]>([]);
+  // ownerFilter と excludedUids をクライアントサイドで適用
+  const items = rawItems.filter(i =>
+    (!ownerFilter || i.owner === ownerFilter) &&
+    !excludedUids.includes(i.companyUid)
+  );
   const [loading,             setLoading]             = useState(true);
   const [error,               setError]               = useState<string | null>(null);
   const [lastFetched,         setLastFetched]         = useState<string | null>(null);
@@ -797,6 +801,10 @@ export function Home() {
           } catch { /* ignore */ }
         }
         setUserProfile(p);
+        // 非表示企業リストを復元
+        if (p.excluded_company_uids?.length) {
+          setExcludedUids(p.excluded_company_uids);
+        }
         // scope=mine の場合はクライアントサイドでフィルタ適用（再フェッチ不要）
         if (p.default_home_scope === 'mine' && p.name2) {
           setOwnerFilter(p.name2);

@@ -368,7 +368,7 @@ function FreshnessBadge({ status }: { status: string }) {
 // Row 1 (固定列): health | 企業名 | フェーズ | 空白日数 | support | 更新[urgent] | アクション | →
 // Row 2 (理由):   ↑機会理由 → リスク理由 …  │  [推奨アクション ボタン]
 
-function CompanyCard({ item, segment, onExclude }: { item: CompanyListItemVM; segment: SegmentKey; onExclude: () => void }) {
+function CompanyCard({ item, segment, isExcluded, onToggleExclude }: { item: CompanyListItemVM; segment: SegmentKey; isExcluded: boolean; onToggleExclude: () => void }) {
   const [actionOpen, setActionOpen] = useState(false);
 
   const health     = getHealthBadge(item.overallHealth);
@@ -481,13 +481,18 @@ function CompanyCard({ item, segment, onExclude }: { item: CompanyListItemVM; se
             <Plus className="w-2.5 h-2.5" />
           </Button>
 
-          {/* 非表示ボタン（hover 表示） */}
+          {/* ホーム非表示トグル（除外中は常時表示・色付き、未除外はhoverのみ） */}
           <Button
             size="sm"
             variant="ghost"
-            className="h-5 w-5 p-0 flex-shrink-0 ml-0.5 text-slate-300 hover:text-slate-500 hover:bg-slate-100 opacity-0 group-hover:opacity-100 transition-opacity"
-            title="自分のリストから非表示"
-            onClick={e => { e.preventDefault(); e.stopPropagation(); onExclude(); }}
+            className={[
+              "h-5 w-5 p-0 flex-shrink-0 ml-0.5 transition-all",
+              isExcluded
+                ? "text-slate-400 hover:text-red-500 hover:bg-red-50"
+                : "text-slate-300 hover:text-slate-500 hover:bg-slate-100 opacity-0 group-hover:opacity-100",
+            ].join(" ")}
+            title={isExcluded ? "ホームに再表示する" : "ホームから非表示にする"}
+            onClick={e => { e.preventDefault(); e.stopPropagation(); onToggleExclude(); }}
           >
             <EyeOff className="w-3 h-3" />
           </Button>
@@ -551,11 +556,9 @@ export function CompanyList() {
   const [ownerFilter,   setOwnerFilter]   = useState<string | null>(null);
   const [excludedUids,  setExcludedUids]  = useState<string[]>([]);
   // ownerFilter・excludedUids をクライアントサイドで適用
+  // ownerFilter のみクライアントサイドで適用（excludedUids はホーム側で使用）
   const items = allItems
-    ? allItems.filter(i =>
-        (!ownerFilter || i.owner === ownerFilter) &&
-        !excludedUids.includes(i.companyUid)
-      )
+    ? allItems.filter(i => !ownerFilter || i.owner === ownerFilter)
     : null;
 
   // ── URL クエリ → 初期セグメント解決 ────────────────────────────────────────
@@ -658,8 +661,11 @@ export function CompanyList() {
     }).catch(() => {});
   }
 
-  function handleExclude(uid: string) {
-    saveExcluded([...excludedUids, uid]);
+  function handleToggleExclude(uid: string) {
+    const next = excludedUids.includes(uid)
+      ? excludedUids.filter(u => u !== uid)
+      : [...excludedUids, uid];
+    saveExcluded(next);
   }
 
   function handleUnexcludeAll() {
@@ -744,7 +750,7 @@ export function CompanyList() {
                   className="flex items-center gap-1 text-xs text-slate-400 hover:text-red-500 transition-colors"
                 >
                   <EyeOff className="w-3 h-3" />
-                  {excludedUids.length}件非表示
+                  ホームで{excludedUids.length}件非表示
                   <X className="w-3 h-3" />
                 </button>
               )}
@@ -1044,7 +1050,7 @@ export function CompanyList() {
             ) : (
               <div className="space-y-1.5">
                 {displayed.map(item => (
-                  <CompanyCard key={item.companyUid} item={item} segment={segment} onExclude={() => handleExclude(item.companyUid)} />
+                  <CompanyCard key={item.companyUid} item={item} segment={segment} isExcluded={excludedUids.includes(item.companyUid)} onToggleExclude={() => handleToggleExclude(item.companyUid)} />
                 ))}
                 {displayed.length >= 500 && (
                   <p className="text-xs text-slate-400 text-center py-2">
