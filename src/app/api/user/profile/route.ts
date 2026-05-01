@@ -33,6 +33,7 @@ export async function PATCH(req: NextRequest) {
   if (body.default_home_scope          !== undefined) patch.default_home_scope          = body.default_home_scope as UserProfilePatch['default_home_scope'];
   if (body.preferred_summary_policy_id !== undefined) patch.preferred_summary_policy_id = body.preferred_summary_policy_id as string | null;
   if (body.focus_areas                 !== undefined) patch.focus_areas                 = body.focus_areas as string[];
+  if (body.excluded_company_uids       !== undefined) patch.excluded_company_uids       = body.excluded_company_uids as string[];
 
   await updateUserProfile(profile.Id, patch);
 

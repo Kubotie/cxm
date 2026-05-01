@@ -17,7 +17,7 @@ import Link from "next/link";
 import {
   RefreshCw, Search, X, Filter,
   ArrowRight, ChevronDown, ChevronUp, Headphones,
-  Sparkles, Building2, Plus,
+  Sparkles, Building2, Plus, EyeOff,
 } from "lucide-react";
 import { SidebarNav }     from "@/components/layout/sidebar-nav";
 import { GlobalHeader }   from "@/components/layout/global-header";
@@ -368,7 +368,7 @@ function FreshnessBadge({ status }: { status: string }) {
 // Row 1 (固定列): health | 企業名 | フェーズ | 空白日数 | support | 更新[urgent] | アクション | →
 // Row 2 (理由):   ↑機会理由 → リスク理由 …  │  [推奨アクション ボタン]
 
-function CompanyCard({ item, segment }: { item: CompanyListItemVM; segment: SegmentKey }) {
+function CompanyCard({ item, segment, onExclude }: { item: CompanyListItemVM; segment: SegmentKey; onExclude: () => void }) {
   const [actionOpen, setActionOpen] = useState(false);
 
   const health     = getHealthBadge(item.overallHealth);
@@ -481,6 +481,17 @@ function CompanyCard({ item, segment }: { item: CompanyListItemVM; segment: Segm
             <Plus className="w-2.5 h-2.5" />
           </Button>
 
+          {/* 非表示ボタン（hover 表示） */}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-5 w-5 p-0 flex-shrink-0 ml-0.5 text-slate-300 hover:text-slate-500 hover:bg-slate-100 opacity-0 group-hover:opacity-100 transition-opacity"
+            title="自分のリストから非表示"
+            onClick={e => { e.preventDefault(); e.stopPropagation(); onExclude(); }}
+          >
+            <EyeOff className="w-3 h-3" />
+          </Button>
+
           <Link href={`/companies/${item.companyUid}`} className="flex-shrink-0 ml-1">
             <ArrowRight className="w-3 h-3 text-slate-300 group-hover:text-slate-500 transition-colors" />
           </Link>
@@ -537,11 +548,15 @@ export function CompanyList() {
   const [refreshing,  setRefreshing]  = useState(false);
   const [lastFetched, setLastFetched] = useState<string | null>(null);
   // ユーザースコープフィルタ（profile 確定後にクライアントサイドで適用）
-  const [ownerFilter, setOwnerFilter] = useState<string | null>(null);
-  // ownerFilter をクライアントサイドで適用（profile 待ちなしでデータ表示可能にする）
-  const items = (ownerFilter !== null && allItems !== null)
-    ? allItems.filter(i => i.owner === ownerFilter)
-    : allItems;
+  const [ownerFilter,   setOwnerFilter]   = useState<string | null>(null);
+  const [excludedUids,  setExcludedUids]  = useState<string[]>([]);
+  // ownerFilter・excludedUids をクライアントサイドで適用
+  const items = allItems
+    ? allItems.filter(i =>
+        (!ownerFilter || i.owner === ownerFilter) &&
+        !excludedUids.includes(i.companyUid)
+      )
+    : null;
 
   // ── URL クエリ → 初期セグメント解決 ────────────────────────────────────────
   // ?segment=renewal_30 / renewal_90 / arr_at_risk / expanding / support_high 等を受け取る
@@ -614,8 +629,12 @@ export function CompanyList() {
     // プロファイルを並列取得してクライアントサイドフィルタを設定
     fetch('/api/user/profile')
       .then(r => r.ok ? r.json() : null)
-      .then((profile: { name2?: string } | null) => {
+      .then((profile: { name2?: string; excluded_company_uids?: string[] } | null) => {
         if (!profile?.name2) return;
+        // 非表示リストを復元
+        if (profile.excluded_company_uids?.length) {
+          setExcludedUids(profile.excluded_company_uids);
+        }
         const prefsRaw = localStorage.getItem(`cxm_prefs_${profile.name2}`);
         if (!prefsRaw) return;
         try {
@@ -628,6 +647,24 @@ export function CompanyList() {
       .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // マウント時1回のみ
+
+  // ── 非表示 helpers ──────────────────────────────────────────────────────────
+  function saveExcluded(next: string[]) {
+    setExcludedUids(next);
+    fetch('/api/user/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ excluded_company_uids: next }),
+    }).catch(() => {});
+  }
+
+  function handleExclude(uid: string) {
+    saveExcluded([...excludedUids, uid]);
+  }
+
+  function handleUnexcludeAll() {
+    saveExcluded([]);
+  }
 
   // ── フィルタ helpers ─────────────────────────────────────────────────────────
   function setFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
@@ -699,6 +736,17 @@ export function CompanyList() {
                   {items && items.length !== displayed.length && ` / ${items.length}`}
                   {' '}社
                 </span>
+              )}
+              {excludedUids.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleUnexcludeAll}
+                  className="flex items-center gap-1 text-xs text-slate-400 hover:text-red-500 transition-colors"
+                >
+                  <EyeOff className="w-3 h-3" />
+                  {excludedUids.length}件非表示
+                  <X className="w-3 h-3" />
+                </button>
               )}
             </div>
             <div className="flex items-center gap-2">
@@ -996,7 +1044,7 @@ export function CompanyList() {
             ) : (
               <div className="space-y-1.5">
                 {displayed.map(item => (
-                  <CompanyCard key={item.companyUid} item={item} segment={segment} />
+                  <CompanyCard key={item.companyUid} item={item} segment={segment} onExclude={() => handleExclude(item.companyUid)} />
                 ))}
                 {displayed.length >= 500 && (
                   <p className="text-xs text-slate-400 text-center py-2">

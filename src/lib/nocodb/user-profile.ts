@@ -34,6 +34,8 @@ export interface AppUserProfile {
   preferred_summary_policy_id?: string | null;
   /** 重点領域: renewal / expansion / risk / support */
   focus_areas?: string[];
+  /** 自分のCompanyリストから非表示にしている企業UID一覧 */
+  excluded_company_uids?: string[];
   is_active?: boolean;
 }
 
@@ -50,6 +52,7 @@ interface RawStaffIdentify {
   default_home_scope?: string | null;
   preferred_summary_policy_id?: string | null;
   focus_areas?: string | null;
+  excluded_company_uids?: string | null;
   is_active?: boolean | null;
   [key: string]: unknown;
 }
@@ -92,6 +95,11 @@ function toAppProfile(raw: RawStaffIdentify): AppUserProfile {
     try { focusAreas = JSON.parse(raw.focus_areas); } catch { /* ignore */ }
   }
 
+  let excludedCompanyUids: string[] = [];
+  if (raw.excluded_company_uids) {
+    try { excludedCompanyUids = JSON.parse(raw.excluded_company_uids); } catch { /* ignore */ }
+  }
+
   return {
     Id:                          raw.Id,
     name2:                       raw.name2?.trim() ?? '',
@@ -107,6 +115,7 @@ function toAppProfile(raw: RawStaffIdentify): AppUserProfile {
     default_home_scope:          scope,
     preferred_summary_policy_id: raw.preferred_summary_policy_id ?? null,
     focus_areas:                 focusAreas,
+    excluded_company_uids:       excludedCompanyUids,
     is_active:                   raw.is_active !== false,
   };
 }
@@ -148,7 +157,7 @@ export async function fetchUserProfileByName2(
 /** 設定可能なフィールドのみを部分更新する。role は NocoDB 管理のため除外。 */
 export type UserProfilePatch = Partial<Pick<
   AppUserProfile,
-  'team' | 'default_home_scope' | 'preferred_summary_policy_id' | 'focus_areas'
+  'team' | 'default_home_scope' | 'preferred_summary_policy_id' | 'focus_areas' | 'excluded_company_uids'
 >>;
 
 /**
@@ -166,6 +175,7 @@ export async function updateUserProfile(
   if (patch.default_home_scope         !== undefined) payload.default_home_scope         = patch.default_home_scope;
   if (patch.preferred_summary_policy_id !== undefined) payload.preferred_summary_policy_id = patch.preferred_summary_policy_id;
   if (patch.focus_areas                !== undefined) payload.focus_areas                = JSON.stringify(patch.focus_areas);
+  if (patch.excluded_company_uids      !== undefined) payload.excluded_company_uids      = JSON.stringify(patch.excluded_company_uids);
 
   await nocoUpdate(tableId, rowId, payload);
 }
