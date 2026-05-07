@@ -264,19 +264,8 @@ export async function GET() {
             detailValue: delta,
           });
         }
-      } else if (currentCampaign > 0) {
-        // 前回スナップなし（初回検出）→ 実行中として記録
-        signals.push({
-          companyUid:  company.id,
-          companyName,
-          projectId:   project.id,
-          projectName: project.name,
-          signalType:  'campaign_surge',
-          severity:    'warning',
-          detail:      `実行中 ${currentCampaign} Campaign`,
-          detailValue: currentCampaign,
-        });
       }
+      // 前回スナップなし → 差分不明のためシグナルを出さない（誤検知防止）
 
       // ── Heatmap 初利用シグナル（firstHeatmapDate が HEATMAP_FIRST_USE_DAYS 以内）
       if (signalData?.firstHeatmapDate) {
