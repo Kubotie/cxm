@@ -720,7 +720,7 @@ export function Home() {
   // ── プロジェクトシグナル ────────────────────────────────────────────────────
   // マウント時に即時 fetch（owner フィルタはクライアントサイドで適用）
   const [projectSignals,    setProjectSignals]    = useState<ProjectSignalGroup[]>([]);
-  const [expandedSignal,    setExpandedSignal]    = useState<ProjectSignalType | null>(null);
+  const [expandedSignals, setExpandedSignals] = useState<Set<ProjectSignalType>>(new Set());
 
   // ── アクション ────────────────────────────────────────────────────────────
   const [pendingActions,    setPendingActions]    = useState<ActionListItem[]>([]);
@@ -1198,8 +1198,12 @@ export function Home() {
                   <ProjectSignalTile
                     key={g.type}
                     group={g}
-                    expanded={expandedSignal === g.type}
-                    onToggle={() => setExpandedSignal(expandedSignal === g.type ? null : g.type)}
+                    expanded={expandedSignals.has(g.type)}
+                    onToggle={() => setExpandedSignals(prev => {
+                      const next = new Set(prev);
+                      next.has(g.type) ? next.delete(g.type) : next.add(g.type);
+                      return next;
+                    })}
                   />
                 ))}
               </div>
