@@ -56,6 +56,10 @@ export async function sendIntercomMail(
 
     if (!res.ok) {
       const errorBody = await res.text().catch(() => '');
+      // unsubscribed エラーをユーザーフレンドリーなメッセージに変換
+      if (res.status === 403 && errorBody.includes('unsubscribed')) {
+        return { ok: false, error: `${target.email} はIntercomでメール配信解除済みのため送信できません。Intercom管理画面でサブスクリプション設定を確認してください。` };
+      }
       return { ok: false, error: `Intercom HTTP ${res.status}: ${errorBody || res.statusText}` };
     }
 

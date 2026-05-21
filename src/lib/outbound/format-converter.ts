@@ -3,7 +3,7 @@
 // メッセージは Slack 形式で入力し、Chatwork 送信時にこの関数で変換する。
 //
 // Slack    → Chatwork
-// *bold*   → [b]bold[/b]
+// *bold*   → bold（[b][/b] は Chatwork で機能しないためプレーンテキスト）
 // _italic_ → [i]italic[/i]
 // ~strike~ → [s]strike[/s]
 // `code`   → [code]code[/code]
@@ -138,10 +138,10 @@ export function htmlToChatwork(html: string): string {
     (_, c) => '[code]\n' + decodeHtmlEntities(c.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')) + '\n[/code]');
   t = t.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi,
     (_, c) => '[code]' + decodeHtmlEntities(c.replace(/<[^>]+>/g, '')) + '[/code]');
-  t = t.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '[b]$1[/b]');
+  t = t.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '$1');
   t = t.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '[i]$1[/i]');
   t = t.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '$2（$1）');
-  t = t.replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, '[b]$1[/b]\n');
+  t = t.replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, '$1\n');
   t = t.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi,
     (_, inner) => processListItems(inner, i => `${i}. `));
   t = t.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi,
@@ -205,8 +205,8 @@ export function slackToChatwork(text: string): string {
     .replace(/```([^`]*)```/gs, '[code]$1[/code]')
     // インラインコード
     .replace(/`([^`\n]+)`/g, '[code]$1[/code]')
-    // 太字
-    .replace(/\*([^*\n]+)\*/g, '[b]$1[/b]')
+    // 太字（[b][/b] は Chatwork で機能しないためプレーンテキストに変換）
+    .replace(/\*([^*\n]+)\*/g, '$1')
     // 斜体
     .replace(/_([^_\n]+)_/g, '[i]$1[/i]')
     // 打ち消し

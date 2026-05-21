@@ -430,8 +430,10 @@ function PreviewAndTestDialog({
   subject,
   testChannels,
   showActualSend,
-  testMailEmail,
-  setTestMailEmail,
+  testMailTo,
+  setTestMailTo,
+  testMailCc,
+  setTestMailCc,
   onTestSend,
   onActualSend,
   onClose,
@@ -443,8 +445,10 @@ function PreviewAndTestDialog({
   subject:          string;
   testChannels:     OutboundChannelsResponse;
   showActualSend:   boolean;
-  testMailEmail:    string;
-  setTestMailEmail: (v: string) => void;
+  testMailTo:       string;
+  setTestMailTo:    (v: string) => void;
+  testMailCc:       string;
+  setTestMailCc:    (v: string) => void;
   onTestSend:       (ch: OutboundChannel) => void;
   onActualSend:     () => void;
   onClose:          () => void;
@@ -602,20 +606,33 @@ function PreviewAndTestDialog({
             )}
 
             {activeTab === 'mail' && (
-              <div className="flex gap-2">
-                <Input
-                  type="email"
-                  value={testMailEmail}
-                  onChange={e => setTestMailEmail(e.target.value)}
-                  placeholder="テスト送信先メールアドレス（自分のアドレス）"
-                  className="text-sm h-9 flex-1"
-                />
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 w-6 flex-shrink-0">To</span>
+                  <Input
+                    type="text"
+                    value={testMailTo}
+                    onChange={e => setTestMailTo(e.target.value)}
+                    placeholder="宛先メールアドレス（複数の場合はカンマ区切り）"
+                    className="text-sm h-9 flex-1"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 w-6 flex-shrink-0">CC</span>
+                  <Input
+                    type="text"
+                    value={testMailCc}
+                    onChange={e => setTestMailCc(e.target.value)}
+                    placeholder="CCメールアドレス（任意・複数の場合はカンマ区切り）"
+                    className="text-sm h-9 flex-1"
+                  />
+                </div>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => onTestSend('mail')}
-                  disabled={testSending || !testMailEmail.trim()}
-                  className="gap-1.5 flex-shrink-0"
+                  disabled={testSending || !testMailTo.trim()}
+                  className="gap-1.5"
                 >
                   {testSending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mail className="w-3 h-3" />}
                   テスト送信
@@ -896,7 +913,8 @@ export function OutboundPage() {
   const [showPreview,      setShowPreview]      = useState(false);
   const [savedMailTargets, setSavedMailTargets] = useState<Map<string, MailTarget>>(new Map());
   const [testChannels,     setTestChannels]     = useState<OutboundChannelsResponse>({});
-  const [testMailEmail,    setTestMailEmail]    = useState('');
+  const [testMailTo,       setTestMailTo]       = useState('');
+  const [testMailCc,       setTestMailCc]       = useState('');
   const [testSending,      setTestSending]      = useState(false);
   const [testResult,       setTestResult]       = useState<string | null>(null);
   const [previewForActualSend, setPreviewForActualSend] = useState(false);
@@ -1195,16 +1213,18 @@ export function OutboundPage() {
 
       let body: Record<string, unknown>;
       if (channel === 'mail') {
-        if (!testMailEmail.trim()) {
-          setTestResult('❌ メールアドレスを入力してください');
+        const toEmails = testMailTo.split(',').map(s => s.trim()).filter(Boolean);
+        if (toEmails.length === 0) {
+          setTestResult('❌ 宛先（To）を入力してください');
           return;
         }
+        const ccEmails = testMailCc.split(',').map(s => s.trim()).filter(Boolean);
         body = {
           companyUids:             ['__test__'],
           channels:                ['mail'],
           message,
           subject:                 subject.trim() || undefined,
-          mailTargets:             [{ companyUid: '__test__', to: [{ email: testMailEmail.trim(), name: '担当者' }], cc: [] }],
+          mailTargets:             [{ companyUid: '__test__', to: toEmails.map(email => ({ email, name: '担当者' })), cc: ccEmails }],
           _testCompanyNameOverride: previewCompanyName,
         };
       } else {
@@ -1682,8 +1702,10 @@ export function OutboundPage() {
           subject={subject}
           testChannels={testChannels}
           showActualSend={previewForActualSend}
-          testMailEmail={testMailEmail}
-          setTestMailEmail={setTestMailEmail}
+          testMailTo={testMailTo}
+          setTestMailTo={setTestMailTo}
+          testMailCc={testMailCc}
+          setTestMailCc={setTestMailCc}
           onTestSend={handleTestSend}
           onActualSend={handleActualSendFromPreview}
           onClose={() => { setShowPreview(false); setTestResult(null); }}
