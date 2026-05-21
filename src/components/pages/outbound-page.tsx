@@ -580,8 +580,6 @@ function PreviewAndTestDialog({
   setTestMailTo,
   testMailCc,
   setTestMailCc,
-  testMailCcEnabled,
-  setTestMailCcEnabled,
   onTestSend,
   onActualSend,
   onClose,
@@ -598,8 +596,6 @@ function PreviewAndTestDialog({
   setTestMailTo:       (v: string) => void;
   testMailCc:          string;
   setTestMailCc:       (v: string) => void;
-  testMailCcEnabled:   boolean;
-  setTestMailCcEnabled:(v: boolean) => void;
   onTestSend:       (ch: OutboundChannel) => void;
   onActualSend:     () => void;
   onClose:          () => void;
@@ -1070,7 +1066,6 @@ export function OutboundPage() {
   const [testChannels,     setTestChannels]     = useState<OutboundChannelsResponse>({});
   const [testMailTo,       setTestMailTo]       = useState('');
   const [testMailCc,       setTestMailCc]       = useState('');
-  const [testMailCcEnabled, setTestMailCcEnabled] = useState(false);
   const [mentionAll,       setMentionAll]       = useState(false);
   const [testSending,      setTestSending]      = useState(false);
   const [testResult,       setTestResult]       = useState<string | null>(null);
@@ -1384,9 +1379,7 @@ export function OutboundPage() {
           setTestResult('❌ 宛先（To）を入力してください');
           return;
         }
-        const ccEmails = testMailCcEnabled
-          ? testMailCc.split(',').map(s => s.trim()).filter(Boolean)
-          : [];
+        const ccEmails = testMailCc.split(',').map(s => s.trim()).filter(Boolean);
         body = {
           companyUids:             ['__test__'],
           channels:                ['mail'],
@@ -1961,8 +1954,6 @@ export function OutboundPage() {
           setTestMailTo={setTestMailTo}
           testMailCc={testMailCc}
           setTestMailCc={setTestMailCc}
-          testMailCcEnabled={testMailCcEnabled}
-          setTestMailCcEnabled={setTestMailCcEnabled}
           onTestSend={handleTestSend}
           onActualSend={handleActualSendFromPreview}
           onClose={() => { setShowPreview(false); setTestResult(null); }}
