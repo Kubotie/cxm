@@ -1011,7 +1011,7 @@ export function OutboundPage() {
     setLoadingCo(true);
     setChannelMap({});
     try {
-      const params = new URLSearchParams({ limit: '500' });
+      const params = new URLSearchParams({ limit: '500', outbound: 'true' });
       if (owner) params.set('owner', owner);
       const res  = await fetch(`/api/nocodb/companies?${params.toString()}`);
       const data = await res.json() as { id: string; name: string }[];

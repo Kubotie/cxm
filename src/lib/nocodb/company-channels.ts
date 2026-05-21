@@ -63,6 +63,25 @@ export async function fetchChannelsByCompanyUids(
   return result;
 }
 
+/**
+ * Slack または Chatwork チャンネルが登録されている全 company_uid を返す。
+ * Outbound ページで CSM管理外の企業も表示するために使用。
+ */
+export async function fetchAllChannelCompanyUids(): Promise<string[]> {
+  const tableId = TABLE_IDS.company_channel_identify;
+  if (!tableId) return [];
+  const rows = await nocoFetch<RawCompanyChannel>(tableId, {
+    fields: 'company_uid,slack_channel_id,chatwork_channel_id',
+    limit:  '2000',
+  });
+  return [...new Set(
+    rows
+      .filter(r => r.slack_channel_id || r.chatwork_channel_id)
+      .map(r => String(r.company_uid ?? '').trim())
+      .filter(Boolean),
+  )];
+}
+
 // ── 外部 Slack ワークスペース bot_token を取得 ───────────────────────────────────
 
 /**

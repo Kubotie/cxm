@@ -143,6 +143,21 @@ export async function fetchAssignedCompanies(): Promise<Array<{
 }
 
 /**
+ * 複数の company_uid を指定して企業情報を一括取得する。
+ * is_csm_managed に関わらず全企業を対象とする（Outbound チャンネル企業取得に使用）。
+ */
+export async function fetchCompaniesByUids(uids: string[]): Promise<AppCompany[]> {
+  if (uids.length === 0 || !TABLE_IDS.companies) return [];
+  const where = `(company_uid,in,${uids.join(',')})`;
+  const rows = await nocoFetch<RawCompany>(TABLE_IDS.companies, {
+    where,
+    fields: 'company_uid,canonical_name,status,owner_name',
+    limit:  String(uids.length + 10),
+  });
+  return rows.map(toAppCompany);
+}
+
+/**
  * company_uid でピンポイント取得（Company Detail 用）
  * is_csm_managed に関わらず全企業を対象とする（UID直接指定は意図的アクセス）
  */
