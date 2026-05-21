@@ -29,6 +29,7 @@ import type { AppCompany } from "@/lib/nocodb/types";
 import type { OutboundChannelsResponse, MailContactInfo } from "@/app/api/outbound/channels/route";
 import type { AppUserProfile } from "@/lib/nocodb/user-profile";
 import type { OutboundCampaign } from "@/app/api/outbound/campaigns/route";
+import type { OutboundAudience } from "@/app/api/outbound/audiences/route";
 
 // ── 型 ────────────────────────────────────────────────────────────────────────
 
@@ -174,19 +175,56 @@ function ContactPickerDialog({
   onConfirm,
   onCancel,
   sending,
+  selectedChannels,
+  perCompanyChannels,
+  onChangePerCompanyChannels,
+  savedAudiences,
+  onSaveAudience,
+  onLoadAudience,
 }: {
-  companies:       AppCompany[];
-  channelMap:      OutboundChannelsResponse;
-  mailTargets:     Map<string, MailTarget>;
-  sendMode:        'per_company' | 'per_person';
-  onChangeTargets: (companyUid: string, target: MailTarget) => void;
-  onConfirm:       () => void;
-  onCancel:        () => void;
-  sending:         boolean;
+  companies:                  AppCompany[];
+  channelMap:                 OutboundChannelsResponse;
+  mailTargets:                Map<string, MailTarget>;
+  sendMode:                   'per_company' | 'per_person';
+  onChangeTargets:            (companyUid: string, target: MailTarget) => void;
+  onConfirm:                  () => void;
+  onCancel:                   () => void;
+  sending:                    boolean;
+  selectedChannels:           Set<OutboundChannel>;
+  perCompanyChannels:         Map<string, OutboundChannel[]>;
+  onChangePerCompanyChannels: (uid: string, channels: OutboundChannel[]) => void;
+  savedAudiences:             OutboundAudience[];
+  onSaveAudience:             (name: string) => Promise<void>;
+  onLoadAudience:             (a: OutboundAudience) => void;
 }) {
+  const [saving, setSaving] = useState(false);
+
   const companiesWithMail = companies.filter(
     c => (channelMap[c.id]?.mail?.contacts?.length ?? 0) > 0,
   );
+
+  function getEffectiveChannels(uid: string): OutboundChannel[] {
+    return perCompanyChannels.get(uid) ?? [...selectedChannels];
+  }
+
+  function toggleCompanyChannel(uid: string, ch: OutboundChannel) {
+    const current = getEffectiveChannels(uid);
+    const next = current.includes(ch)
+      ? current.filter(c => c !== ch)
+      : [...current, ch];
+    onChangePerCompanyChannels(uid, next.length > 0 ? next : current);
+  }
+
+  async function handleSave() {
+    const name = window.prompt('オーディエンス名を入力してください');
+    if (!name?.trim()) return;
+    setSaving(true);
+    try {
+      await onSaveAudience(name.trim());
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function toggleTo(uid: string, email: string, name: string) {
     const cur = mailTargets.get(uid) ?? { to: [], cc: [] };
@@ -204,9 +242,14 @@ function ContactPickerDialog({
     onChangeTargets(uid, { ...cur, cc: newCc });
   }
 
+  const mailOnCompanies = companies.filter(c => {
+    const eff = getEffectiveChannels(c.id);
+    return eff.includes('mail') && (channelMap[c.id]?.mail?.contacts?.length ?? 0) > 0;
+  });
+
   const isValid = sendMode === 'per_person'
-    ? companiesWithMail.some(c => (mailTargets.get(c.id)?.to?.length ?? 0) > 0)
-    : companiesWithMail.every(c => (mailTargets.get(c.id)?.to?.length ?? 0) > 0);
+    ? (mailOnCompanies.length === 0 || mailOnCompanies.some(c => (mailTargets.get(c.id)?.to?.length ?? 0) > 0))
+    : (mailOnCompanies.length === 0 || mailOnCompanies.every(c => (mailTargets.get(c.id)?.to?.length ?? 0) > 0));
 
   const subtitle = sendMode === 'per_person'
     ? '各コンタクトに個別でメールが届きます（{{name}} が名前に置換されます）'
@@ -217,188 +260,229 @@ function ContactPickerDialog({
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[85vh]">
         {/* ヘッダー */}
         <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">送信先コンタクトを選択</h2>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-semibold text-slate-900">送信先・チャンネルを選択</h2>
             <p className="text-[10px] text-slate-400 mt-0.5">{subtitle}</p>
           </div>
-          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 transition-colors">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {savedAudiences.length > 0 && (
+              <select
+                className="text-xs border border-slate-200 rounded-md px-2 py-1.5 text-slate-600 bg-white hover:border-slate-300 transition-colors max-w-[180px]"
+                defaultValue=""
+                onChange={e => {
+                  const found = savedAudiences.find(a => String(a.Id) === e.target.value);
+                  if (found) onLoadAudience(found);
+                  e.target.value = '';
+                }}
+              >
+                <option value="" disabled>保存済みを読み込む</option>
+                {savedAudiences.map(a => (
+                  <option key={a.Id} value={String(a.Id)}>{a.name}</option>
+                ))}
+              </select>
+            )}
+            <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* コンテンツ */}
         <div className="flex-1 overflow-y-auto p-4 space-y-6">
-          {companiesWithMail.length === 0 ? (
-            <p className="text-sm text-slate-400 text-center py-8">メール連絡先のある企業がありません</p>
-          ) : sendMode === 'per_person' ? (
-            // ── 1人1通モード: 企業ごとに平リスト ─────────────────────────────
-            companiesWithMail.map(company => {
-              const contacts = channelMap[company.id]?.mail?.contacts ?? [];
-              const target   = mailTargets.get(company.id) ?? { to: [], cc: [] };
-              return (
-                <div key={company.id} className="border border-slate-100 rounded-xl overflow-hidden">
-                  <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 border-b border-slate-100">
-                    <Building2 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                    <p className="text-xs font-semibold text-slate-700 truncate">{company.name}</p>
-                  </div>
-                  <div className="p-3 space-y-1">
-                    {contacts.map(contact => {
-                      const checked = target.to.some(t => t.email === contact.email);
-                      return (
-                        <label
-                          key={contact.email}
-                          className={[
-                            'flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
-                            checked
-                              ? 'border-slate-800 bg-slate-900 text-white'
-                              : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50',
-                          ].join(' ')}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleTo(company.id, contact.email, contact.name)}
-                            className="accent-white w-3.5 h-3.5 flex-shrink-0"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-xs font-medium truncate ${checked ? 'text-white' : 'text-slate-800'}`}>
-                              {contact.name}
-                            </p>
-                            <p className={`text-[10px] truncate ${checked ? 'text-slate-300' : 'text-slate-500'}`}>
-                              {contact.email}
-                              {contact.role && <span className="ml-1.5">· {contact.role}</span>}
-                            </p>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })
+          {companies.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-8">企業が選択されていません</p>
           ) : (
-            // ── 1社1通モード: To / CC 選択 ───────────────────────────────────
-            companiesWithMail.map(company => {
-              const contacts = channelMap[company.id]?.mail?.contacts ?? [];
-              const target   = mailTargets.get(company.id) ?? { to: [], cc: [] };
+            companies.map(company => {
+              const effectiveChannels = getEffectiveChannels(company.id);
+              const mailOn     = effectiveChannels.includes('mail');
+              const contacts   = channelMap[company.id]?.mail?.contacts ?? [];
+              const hasContacts = contacts.length > 0;
+              const target     = mailTargets.get(company.id) ?? { to: [], cc: [] };
 
               return (
                 <div key={company.id} className="border border-slate-100 rounded-xl overflow-hidden">
-                  {/* 企業ヘッダー */}
+                  {/* 企業ヘッダー + チャンネルトグル */}
                   <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 border-b border-slate-100">
                     <Building2 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                    <p className="text-xs font-semibold text-slate-700 truncate">{company.name}</p>
-                    {target.to.length === 0 && (
-                      <span className="ml-auto text-[10px] text-red-500 flex-shrink-0">To を1名以上選択</span>
+                    <p className="text-xs font-semibold text-slate-700 truncate flex-1">{company.name}</p>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      {[...selectedChannels].map(ch => {
+                        const meta    = CHANNEL_META[ch];
+                        const hasCh   = ch === 'mail'
+                          ? hasContacts
+                          : !!(channelMap[company.id]?.[ch]);
+                        const active  = effectiveChannels.includes(ch);
+                        return (
+                          <button
+                            key={ch}
+                            onClick={() => toggleCompanyChannel(company.id, ch)}
+                            disabled={!hasCh}
+                            title={hasCh ? undefined : `${meta.label} チャンネル未設定`}
+                            className={[
+                              'flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border transition-colors',
+                              !hasCh
+                                ? 'border-slate-100 text-slate-300 bg-slate-50 cursor-not-allowed'
+                                : active
+                                ? 'border-slate-800 bg-slate-900 text-white'
+                                : 'border-slate-200 text-slate-500 hover:border-slate-300 bg-white',
+                            ].join(' ')}
+                          >
+                            {meta.icon}
+                            {meta.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {mailOn && hasContacts && sendMode === 'per_company' && target.to.length === 0 && (
+                      <span className="text-[10px] text-red-500 flex-shrink-0">To を1名以上選択</span>
                     )}
                   </div>
 
-                  <div className="p-3 space-y-4">
-                    {/* To セクション */}
-                    <div>
-                      <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                        宛先 (To) <span className="text-red-400 normal-case font-normal">必須</span>
-                      </p>
-                      <div className="space-y-1">
-                        {contacts.map(contact => {
-                          const checked = target.to.some(t => t.email === contact.email);
-                          return (
-                            <label
-                              key={contact.email}
-                              className={[
-                                'flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
-                                checked
-                                  ? 'border-slate-800 bg-slate-900 text-white'
-                                  : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50',
-                              ].join(' ')}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => toggleTo(company.id, contact.email, contact.name)}
-                                className="accent-white w-3.5 h-3.5 flex-shrink-0"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <p className={`text-xs font-medium truncate ${checked ? 'text-white' : 'text-slate-800'}`}>
-                                  {contact.name}
-                                </p>
-                                <p className={`text-[10px] truncate ${checked ? 'text-slate-300' : 'text-slate-500'}`}>
-                                  {contact.email}
-                                  {contact.role && <span className="ml-1.5">· {contact.role}</span>}
-                                </p>
-                              </div>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* CC セクション */}
-                    <div>
-                      <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">CC</p>
-                      <div className="space-y-1">
-                        {/* 顧客コンタクト */}
-                        {contacts.map(contact => {
-                          const checked = target.cc.includes(contact.email);
-                          return (
-                            <label
-                              key={contact.email}
-                              className={[
-                                'flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
-                                checked ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50',
-                              ].join(' ')}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => toggleCc(company.id, contact.email)}
-                                className="accent-blue-600 w-3.5 h-3.5 flex-shrink-0"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-medium text-slate-800 truncate">{contact.name}</p>
-                                <p className="text-[10px] text-slate-500 truncate">
-                                  {contact.email}
-                                  {contact.role && <span className="ml-1.5 text-slate-400">· {contact.role}</span>}
-                                </p>
-                              </div>
-                            </label>
-                          );
-                        })}
-
-                        {/* 社内アドレス区切り */}
-                        <div className="flex items-center gap-2 py-1">
-                          <div className="flex-1 h-px bg-slate-100" />
-                          <span className="text-[9px] text-slate-400 flex-shrink-0">社内アドレス</span>
-                          <div className="flex-1 h-px bg-slate-100" />
+                  {/* Mail コンタクト選択（Mail がオンで contacts がある場合のみ） */}
+                  {mailOn && hasContacts && (
+                    <div className="p-3 space-y-4">
+                      {sendMode === 'per_person' ? (
+                        // ── 1人1通モード ──────────────────────────────────────
+                        <div className="space-y-1">
+                          {contacts.map(contact => {
+                            const checked = target.to.some(t => t.email === contact.email);
+                            return (
+                              <label
+                                key={contact.email}
+                                className={[
+                                  'flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
+                                  checked
+                                    ? 'border-slate-800 bg-slate-900 text-white'
+                                    : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50',
+                                ].join(' ')}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleTo(company.id, contact.email, contact.name)}
+                                  className="accent-white w-3.5 h-3.5 flex-shrink-0"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-xs font-medium truncate ${checked ? 'text-white' : 'text-slate-800'}`}>
+                                    {contact.name}
+                                  </p>
+                                  <p className={`text-[10px] truncate ${checked ? 'text-slate-300' : 'text-slate-500'}`}>
+                                    {contact.email}
+                                    {contact.role && <span className="ml-1.5">· {contact.role}</span>}
+                                  </p>
+                                </div>
+                              </label>
+                            );
+                          })}
                         </div>
+                      ) : (
+                        // ── 1社1通モード: To / CC 選択 ────────────────────────
+                        <>
+                          {/* To セクション */}
+                          <div>
+                            <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                              宛先 (To) <span className="text-red-400 normal-case font-normal">必須</span>
+                            </p>
+                            <div className="space-y-1">
+                              {contacts.map(contact => {
+                                const checked = target.to.some(t => t.email === contact.email);
+                                return (
+                                  <label
+                                    key={contact.email}
+                                    className={[
+                                      'flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
+                                      checked
+                                        ? 'border-slate-800 bg-slate-900 text-white'
+                                        : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50',
+                                    ].join(' ')}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleTo(company.id, contact.email, contact.name)}
+                                      className="accent-white w-3.5 h-3.5 flex-shrink-0"
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                      <p className={`text-xs font-medium truncate ${checked ? 'text-white' : 'text-slate-800'}`}>
+                                        {contact.name}
+                                      </p>
+                                      <p className={`text-[10px] truncate ${checked ? 'text-slate-300' : 'text-slate-500'}`}>
+                                        {contact.email}
+                                        {contact.role && <span className="ml-1.5">· {contact.role}</span>}
+                                      </p>
+                                    </div>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
 
-                        {/* 社内アドレス */}
-                        {INTERNAL_CC.map(internal => {
-                          const checked = target.cc.includes(internal.email);
-                          return (
-                            <label
-                              key={internal.email}
-                              className={[
-                                'flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
-                                checked ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50',
-                              ].join(' ')}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => toggleCc(company.id, internal.email)}
-                                className="accent-blue-600 w-3.5 h-3.5 flex-shrink-0"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-medium text-slate-800 truncate">{internal.name}</p>
-                                <p className="text-[10px] text-slate-500 truncate">{internal.email}</p>
+                          {/* CC セクション */}
+                          <div>
+                            <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">CC</p>
+                            <div className="space-y-1">
+                              {contacts.map(contact => {
+                                const checked = target.cc.includes(contact.email);
+                                return (
+                                  <label
+                                    key={contact.email}
+                                    className={[
+                                      'flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
+                                      checked ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50',
+                                    ].join(' ')}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleCc(company.id, contact.email)}
+                                      className="accent-blue-600 w-3.5 h-3.5 flex-shrink-0"
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-xs font-medium text-slate-800 truncate">{contact.name}</p>
+                                      <p className="text-[10px] text-slate-500 truncate">
+                                        {contact.email}
+                                        {contact.role && <span className="ml-1.5 text-slate-400">· {contact.role}</span>}
+                                      </p>
+                                    </div>
+                                  </label>
+                                );
+                              })}
+
+                              <div className="flex items-center gap-2 py-1">
+                                <div className="flex-1 h-px bg-slate-100" />
+                                <span className="text-[9px] text-slate-400 flex-shrink-0">社内アドレス</span>
+                                <div className="flex-1 h-px bg-slate-100" />
                               </div>
-                            </label>
-                          );
-                        })}
-                      </div>
+
+                              {INTERNAL_CC.map(internal => {
+                                const checked = target.cc.includes(internal.email);
+                                return (
+                                  <label
+                                    key={internal.email}
+                                    className={[
+                                      'flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
+                                      checked ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50',
+                                    ].join(' ')}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleCc(company.id, internal.email)}
+                                      className="accent-blue-600 w-3.5 h-3.5 flex-shrink-0"
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-xs font-medium text-slate-800 truncate">{internal.name}</p>
+                                      <p className="text-[10px] text-slate-500 truncate">{internal.email}</p>
+                                    </div>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })
@@ -406,17 +490,27 @@ function ContactPickerDialog({
         </div>
 
         {/* フッター */}
-        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t flex-shrink-0">
+        <div className="flex items-center justify-between gap-2 px-5 py-4 border-t flex-shrink-0">
           <button
-            onClick={onCancel}
-            className="text-sm text-slate-600 px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 px-2.5 py-1.5 rounded-md hover:bg-slate-50 transition-colors disabled:opacity-50"
           >
-            キャンセル
+            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+            オーディエンスを保存
           </button>
-          <Button onClick={onConfirm} disabled={!isValid} className="gap-1.5">
-            <Eye className="w-3.5 h-3.5" />
-            この宛先でプレビューする
-          </Button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onCancel}
+              className="text-sm text-slate-600 px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+            >
+              キャンセル
+            </button>
+            <Button onClick={onConfirm} disabled={!isValid} className="gap-1.5">
+              <Eye className="w-3.5 h-3.5" />
+              この宛先でプレビューする
+            </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -932,6 +1026,10 @@ export function OutboundPage() {
   const [mailTargets,       setMailTargets]       = useState<Map<string, MailTarget>>(new Map());
   const [sendMode,          setSendMode]          = useState<'per_company' | 'per_person'>('per_company');
 
+  // 企業ごとのチャンネル設定 / オーディエンス
+  const [perCompanyChannels, setPerCompanyChannels] = useState<Map<string, OutboundChannel[]>>(new Map());
+  const [savedAudiences,     setSavedAudiences]     = useState<OutboundAudience[]>([]);
+
   // プレビュー & テスト送信ダイアログ
   const [showPreview,      setShowPreview]      = useState(false);
   const [savedMailTargets, setSavedMailTargets] = useState<Map<string, MailTarget>>(new Map());
@@ -1149,12 +1247,13 @@ export function OutboundPage() {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          companyUids:  [...selectedUids],
-          channels:     [...selectedChannels],
-          message,                            // HTML (Tiptap 出力)
-          subject:      subject.trim() || undefined,
-          mailTargets:  mailTargetsArr,
-          mentionAll:   mentionAll || undefined,
+          companyUids:         [...selectedUids],
+          channels:            [...selectedChannels],
+          message,
+          subject:             subject.trim() || undefined,
+          mailTargets:         mailTargetsArr,
+          mentionAll:          mentionAll || undefined,
+          perCompanyChannels:  Object.fromEntries([...perCompanyChannels.entries()]),
         }),
       });
       const data = await res.json() as SendSummary;
@@ -1192,6 +1291,11 @@ export function OutboundPage() {
         }
       }
       setMailTargets(initTargets);
+      // オーディエンス一覧を非同期取得
+      fetch('/api/outbound/audiences')
+        .then(r => r.ok ? r.json() as Promise<OutboundAudience[]> : [])
+        .then(data => setSavedAudiences(Array.isArray(data) ? data : []))
+        .catch(() => {});
       setShowContactPicker(true);
       return;
     }
@@ -1305,6 +1409,55 @@ export function OutboundPage() {
 
   function handleChangeTargets(uid: string, target: MailTarget) {
     setMailTargets(prev => new Map(prev).set(uid, target));
+  }
+
+  function handleChangePerCompanyChannels(uid: string, channels: OutboundChannel[]) {
+    setPerCompanyChannels(prev => new Map(prev).set(uid, channels));
+  }
+
+  async function handleSaveAudience(name: string) {
+    const mailTargetsRecord: Record<string, { to: { email: string; name: string }[]; cc: string[] }> = {};
+    for (const [uid, t] of mailTargets.entries()) {
+      mailTargetsRecord[uid] = t;
+    }
+    await fetch('/api/outbound/audiences', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        company_uids:         JSON.stringify([...selectedUids]),
+        per_company_channels: JSON.stringify(Object.fromEntries([...perCompanyChannels.entries()])),
+        mail_targets:         JSON.stringify(mailTargetsRecord),
+      }),
+    });
+    // 保存後に一覧を再取得
+    fetch('/api/outbound/audiences')
+      .then(r => r.ok ? r.json() as Promise<OutboundAudience[]> : [])
+      .then(data => setSavedAudiences(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }
+
+  function handleLoadAudience(a: OutboundAudience) {
+    try {
+      const uids: string[] = JSON.parse(a.company_uids);
+      setSelectedUids(new Set(uids));
+    } catch { /* ignore */ }
+    try {
+      const pcc = JSON.parse(a.per_company_channels) as Record<string, string[]>;
+      const map = new Map<string, OutboundChannel[]>();
+      for (const [uid, chs] of Object.entries(pcc)) {
+        map.set(uid, chs as OutboundChannel[]);
+      }
+      setPerCompanyChannels(map);
+    } catch { /* ignore */ }
+    try {
+      const mt = JSON.parse(a.mail_targets) as Record<string, { to: { email: string; name: string }[]; cc: string[] }>;
+      const map = new Map<string, MailTarget>();
+      for (const [uid, t] of Object.entries(mt)) {
+        map.set(uid, t);
+      }
+      setMailTargets(map);
+    } catch { /* ignore */ }
   }
 
   // ── レンダリング ──────────────────────────────────────────────────────────
@@ -1745,6 +1898,12 @@ export function OutboundPage() {
           onConfirm={handleConfirmSend}
           onCancel={() => setShowContactPicker(false)}
           sending={sending}
+          selectedChannels={selectedChannels}
+          perCompanyChannels={perCompanyChannels}
+          onChangePerCompanyChannels={handleChangePerCompanyChannels}
+          savedAudiences={savedAudiences}
+          onSaveAudience={handleSaveAudience}
+          onLoadAudience={handleLoadAudience}
         />
       )}
 

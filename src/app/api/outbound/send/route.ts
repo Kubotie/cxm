@@ -64,13 +64,15 @@ export async function POST(req: Request) {
     message?:                  string;   // HTML (Tiptap 出力)
     subject?:                  string;
     mailTargets?:              { companyUid: string; to: { email: string; name?: string }[]; cc: string[] }[];
+    /** 企業ごとのチャンネル上書き（エントリなし = グローバル channels を使用） */
+    perCompanyChannels?:       Record<string, string[]>;
     /** テスト送信時: 企業名変数を置き換えるための上書き値 */
     _testCompanyNameOverride?: string;
     /** Slack: <!channel> / Chatwork: [toall] を冒頭に付与する */
     mentionAll?:               boolean;
   };
 
-  const { companyUids, channels, message, subject, mailTargets, _testCompanyNameOverride, mentionAll } = body;
+  const { companyUids, channels, message, subject, mailTargets, perCompanyChannels, _testCompanyNameOverride, mentionAll } = body;
 
   if (!companyUids?.length || !channels?.length || !message) {
     return NextResponse.json({ error: 'companyUids, channels, message は必須です' }, { status: 400 });
@@ -128,9 +130,15 @@ export async function POST(req: Request) {
 
   // 各企業へ並列送信
   const sendTasks = companyUids.map(async (uid): Promise<SendResult> => {
-    const name            = companyNameMap.get(uid) ?? uid;
-    const companyChannels = channelMap.get(uid) ?? [];
-    const grouped         = groupChannelsByType(companyChannels);
+    const name               = companyNameMap.get(uid) ?? uid;
+    const companyChannels    = channelMap.get(uid) ?? [];
+    const grouped            = groupChannelsByType(companyChannels);
+
+    // 企業ごとのチャンネル上書きがあればそちらを使う
+    const perCompany = perCompanyChannels?.[uid];
+    const effectiveChannels: OutboundChannel[] = (perCompany?.length)
+      ? (perCompany as OutboundChannel[]).filter(c => validChannels.includes(c as OutboundChannel))
+      : targetChannels;
 
     // Slack / Chatwork: 企業名変数を適用 → mentionAll 付与
     const slackBase    = subject
@@ -143,7 +151,7 @@ export async function POST(req: Request) {
     const chatworkMsg = mentionAll ? applyMentionAll(chatworkBase, 'chatwork') : chatworkBase;
 
     const channelResults = await Promise.all(
-      targetChannels.map(async (ch): Promise<ChannelResult> => {
+      effectiveChannels.map(async (ch): Promise<ChannelResult> => {
         if (ch === 'mail') {
           const entries = mailTargetsByCompany.get(uid) ?? [];
           if (entries.length === 0) return { type: 'mail', status: 'no_channel' };
