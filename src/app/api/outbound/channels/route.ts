@@ -2,7 +2,7 @@
 // 指定した企業のチャンネル設定（Slack/Chatwork）と Mail コンタクト一覧を返す。
 
 import { NextResponse }                    from 'next/server';
-import { fetchChannelsByCompanyUids, groupChannelsByType } from '@/lib/nocodb/company-channels';
+import { fetchChannelsByCompanyUids } from '@/lib/nocodb/company-channels';
 import { fetchContactsByCompanyUids }      from '@/lib/nocodb/people';
 
 export interface MailContactInfo {
@@ -12,8 +12,8 @@ export interface MailContactInfo {
 }
 
 export type OutboundChannelsResponse = Record<string, {
-  slack?:    { channelId: string; channelName: string | null };
-  chatwork?: { channelId: string; channelName: string | null };
+  slack?:    { channelId: string; channelName: string | null }[];
+  chatwork?: { channelId: string; channelName: string | null }[];
   mail?:     { contacts: MailContactInfo[] };
 }>;
 
@@ -37,13 +37,14 @@ export async function GET(req: Request) {
 
   const result: OutboundChannelsResponse = {};
   for (const uid of uids) {
-    const channels  = channelMap.get(uid) ?? [];
-    const grouped   = groupChannelsByType(channels);
-    const contacts  = contactMap.get(uid) ?? [];
+    const channels        = channelMap.get(uid) ?? [];
+    const slackChannels   = channels.filter(c => c.type === 'slack');
+    const chatworkChannels = channels.filter(c => c.type === 'chatwork');
+    const contacts        = contactMap.get(uid) ?? [];
     result[uid] = {
-      ...(grouped.slack    && { slack:    { channelId: grouped.slack.channelId,    channelName: grouped.slack.channelName } }),
-      ...(grouped.chatwork && { chatwork: { channelId: grouped.chatwork.channelId, channelName: grouped.chatwork.channelName } }),
-      ...(contacts.length > 0 && { mail: { contacts } }),
+      ...(slackChannels.length    > 0 && { slack:    slackChannels.map(c => ({ channelId: c.channelId, channelName: c.channelName })) }),
+      ...(chatworkChannels.length > 0 && { chatwork: chatworkChannels.map(c => ({ channelId: c.channelId, channelName: c.channelName })) }),
+      ...(contacts.length         > 0 && { mail: { contacts } }),
     };
   }
 

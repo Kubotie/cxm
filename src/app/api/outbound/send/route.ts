@@ -64,8 +64,9 @@ export async function POST(req: Request) {
     message?:                  string;   // HTML (Tiptap 出力)
     subject?:                  string;
     mailTargets?:              { companyUid: string; to: { email: string; name?: string }[]; cc: string[] }[];
-    /** 企業ごとのチャンネル上書き（エントリなし = グローバル channels を使用） */
-    perCompanyChannels?:       Record<string, string[]>;
+    /** 企業ごとのチャンネル上書き（エントリなし = グローバル channels を使用）
+     *  各エントリ: { type: 'slack'|'chatwork'; channelId: string } または { type: 'mail' } */
+    perCompanyChannels?:       Record<string, Array<{ type: string; channelId?: string }>>;
     /** テスト送信時: 企業名変数を置き換えるための上書き値 */
     _testCompanyNameOverride?: string;
     /** Slack: <!channel> / Chatwork: [toall] を冒頭に付与する */
@@ -130,15 +131,8 @@ export async function POST(req: Request) {
 
   // 各企業へ並列送信
   const sendTasks = companyUids.map(async (uid): Promise<SendResult> => {
-    const name               = companyNameMap.get(uid) ?? uid;
-    const companyChannels    = channelMap.get(uid) ?? [];
-    const grouped            = groupChannelsByType(companyChannels);
-
-    // 企業ごとのチャンネル上書きがあればそちらを使う
-    const perCompany = perCompanyChannels?.[uid];
-    const effectiveChannels: OutboundChannel[] = (perCompany?.length)
-      ? (perCompany as OutboundChannel[]).filter(c => validChannels.includes(c as OutboundChannel))
-      : targetChannels;
+    const name            = companyNameMap.get(uid) ?? uid;
+    const companyChannels = channelMap.get(uid) ?? [];
 
     // Slack / Chatwork: 企業名変数を適用 → mentionAll 付与
     const slackBase    = subject
@@ -150,56 +144,117 @@ export async function POST(req: Request) {
     const slackMsg    = mentionAll ? applyMentionAll(slackBase,    'slack')    : slackBase;
     const chatworkMsg = mentionAll ? applyMentionAll(chatworkBase, 'chatwork') : chatworkBase;
 
-    const channelResults = await Promise.all(
-      effectiveChannels.map(async (ch): Promise<ChannelResult> => {
-        if (ch === 'mail') {
-          const entries = mailTargetsByCompany.get(uid) ?? [];
-          if (entries.length === 0) return { type: 'mail', status: 'no_channel' };
+    // 企業ごとのチャンネルエントリ上書きがあればそちらを使う（新フォーマット）
+    const perCompanyEntries = perCompanyChannels?.[uid];
 
-          // 各エントリ（per_company=1社1通 / per_person=1人1通）を並列送信
-          const sendResults = await Promise.all(
-            entries.flatMap(entry => {
-              const recipientName  = entry.to[0]?.name ?? '';
-              const personalBody   = applyVariables(plainBase, name, recipientName);
-              const personalSubject = applyVariables(mailSubjectBase, name, recipientName);
-              const allEmails = [...new Set([
-                ...(entry.to ?? []).map(t => t.email),
-                ...(entry.cc ?? []),
-              ])];
-              return allEmails.map(email =>
-                sendIntercomMail({ email }, personalSubject, personalBody, intercomAdminId),
-              );
-            }),
-          );
+    let channelResults: ChannelResult[];
 
-          const failures = sendResults.filter(r => !r.ok);
-          if (failures.length === 0) return { type: 'mail', status: 'sent' };
-          if (failures.length === sendResults.length) {
-            return { type: 'mail', status: 'failed', error: failures.map(r => r.error).join('; ') };
+    if (perCompanyEntries?.length) {
+      // 新フォーマット: 各エントリ { type, channelId? } を個別送信
+      channelResults = await Promise.all(
+        perCompanyEntries.map(async (entry): Promise<ChannelResult> => {
+          const entryType = entry.type as OutboundChannel;
+
+          if (entryType === 'mail') {
+            const entries = mailTargetsByCompany.get(uid) ?? [];
+            if (entries.length === 0) return { type: 'mail', status: 'no_channel' };
+
+            const sendResults = await Promise.all(
+              entries.flatMap(mailEntry => {
+                const recipientName   = mailEntry.to[0]?.name ?? '';
+                const personalBody    = applyVariables(plainBase, name, recipientName);
+                const personalSubject = applyVariables(mailSubjectBase, name, recipientName);
+                const allEmails = [...new Set([
+                  ...(mailEntry.to ?? []).map(t => t.email),
+                  ...(mailEntry.cc ?? []),
+                ])];
+                return allEmails.map(email =>
+                  sendIntercomMail({ email }, personalSubject, personalBody, intercomAdminId),
+                );
+              }),
+            );
+
+            const failures = sendResults.filter(r => !r.ok);
+            if (failures.length === 0) return { type: 'mail', status: 'sent' };
+            if (failures.length === sendResults.length) {
+              return { type: 'mail', status: 'failed', error: failures.map(r => r.error).join('; ') };
+            }
+            return {
+              type: 'mail', status: 'sent',
+              error: `${failures.length}件失敗: ${failures.map(r => r.error).join('; ')}`,
+            };
           }
-          return {
-            type: 'mail', status: 'sent',
-            error: `${failures.length}件失敗: ${failures.map(r => r.error).join('; ')}`,
-          };
-        }
 
-        const info = grouped[ch];
-        if (!info) return { type: ch, status: 'no_channel' };
+          if (!entry.channelId) return { type: entryType, status: 'no_channel' };
 
-        // 外部ワークスペースの場合は専用 bot_token を使用
-        const slackBotToken = (ch === 'slack' && info.extSlackWorkspace && info.slackTeamId)
-          ? (workspaceTokenMap.get(info.slackTeamId) ?? null)
-          : null;
+          // channelId に対応する CompanyChannelInfo を探して bot_token を解決
+          const info = companyChannels.find(c => c.type === entryType && c.channelId === entry.channelId);
+          const slackBotToken = (entryType === 'slack' && info?.extSlackWorkspace && info.slackTeamId)
+            ? (workspaceTokenMap.get(info.slackTeamId) ?? null)
+            : null;
 
-        const sendResult = ch === 'slack'
-          ? await sendSlackMessage(info.channelId, slackMsg, slackBotToken)
-          : await sendChatworkMessage(info.channelId, chatworkMsg);
+          const sendResult = entryType === 'slack'
+            ? await sendSlackMessage(entry.channelId, slackMsg, slackBotToken)
+            : await sendChatworkMessage(entry.channelId, chatworkMsg);
 
-        return sendResult.ok
-          ? { type: ch, status: 'sent' }
-          : { type: ch, status: 'failed', error: sendResult.error };
-      }),
-    );
+          return sendResult.ok
+            ? { type: entryType, status: 'sent' }
+            : { type: entryType, status: 'failed', error: sendResult.error };
+        }),
+      );
+    } else {
+      // 後方互換: グローバル channels + groupChannelsByType で1チャンネルずつ送信
+      const grouped = groupChannelsByType(companyChannels);
+
+      channelResults = await Promise.all(
+        targetChannels.map(async (ch): Promise<ChannelResult> => {
+          if (ch === 'mail') {
+            const entries = mailTargetsByCompany.get(uid) ?? [];
+            if (entries.length === 0) return { type: 'mail', status: 'no_channel' };
+
+            const sendResults = await Promise.all(
+              entries.flatMap(entry => {
+                const recipientName   = entry.to[0]?.name ?? '';
+                const personalBody    = applyVariables(plainBase, name, recipientName);
+                const personalSubject = applyVariables(mailSubjectBase, name, recipientName);
+                const allEmails = [...new Set([
+                  ...(entry.to ?? []).map(t => t.email),
+                  ...(entry.cc ?? []),
+                ])];
+                return allEmails.map(email =>
+                  sendIntercomMail({ email }, personalSubject, personalBody, intercomAdminId),
+                );
+              }),
+            );
+
+            const failures = sendResults.filter(r => !r.ok);
+            if (failures.length === 0) return { type: 'mail', status: 'sent' };
+            if (failures.length === sendResults.length) {
+              return { type: 'mail', status: 'failed', error: failures.map(r => r.error).join('; ') };
+            }
+            return {
+              type: 'mail', status: 'sent',
+              error: `${failures.length}件失敗: ${failures.map(r => r.error).join('; ')}`,
+            };
+          }
+
+          const info = grouped[ch];
+          if (!info) return { type: ch, status: 'no_channel' };
+
+          const slackBotToken = (ch === 'slack' && info.extSlackWorkspace && info.slackTeamId)
+            ? (workspaceTokenMap.get(info.slackTeamId) ?? null)
+            : null;
+
+          const sendResult = ch === 'slack'
+            ? await sendSlackMessage(info.channelId, slackMsg, slackBotToken)
+            : await sendChatworkMessage(info.channelId, chatworkMsg);
+
+          return sendResult.ok
+            ? { type: ch, status: 'sent' }
+            : { type: ch, status: 'failed', error: sendResult.error };
+        }),
+      );
+    }
 
     return { companyUid: uid, companyName: name, channels: channelResults };
   });

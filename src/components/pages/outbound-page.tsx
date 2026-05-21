@@ -35,6 +35,12 @@ import type { OutboundAudience } from "@/app/api/outbound/audiences/route";
 
 type OutboundChannel = 'slack' | 'chatwork' | 'mail';
 
+// 企業ごとのチャンネル選択エントリ（特定チャンネルIDを指定できる）
+type PerCompanyChannelEntry =
+  | { type: 'slack';    channelId: string; channelName: string | null }
+  | { type: 'chatwork'; channelId: string; channelName: string | null }
+  | { type: 'mail' };
+
 interface ChannelResult {
   type:    OutboundChannel;
   status:  'sent' | 'failed' | 'no_channel';
@@ -126,7 +132,7 @@ function CompanyRow({
   const hasChannel = (ch: OutboundChannel) =>
     ch === 'mail'
       ? !!(channels?.mail?.contacts?.length)
-      : !!(channels?.[ch]);
+      : (channels?.[ch]?.length ?? 0) > 0;
 
   const hasActiveChannel = ALL_CHANNELS.some(
     ch => activeChannels.has(ch) && hasChannel(ch),
@@ -160,12 +166,12 @@ function CompanyRow({
           ))}
         </div>
         {/* チャンネル名を表示（同名企業を区別するため） */}
-        {(channels?.slack || channels?.chatwork) && (
+        {((channels?.slack?.length ?? 0) > 0 || (channels?.chatwork?.length ?? 0) > 0) && (
           <div className={`text-xs mt-0.5 truncate ${selected ? 'text-slate-300' : 'text-slate-400'}`}>
             {[
-              channels?.slack    && `# ${channels.slack.channelName    ?? channels.slack.channelId}`,
-              channels?.chatwork && `💬 ${channels.chatwork.channelName ?? channels.chatwork.channelId}`,
-            ].filter(Boolean).join('  ')}
+              ...(channels?.slack?.map(c => `# ${c.channelName ?? c.channelId}`) ?? []),
+              ...(channels?.chatwork?.map(c => `💬 ${c.channelName ?? c.channelId}`) ?? []),
+            ].join('  ')}
           </div>
         )}
       </div>
@@ -200,8 +206,8 @@ function ContactPickerDialog({
   onCancel:                   () => void;
   sending:                    boolean;
   selectedChannels:           Set<OutboundChannel>;
-  perCompanyChannels:         Map<string, OutboundChannel[]>;
-  onChangePerCompanyChannels: (uid: string, channels: OutboundChannel[]) => void;
+  perCompanyChannels:         Map<string, PerCompanyChannelEntry[]>;
+  onChangePerCompanyChannels: (uid: string, entries: PerCompanyChannelEntry[]) => void;
   savedAudiences:             OutboundAudience[];
   onSaveAudience:             (name: string) => Promise<void>;
   onLoadAudience:             (a: OutboundAudience) => void;
@@ -212,16 +218,58 @@ function ContactPickerDialog({
     c => (channelMap[c.id]?.mail?.contacts?.length ?? 0) > 0,
   );
 
-  function getEffectiveChannels(uid: string): OutboundChannel[] {
-    return perCompanyChannels.get(uid) ?? [...selectedChannels];
+  /** 企業の全チャンネルエントリを列挙 */
+  function getAllEntries(uid: string): PerCompanyChannelEntry[] {
+    const ch = channelMap[uid];
+    return [
+      ...(ch?.slack?.map(c => ({ type: 'slack' as const, channelId: c.channelId, channelName: c.channelName })) ?? []),
+      ...(ch?.chatwork?.map(c => ({ type: 'chatwork' as const, channelId: c.channelId, channelName: c.channelName })) ?? []),
+      ...(ch?.mail ? [{ type: 'mail' as const }] : []),
+    ];
   }
 
-  function toggleCompanyChannel(uid: string, ch: OutboundChannel) {
-    const current = getEffectiveChannels(uid);
-    const next = current.includes(ch)
-      ? current.filter(c => c !== ch)
-      : [...current, ch];
+  /** デフォルト選択: グローバル selectedChannels に含まれる種別のエントリをすべて選択 */
+  function getDefaultEntries(uid: string): PerCompanyChannelEntry[] {
+    return getAllEntries(uid).filter(e => selectedChannels.has(e.type));
+  }
+
+  function getEffectiveEntries(uid: string): PerCompanyChannelEntry[] {
+    return perCompanyChannels.get(uid) ?? getDefaultEntries(uid);
+  }
+
+  function isEntryChecked(uid: string, entry: PerCompanyChannelEntry): boolean {
+    const selected = getEffectiveEntries(uid);
+    if (entry.type === 'mail') return selected.some(e => e.type === 'mail');
+    const entryId = entry.channelId;
+    return selected.some(e =>
+      e.type === entry.type &&
+      (e as { channelId?: string }).channelId === entryId,
+    );
+  }
+
+  function toggleEntry(uid: string, entry: PerCompanyChannelEntry) {
+    const current = getEffectiveEntries(uid);
+    const checked = isEntryChecked(uid, entry);
+    let next: PerCompanyChannelEntry[];
+    if (checked) {
+      if (entry.type === 'mail') {
+        next = current.filter(e => e.type !== 'mail');
+      } else {
+        const entryId = entry.channelId;
+        next = current.filter(e =>
+          !(e.type === entry.type && (e as { channelId?: string }).channelId === entryId),
+        );
+      }
+    } else {
+      next = [...current, entry];
+    }
+    // 全解除は許可しない（少なくとも1エントリ残す）
     onChangePerCompanyChannels(uid, next.length > 0 ? next : current);
+  }
+
+  // Mail がオンの企業（effective エントリに mail が含まれ、contacts がある）
+  function isMailOn(uid: string): boolean {
+    return getEffectiveEntries(uid).some(e => e.type === 'mail');
   }
 
   async function handleSave() {
@@ -251,10 +299,9 @@ function ContactPickerDialog({
     onChangeTargets(uid, { ...cur, cc: newCc });
   }
 
-  const mailOnCompanies = companies.filter(c => {
-    const eff = getEffectiveChannels(c.id);
-    return eff.includes('mail') && (channelMap[c.id]?.mail?.contacts?.length ?? 0) > 0;
-  });
+  const mailOnCompanies = companies.filter(c =>
+    isMailOn(c.id) && (channelMap[c.id]?.mail?.contacts?.length ?? 0) > 0,
+  );
 
   const isValid = sendMode === 'per_person'
     ? (mailOnCompanies.length === 0 || mailOnCompanies.some(c => (mailTargets.get(c.id)?.to?.length ?? 0) > 0))
@@ -302,50 +349,44 @@ function ContactPickerDialog({
             <p className="text-sm text-slate-400 text-center py-8">企業が選択されていません</p>
           ) : (
             companies.map(company => {
-              const effectiveChannels = getEffectiveChannels(company.id);
-              const mailOn     = effectiveChannels.includes('mail');
+              const mailOn     = isMailOn(company.id);
               const contacts   = channelMap[company.id]?.mail?.contacts ?? [];
               const hasContacts = contacts.length > 0;
               const target     = mailTargets.get(company.id) ?? { to: [], cc: [] };
+              const allEntries = getAllEntries(company.id);
 
               return (
                 <div key={company.id} className="border border-slate-100 rounded-xl overflow-hidden">
-                  {/* 企業ヘッダー + チャンネルトグル */}
+                  {/* 企業ヘッダー */}
                   <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 border-b border-slate-100">
                     <Building2 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                     <p className="text-xs font-semibold text-slate-700 truncate flex-1">{company.name}</p>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      {[...selectedChannels].map(ch => {
-                        const meta    = CHANNEL_META[ch];
-                        const hasCh   = ch === 'mail'
-                          ? hasContacts
-                          : !!(channelMap[company.id]?.[ch]);
-                        const active  = effectiveChannels.includes(ch);
-                        return (
-                          <button
-                            key={ch}
-                            onClick={() => toggleCompanyChannel(company.id, ch)}
-                            disabled={!hasCh}
-                            title={hasCh ? undefined : `${meta.label} チャンネル未設定`}
-                            className={[
-                              'flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border transition-colors',
-                              !hasCh
-                                ? 'border-slate-100 text-slate-300 bg-slate-50 cursor-not-allowed'
-                                : active
-                                ? 'border-slate-800 bg-slate-900 text-white'
-                                : 'border-slate-200 text-slate-500 hover:border-slate-300 bg-white',
-                            ].join(' ')}
-                          >
-                            {meta.icon}
-                            {meta.label}
-                          </button>
-                        );
-                      })}
-                    </div>
                     {mailOn && hasContacts && sendMode === 'per_company' && target.to.length === 0 && (
                       <span className="text-[10px] text-red-500 flex-shrink-0">To を1名以上選択</span>
                     )}
                   </div>
+
+                  {/* チャンネル個別チェックボックス */}
+                  {allEntries.length > 0 && (
+                    <div className="px-4 py-2.5 flex flex-wrap gap-x-4 gap-y-1 border-b border-slate-100">
+                      {allEntries.map((entry, i) => {
+                        const checked = isEntryChecked(company.id, entry);
+                        return (
+                          <label key={i} className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleEntry(company.id, entry)}
+                              className="w-3.5 h-3.5 accent-slate-800"
+                            />
+                            {entry.type === 'slack'    && <span className="text-purple-600 flex items-center gap-0.5"><Hash className="w-3 h-3" />{entry.channelName ?? entry.channelId}</span>}
+                            {entry.type === 'chatwork' && <span className="text-green-600 flex items-center gap-0.5"><MessageCircle className="w-3 h-3" />{entry.channelName ?? entry.channelId}</span>}
+                            {entry.type === 'mail'     && <span className="text-blue-600 flex items-center gap-0.5"><Mail className="w-3 h-3" />Mail</span>}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   {/* Mail コンタクト選択（Mail がオンで contacts がある場合のみ） */}
                   {mailOn && hasContacts && (
@@ -582,14 +623,12 @@ function PreviewAndTestDialog({
 
   const testSlackChannels = useMemo(() =>
     Object.entries(testChannels)
-      .filter(([, ch]) => ch.slack)
-      .map(([uid, ch]) => ({ uid, ...ch.slack! })),
+      .flatMap(([uid, ch]) => (ch.slack ?? []).map(c => ({ uid, ...c }))),
     [testChannels]);
 
   const testChatworkChannels = useMemo(() =>
     Object.entries(testChannels)
-      .filter(([, ch]) => ch.chatwork)
-      .map(([uid, ch]) => ({ uid, ...ch.chatwork! })),
+      .flatMap(([uid, ch]) => (ch.chatwork ?? []).map(c => ({ uid, ...c }))),
     [testChannels]);
 
   return (
@@ -1036,7 +1075,7 @@ export function OutboundPage() {
   const [sendMode,          setSendMode]          = useState<'per_company' | 'per_person'>('per_company');
 
   // 企業ごとのチャンネル設定 / オーディエンス
-  const [perCompanyChannels, setPerCompanyChannels] = useState<Map<string, OutboundChannel[]>>(new Map());
+  const [perCompanyChannels, setPerCompanyChannels] = useState<Map<string, PerCompanyChannelEntry[]>>(new Map());
   const [savedAudiences,     setSavedAudiences]     = useState<OutboundAudience[]>([]);
 
   // プレビュー & テスト送信ダイアログ
@@ -1213,7 +1252,9 @@ export function OutboundPage() {
             if (t === 'mail') {
               return { type: 'mail' as const, ch: channelMap[uid]?.mail };
             }
-            return { type: t as 'slack' | 'chatwork', ch: channelMap[uid]?.[t] };
+            // 配列の先頭を代表値として使用（バッジ表示用）
+            const arr = channelMap[uid]?.[t];
+            return { type: t as 'slack' | 'chatwork', ch: arr?.[0] };
           });
         return { company, perChannel };
       })
@@ -1262,7 +1303,7 @@ export function OutboundPage() {
           subject:             subject.trim() || undefined,
           mailTargets:         mailTargetsArr,
           mentionAll:          mentionAll || undefined,
-          perCompanyChannels:  Object.fromEntries([...perCompanyChannels.entries()]),
+          perCompanyChannels:  Object.fromEntries([...perCompanyChannels.entries()]) as Record<string, Array<{ type: string; channelId?: string }>>,
         }),
       });
       const data = await res.json() as SendSummary;
@@ -1370,7 +1411,10 @@ export function OutboundPage() {
         };
       } else {
         const testUids = Object.entries(testChannels)
-          .filter(([, ch]) => !!(ch as Record<string, unknown>)[channel])
+          .filter(([, ch]) => {
+            const arr = (ch as Record<string, unknown[]>)[channel];
+            return Array.isArray(arr) ? arr.length > 0 : !!(ch as Record<string, unknown>)[channel];
+          })
           .map(([uid]) => uid);
         if (testUids.length === 0) {
           setTestResult('❌ テストチャンネルが設定されていません（NocoDB: company_uid = test1 / test2）');
@@ -1420,8 +1464,8 @@ export function OutboundPage() {
     setMailTargets(prev => new Map(prev).set(uid, target));
   }
 
-  function handleChangePerCompanyChannels(uid: string, channels: OutboundChannel[]) {
-    setPerCompanyChannels(prev => new Map(prev).set(uid, channels));
+  function handleChangePerCompanyChannels(uid: string, entries: PerCompanyChannelEntry[]) {
+    setPerCompanyChannels(prev => new Map(prev).set(uid, entries));
   }
 
   async function handleSaveAudience(name: string) {
@@ -1452,10 +1496,10 @@ export function OutboundPage() {
       setSelectedUids(new Set(uids));
     } catch { /* ignore */ }
     try {
-      const pcc = JSON.parse(a.per_company_channels) as Record<string, string[]>;
-      const map = new Map<string, OutboundChannel[]>();
-      for (const [uid, chs] of Object.entries(pcc)) {
-        map.set(uid, chs as OutboundChannel[]);
+      const pcc = JSON.parse(a.per_company_channels) as Record<string, PerCompanyChannelEntry[]>;
+      const map = new Map<string, PerCompanyChannelEntry[]>();
+      for (const [uid, entries] of Object.entries(pcc)) {
+        map.set(uid, entries as PerCompanyChannelEntry[]);
       }
       setPerCompanyChannels(map);
     } catch { /* ignore */ }
