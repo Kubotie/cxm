@@ -128,12 +128,15 @@
     @apply border-border outline-ring/50;
   }
 
-  body {
-    @apply bg-background text-foreground;
-  }
-
   html {
     font-size: var(--font-size);
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    height: 100%;
+    overflow: hidden;
   }
 
   h1 {
