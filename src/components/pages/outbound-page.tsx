@@ -769,29 +769,15 @@ function PreviewAndTestDialog({
                   />
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setTestMailCcEnabled(!testMailCcEnabled)}
-                    className={[
-                      'text-xs w-6 flex-shrink-0 font-medium transition-colors',
-                      testMailCcEnabled ? 'text-slate-700' : 'text-slate-300',
-                    ].join(' ')}
-                    title={testMailCcEnabled ? 'CCを無効にする' : 'CCを有効にする'}
-                  >
-                    CC
-                  </button>
+                  <span className="text-xs w-6 flex-shrink-0 font-medium text-slate-500">CC</span>
                   <Input
                     type="text"
                     value={testMailCc}
                     onChange={e => setTestMailCc(e.target.value)}
-                    disabled={!testMailCcEnabled}
-                    placeholder="CCメールアドレス（複数の場合はカンマ区切り）"
-                    className={`text-sm h-9 flex-1 transition-opacity ${testMailCcEnabled ? '' : 'opacity-40'}`}
+                    placeholder="CCメールアドレス（複数の場合はカンマ区切り・省略可）"
+                    className="text-sm h-9 flex-1"
                   />
                 </div>
-                {testMailCcEnabled && (
-                  <p className="text-[10px] text-slate-400 ml-8">※ CCも各アドレスに個別メールとして送信されます</p>
-                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -1658,7 +1644,7 @@ export function OutboundPage() {
             </div>
 
             {/* 右パネル: メッセージ作成・送信 */}
-            <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 flex flex-col overflow-hidden min-h-0">
               <div className="flex-1 overflow-y-auto p-6">
               <div className="max-w-2xl mx-auto space-y-5">
 
