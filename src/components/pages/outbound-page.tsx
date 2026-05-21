@@ -1504,9 +1504,9 @@ export function OutboundPage() {
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
       <SidebarNav />
-      <div className="flex flex-col flex-1 overflow-hidden">
+      <div className="flex flex-col flex-1 overflow-hidden min-h-0">
         <GlobalHeader />
-        <main className="flex-1 overflow-hidden flex flex-col">
+        <main className="flex-1 overflow-hidden flex flex-col min-h-0">
 
           {/* ── キャンペーン一覧ビュー ── */}
           {view === 'list' && (
@@ -1576,7 +1576,7 @@ export function OutboundPage() {
           </div>
 
           {/* 2カラムレイアウト */}
-          <div className="flex flex-1 overflow-hidden">
+          <div className="flex flex-1 overflow-hidden min-h-0">
 
             {/* 左パネル: 企業選択 */}
             <div className="w-80 flex-shrink-0 border-r bg-white flex flex-col overflow-hidden">
