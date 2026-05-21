@@ -1658,7 +1658,8 @@ export function OutboundPage() {
             </div>
 
             {/* 右パネル: メッセージ作成・送信 */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-6">
               <div className="max-w-2xl mx-auto space-y-5">
 
                 {/* チャンネル選択（複数選択可） */}
@@ -1851,44 +1852,6 @@ export function OutboundPage() {
                   </div>
                 )}
 
-                {/* 送信ボタン */}
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  {selectedUids.size === 0 && (
-                    <p className="text-xs text-slate-400 flex-1">左パネルから送信先企業を選択してください</p>
-                  )}
-                  {totalSendableChannels === 0 && selectedUids.size > 0 && (
-                    <p className="text-xs text-amber-600 flex-1">
-                      選択中の企業に設定済みチャンネルがありません
-                    </p>
-                  )}
-                  {/* テスト送信ボタン（メッセージがあれば常に表示） */}
-                  <Button
-                    variant="outline"
-                    onClick={handleOpenTestSend}
-                    disabled={isMessageEmpty}
-                    className="gap-1.5 text-slate-600"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    テスト送信
-                  </Button>
-                  <Button
-                    onClick={handleSend}
-                    disabled={sending || isMessageEmpty || totalSendableChannels === 0}
-                    className="gap-1.5"
-                  >
-                    {sending ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Send className="w-3.5 h-3.5" />
-                    )}
-                    {sending
-                      ? '送信中...'
-                      : selectedChannels.has('mail')
-                      ? `宛先を選択してプレビュー（${canSendCount}社）`
-                      : `送信する（${canSendCount}社 / ${totalSendableChannels}件）`}
-                  </Button>
-                </div>
-
                 {/* 送信結果サマリー */}
                 {summary && (
                   <div className="border border-slate-200 rounded-lg overflow-hidden">
@@ -1932,6 +1895,46 @@ export function OutboundPage() {
                     </div>
                   </div>
                 )}
+              </div>
+              </div>
+
+              {/* 固定フッター: 送信ボタン */}
+              <div className="border-t bg-white px-6 py-3 flex-shrink-0">
+                <div className="max-w-2xl mx-auto flex items-center justify-end gap-3">
+                  {selectedUids.size === 0 && (
+                    <p className="text-xs text-slate-400 flex-1">左パネルから送信先企業を選択してください</p>
+                  )}
+                  {totalSendableChannels === 0 && selectedUids.size > 0 && (
+                    <p className="text-xs text-amber-600 flex-1">
+                      選択中の企業に設定済みチャンネルがありません
+                    </p>
+                  )}
+                  <Button
+                    variant="outline"
+                    onClick={handleOpenTestSend}
+                    disabled={isMessageEmpty}
+                    className="gap-1.5 text-slate-600"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    テスト送信
+                  </Button>
+                  <Button
+                    onClick={handleSend}
+                    disabled={sending || isMessageEmpty || totalSendableChannels === 0}
+                    className="gap-1.5"
+                  >
+                    {sending ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Send className="w-3.5 h-3.5" />
+                    )}
+                    {sending
+                      ? '送信中...'
+                      : selectedChannels.has('mail')
+                      ? `宛先を選択してプレビュー（${canSendCount}社）`
+                      : `送信する（${canSendCount}社 / ${totalSendableChannels}件）`}
+                  </Button>
+                </div>
               </div>
             </div>
 
