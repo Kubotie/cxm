@@ -95,7 +95,7 @@ export async function nocoDelete(
   const res = await fetch(`${BASE_URL}/api/v2/tables/${tableId}/records`, {
     method: 'DELETE',
     headers: apiHeaders(),
-    body: JSON.stringify({ Id: rowId }),
+    body: JSON.stringify([{ Id: rowId }]),
     cache: 'no-store',
   });
 
