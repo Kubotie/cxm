@@ -154,11 +154,20 @@ function CompanyRow({
         <div className={`text-sm font-medium truncate leading-snug ${selected ? 'text-white' : 'text-slate-800'}`}>
           {company.name}
         </div>
-        <div className="flex gap-1 mt-1">
+        <div className="flex gap-1 mt-1 flex-wrap">
           {ALL_CHANNELS.map(t => (
             <ChannelBadge key={t} type={t} has={hasChannel(t)} isActive={activeChannels.has(t)} />
           ))}
         </div>
+        {/* チャンネル名を表示（同名企業を区別するため） */}
+        {(channels?.slack || channels?.chatwork) && (
+          <div className={`text-xs mt-0.5 truncate ${selected ? 'text-slate-300' : 'text-slate-400'}`}>
+            {[
+              channels?.slack    && `# ${channels.slack.channelName    ?? channels.slack.channelId}`,
+              channels?.chatwork && `💬 ${channels.chatwork.channelName ?? channels.chatwork.channelId}`,
+            ].filter(Boolean).join('  ')}
+          </div>
+        )}
       </div>
     </label>
   );
