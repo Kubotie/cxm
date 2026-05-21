@@ -4,7 +4,7 @@
 //
 // Slack    → Chatwork
 // *bold*   → bold（[b][/b] は Chatwork で機能しないためプレーンテキスト）
-// _italic_ → [i]italic[/i]
+// _italic_ → italic（[i][/i] は Chatwork で機能しないためプレーンテキスト）
 // ~strike~ → [s]strike[/s]
 // `code`   → [code]code[/code]
 // ```block``` → [code]block[/code]
@@ -139,7 +139,7 @@ export function htmlToChatwork(html: string): string {
   t = t.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi,
     (_, c) => '[code]' + decodeHtmlEntities(c.replace(/<[^>]+>/g, '')) + '[/code]');
   t = t.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '$1');
-  t = t.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '[i]$1[/i]');
+  t = t.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '$1');
   t = t.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '$2（$1）');
   t = t.replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, '$1\n');
   t = t.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi,
@@ -207,8 +207,8 @@ export function slackToChatwork(text: string): string {
     .replace(/`([^`\n]+)`/g, '[code]$1[/code]')
     // 太字（[b][/b] は Chatwork で機能しないためプレーンテキストに変換）
     .replace(/\*([^*\n]+)\*/g, '$1')
-    // 斜体
-    .replace(/_([^_\n]+)_/g, '[i]$1[/i]')
+    // 斜体（[i][/i] は Chatwork で機能しないためプレーンテキストに変換）
+    .replace(/_([^_\n]+)_/g, '$1')
     // 打ち消し
     .replace(/~([^~\n]+)~/g, '[s]$1[/s]')
     // リンク <URL|text> → text（URL）
