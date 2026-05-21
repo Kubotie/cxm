@@ -30,7 +30,7 @@ export async function sendSlackMessage(
         'Content-Type':  'application/json; charset=utf-8',
         'Authorization': `Bearer ${token}`,
       },
-      body: JSON.stringify({ channel: channelId, text }),
+      body: JSON.stringify({ channel: channelId, text, mrkdwn: true }),
       cache: 'no-store',
     });
 

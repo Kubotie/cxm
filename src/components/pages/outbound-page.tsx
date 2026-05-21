@@ -434,6 +434,8 @@ function PreviewAndTestDialog({
   setTestMailTo,
   testMailCc,
   setTestMailCc,
+  testMailCcEnabled,
+  setTestMailCcEnabled,
   onTestSend,
   onActualSend,
   onClose,
@@ -445,10 +447,12 @@ function PreviewAndTestDialog({
   subject:          string;
   testChannels:     OutboundChannelsResponse;
   showActualSend:   boolean;
-  testMailTo:       string;
-  setTestMailTo:    (v: string) => void;
-  testMailCc:       string;
-  setTestMailCc:    (v: string) => void;
+  testMailTo:          string;
+  setTestMailTo:       (v: string) => void;
+  testMailCc:          string;
+  setTestMailCc:       (v: string) => void;
+  testMailCcEnabled:   boolean;
+  setTestMailCcEnabled:(v: boolean) => void;
   onTestSend:       (ch: OutboundChannel) => void;
   onActualSend:     () => void;
   onClose:          () => void;
@@ -618,15 +622,29 @@ function PreviewAndTestDialog({
                   />
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500 w-6 flex-shrink-0">CC</span>
+                  <button
+                    type="button"
+                    onClick={() => setTestMailCcEnabled(!testMailCcEnabled)}
+                    className={[
+                      'text-xs w-6 flex-shrink-0 font-medium transition-colors',
+                      testMailCcEnabled ? 'text-slate-700' : 'text-slate-300',
+                    ].join(' ')}
+                    title={testMailCcEnabled ? 'CCを無効にする' : 'CCを有効にする'}
+                  >
+                    CC
+                  </button>
                   <Input
                     type="text"
                     value={testMailCc}
                     onChange={e => setTestMailCc(e.target.value)}
-                    placeholder="CCメールアドレス（任意・複数の場合はカンマ区切り）"
-                    className="text-sm h-9 flex-1"
+                    disabled={!testMailCcEnabled}
+                    placeholder="CCメールアドレス（複数の場合はカンマ区切り）"
+                    className={`text-sm h-9 flex-1 transition-opacity ${testMailCcEnabled ? '' : 'opacity-40'}`}
                   />
                 </div>
+                {testMailCcEnabled && (
+                  <p className="text-[10px] text-slate-400 ml-8">※ CCも各アドレスに個別メールとして送信されます</p>
+                )}
                 <Button
                   size="sm"
                   variant="outline"
@@ -915,6 +933,7 @@ export function OutboundPage() {
   const [testChannels,     setTestChannels]     = useState<OutboundChannelsResponse>({});
   const [testMailTo,       setTestMailTo]       = useState('');
   const [testMailCc,       setTestMailCc]       = useState('');
+  const [testMailCcEnabled, setTestMailCcEnabled] = useState(false);
   const [testSending,      setTestSending]      = useState(false);
   const [testResult,       setTestResult]       = useState<string | null>(null);
   const [previewForActualSend, setPreviewForActualSend] = useState(false);
@@ -1218,7 +1237,9 @@ export function OutboundPage() {
           setTestResult('❌ 宛先（To）を入力してください');
           return;
         }
-        const ccEmails = testMailCc.split(',').map(s => s.trim()).filter(Boolean);
+        const ccEmails = testMailCcEnabled
+          ? testMailCc.split(',').map(s => s.trim()).filter(Boolean)
+          : [];
         body = {
           companyUids:             ['__test__'],
           channels:                ['mail'],
@@ -1706,6 +1727,8 @@ export function OutboundPage() {
           setTestMailTo={setTestMailTo}
           testMailCc={testMailCc}
           setTestMailCc={setTestMailCc}
+          testMailCcEnabled={testMailCcEnabled}
+          setTestMailCcEnabled={setTestMailCcEnabled}
           onTestSend={handleTestSend}
           onActualSend={handleActualSendFromPreview}
           onClose={() => { setShowPreview(false); setTestResult(null); }}
