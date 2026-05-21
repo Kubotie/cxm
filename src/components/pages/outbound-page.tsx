@@ -19,6 +19,7 @@ import { RichMessageEditor } from "@/components/outbound/rich-message-editor";
 import {
   htmlToSlack, htmlToChatwork,
   addSubjectToSlack, addSubjectToChatwork,
+  applyMentionAll,
 } from "@/lib/outbound/format-converter";
 import { Button }   from "@/components/ui/button";
 import { Input }    from "@/components/ui/input";
@@ -428,6 +429,7 @@ function PreviewAndTestDialog({
   selectedChannels,
   message,
   subject,
+  mentionAll,
   testChannels,
   showActualSend,
   testMailTo,
@@ -445,6 +447,7 @@ function PreviewAndTestDialog({
   selectedChannels: Set<OutboundChannel>;
   message:          string;
   subject:          string;
+  mentionAll:       boolean;
   testChannels:     OutboundChannelsResponse;
   showActualSend:   boolean;
   testMailTo:          string;
@@ -464,13 +467,15 @@ function PreviewAndTestDialog({
 
   const slackPreview = useMemo(() => {
     const body = htmlToSlack(message);
-    return subject.trim() ? addSubjectToSlack(subject.trim(), body) : body;
-  }, [message, subject]);
+    const text = subject.trim() ? addSubjectToSlack(subject.trim(), body) : body;
+    return mentionAll ? applyMentionAll(text, 'slack') : text;
+  }, [message, subject, mentionAll]);
 
   const chatworkPreview = useMemo(() => {
     const body = htmlToChatwork(message);
-    return subject.trim() ? addSubjectToChatwork(subject.trim(), body) : body;
-  }, [message, subject]);
+    const text = subject.trim() ? addSubjectToChatwork(subject.trim(), body) : body;
+    return mentionAll ? applyMentionAll(text, 'chatwork') : text;
+  }, [message, subject, mentionAll]);
 
   const testSlackChannels = useMemo(() =>
     Object.entries(testChannels)
@@ -934,6 +939,7 @@ export function OutboundPage() {
   const [testMailTo,       setTestMailTo]       = useState('');
   const [testMailCc,       setTestMailCc]       = useState('');
   const [testMailCcEnabled, setTestMailCcEnabled] = useState(false);
+  const [mentionAll,       setMentionAll]       = useState(false);
   const [testSending,      setTestSending]      = useState(false);
   const [testResult,       setTestResult]       = useState<string | null>(null);
   const [previewForActualSend, setPreviewForActualSend] = useState(false);
@@ -1148,6 +1154,7 @@ export function OutboundPage() {
           message,                            // HTML (Tiptap 出力)
           subject:      subject.trim() || undefined,
           mailTargets:  mailTargetsArr,
+          mentionAll:   mentionAll || undefined,
         }),
       });
       const data = await res.json() as SendSummary;
@@ -1264,6 +1271,7 @@ export function OutboundPage() {
           mailTargets: [],
           // テスト時の企業名上書き: test1/test2 → 選択中の企業名
           _testCompanyNameOverride: previewCompanyName,
+          mentionAll:  mentionAll || undefined,
         };
       }
       const res  = await fetch('/api/outbound/send', {
@@ -1490,6 +1498,30 @@ export function OutboundPage() {
                       </span>
                     )}
                   </div>
+                  {/* 全員メンション */}
+                  {(selectedChannels.has('slack') || selectedChannels.has('chatwork')) && (
+                    <div className="flex items-center gap-2 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => setMentionAll(v => !v)}
+                        className={[
+                          'flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded border transition-colors',
+                          mentionAll
+                            ? 'border-slate-900 bg-slate-900 text-white'
+                            : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:bg-slate-50',
+                        ].join(' ')}
+                      >
+                        <span className="font-mono text-[10px]">@</span>
+                        全員にメンション
+                      </button>
+                      {mentionAll && (
+                        <span className="text-[10px] text-slate-400">
+                          {selectedChannels.has('slack') && <span className="mr-1">{'Slack: <!channel>'}</span>}
+                          {selectedChannels.has('chatwork') && <span>{'Chatwork: [toall]'}</span>}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {/* Mail 送信モード */}
                   {selectedChannels.has('mail') && (
                     <div className="flex items-center gap-2 mt-2">
@@ -1723,6 +1755,7 @@ export function OutboundPage() {
           subject={subject}
           testChannels={testChannels}
           showActualSend={previewForActualSend}
+          mentionAll={mentionAll}
           testMailTo={testMailTo}
           setTestMailTo={setTestMailTo}
           testMailCc={testMailCc}

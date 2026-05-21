@@ -35,6 +35,7 @@ import {
   addSubjectToSlack,
   addSubjectToChatwork,
   applyVariables,
+  applyMentionAll,
 } from '@/lib/outbound/format-converter';
 
 type OutboundChannel = 'slack' | 'chatwork' | 'mail';
@@ -65,9 +66,11 @@ export async function POST(req: Request) {
     mailTargets?:              { companyUid: string; to: { email: string; name?: string }[]; cc: string[] }[];
     /** テスト送信時: 企業名変数を置き換えるための上書き値 */
     _testCompanyNameOverride?: string;
+    /** Slack: <!channel> / Chatwork: [toall] を冒頭に付与する */
+    mentionAll?:               boolean;
   };
 
-  const { companyUids, channels, message, subject, mailTargets, _testCompanyNameOverride } = body;
+  const { companyUids, channels, message, subject, mailTargets, _testCompanyNameOverride, mentionAll } = body;
 
   if (!companyUids?.length || !channels?.length || !message) {
     return NextResponse.json({ error: 'companyUids, channels, message は必須です' }, { status: 400 });
@@ -129,13 +132,15 @@ export async function POST(req: Request) {
     const companyChannels = channelMap.get(uid) ?? [];
     const grouped         = groupChannelsByType(companyChannels);
 
-    // Slack / Chatwork: 企業名変数を適用
-    const slackMsg    = subject
+    // Slack / Chatwork: 企業名変数を適用 → mentionAll 付与
+    const slackBase    = subject
       ? addSubjectToSlack(applyVariables(subject, name), applyVariables(slackBodyBase, name))
       : applyVariables(slackBodyBase, name);
-    const chatworkMsg = subject
+    const chatworkBase = subject
       ? addSubjectToChatwork(applyVariables(subject, name), applyVariables(chatworkBodyBase, name))
       : applyVariables(chatworkBodyBase, name);
+    const slackMsg    = mentionAll ? applyMentionAll(slackBase,    'slack')    : slackBase;
+    const chatworkMsg = mentionAll ? applyMentionAll(chatworkBase, 'chatwork') : chatworkBase;
 
     const channelResults = await Promise.all(
       targetChannels.map(async (ch): Promise<ChannelResult> => {

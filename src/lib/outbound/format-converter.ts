@@ -183,6 +183,16 @@ export function htmlToPlainText(html: string): string {
 }
 
 /**
+ * 全員メンションをメッセージ冒頭に付与する。
+ * Slack:    <!channel> → @channel として通知
+ * Chatwork: [toall]   → [info] の外側に配置する必要があるため冒頭に付与
+ */
+export function applyMentionAll(text: string, channel: 'slack' | 'chatwork'): string {
+  if (channel === 'slack') return `<!channel>\n${text}`;
+  return `[toall]\n${text}`;
+}
+
+/**
  * メッセージ内の変数を実際の値に置換する。
  * {{company_name}} → 企業名
  * {{name}}         → 受信者名（省略時は空文字）
