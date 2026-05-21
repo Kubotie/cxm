@@ -109,7 +109,12 @@ export async function fetchAllCompanies(limit = 50, ownerName?: string): Promise
     sort: '-open_alert_count,-last_contact',
     limit: String(limit),
   });
-  const data = raw.map(toAppCompany);
+  const seen = new Set<string>();
+  const data = raw.map(toAppCompany).filter(c => {
+    if (!c.id || seen.has(c.id)) return false;
+    seen.add(c.id);
+    return true;
+  });
   _allCompaniesCache.set(cacheKey, { data, ts: Date.now() });
   return data;
 }
@@ -152,9 +157,14 @@ export async function fetchCompaniesByUids(uids: string[]): Promise<AppCompany[]
   const rows = await nocoFetch<RawCompany>(TABLE_IDS.companies, {
     where,
     fields: 'company_uid,canonical_name,status,owner_name',
-    limit:  String(uids.length + 10),
+    limit:  String(uids.length * 5 + 10),
   });
-  return rows.map(toAppCompany);
+  const seen = new Set<string>();
+  return rows.map(toAppCompany).filter(c => {
+    if (!c.id || seen.has(c.id)) return false;
+    seen.add(c.id);
+    return true;
+  });
 }
 
 /**
