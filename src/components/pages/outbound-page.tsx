@@ -76,6 +76,13 @@ interface MailTarget {
   to: { email: string; name: string }[];  // 宛先（複数可、最低1名）
 }
 
+// 社内確認用アドレス（TO に追加して送信内容を確認できる）
+const INTERNAL_ADDRESSES: { name: string; email: string }[] = [
+  { name: 'JP Market', email: 'jp.market@ptmind.com' },
+  { name: 'CS',        email: 'cs@ptmind.co.jp' },
+  { name: 'Billing',   email: 'billing@ptmind.co.jp' },
+];
+
 // ── チャンネルメタ ────────────────────────────────────────────────────────────
 
 const CHANNEL_META: Record<OutboundChannel, { label: string; icon: React.ReactNode; color: string }> = {
@@ -408,6 +415,36 @@ function ContactPickerDialog({
                               </label>
                             );
                           })}
+                          <div className="flex items-center gap-2 py-1">
+                            <div className="flex-1 h-px bg-slate-100" />
+                            <span className="text-[9px] text-slate-400 flex-shrink-0">社内確認用</span>
+                            <div className="flex-1 h-px bg-slate-100" />
+                          </div>
+                          {INTERNAL_ADDRESSES.map(addr => {
+                            const checked = target.to.some(t => t.email === addr.email);
+                            return (
+                              <label
+                                key={addr.email}
+                                className={[
+                                  'flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
+                                  checked
+                                    ? 'border-slate-800 bg-slate-900 text-white'
+                                    : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50',
+                                ].join(' ')}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleTo(company.id, addr.email, addr.name)}
+                                  className="accent-white w-3.5 h-3.5 flex-shrink-0"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-xs font-medium truncate ${checked ? 'text-white' : 'text-slate-800'}`}>{addr.name}</p>
+                                  <p className={`text-[10px] truncate ${checked ? 'text-slate-300' : 'text-slate-500'}`}>{addr.email}</p>
+                                </div>
+                              </label>
+                            );
+                          })}
                         </div>
                       ) : (
                         // ── 1社1通モード: To / CC 選択 ────────────────────────
@@ -444,6 +481,36 @@ function ContactPickerDialog({
                                         {contact.email}
                                         {contact.role && <span className="ml-1.5">· {contact.role}</span>}
                                       </p>
+                                    </div>
+                                  </label>
+                                );
+                              })}
+                              <div className="flex items-center gap-2 py-1">
+                                <div className="flex-1 h-px bg-slate-100" />
+                                <span className="text-[9px] text-slate-400 flex-shrink-0">社内確認用</span>
+                                <div className="flex-1 h-px bg-slate-100" />
+                              </div>
+                              {INTERNAL_ADDRESSES.map(addr => {
+                                const checked = target.to.some(t => t.email === addr.email);
+                                return (
+                                  <label
+                                    key={addr.email}
+                                    className={[
+                                      'flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
+                                      checked
+                                        ? 'border-slate-800 bg-slate-900 text-white'
+                                        : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50',
+                                    ].join(' ')}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleTo(company.id, addr.email, addr.name)}
+                                      className="accent-white w-3.5 h-3.5 flex-shrink-0"
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                      <p className={`text-xs font-medium truncate ${checked ? 'text-white' : 'text-slate-800'}`}>{addr.name}</p>
+                                      <p className={`text-[10px] truncate ${checked ? 'text-slate-300' : 'text-slate-500'}`}>{addr.email}</p>
                                     </div>
                                   </label>
                                 );
