@@ -74,15 +74,7 @@ interface PreviewEntry {
 
 interface MailTarget {
   to: { email: string; name: string }[];  // 宛先（複数可、最低1名）
-  cc: string[];                           // CC（複数可、任意）
 }
-
-// 社内アドレス（CC 候補として常に表示）
-const INTERNAL_CC: { name: string; email: string }[] = [
-  { name: 'JP Market', email: 'jp.market@ptmind.com' },
-  { name: 'CS',        email: 'cs@ptmind.co.jp' },
-  { name: 'Billing',   email: 'billing@ptmind.co.jp' },
-];
 
 // ── チャンネルメタ ────────────────────────────────────────────────────────────
 
@@ -284,19 +276,11 @@ function ContactPickerDialog({
   }
 
   function toggleTo(uid: string, email: string, name: string) {
-    const cur = mailTargets.get(uid) ?? { to: [], cc: [] };
+    const cur = mailTargets.get(uid) ?? { to: [] };
     const newTo = cur.to.some(t => t.email === email)
       ? cur.to.filter(t => t.email !== email)
       : [...cur.to, { email, name }];
     onChangeTargets(uid, { ...cur, to: newTo });
-  }
-
-  function toggleCc(uid: string, email: string) {
-    const cur = mailTargets.get(uid) ?? { to: [], cc: [] };
-    const newCc = cur.cc.includes(email)
-      ? cur.cc.filter(e => e !== email)
-      : [...cur.cc, email];
-    onChangeTargets(uid, { ...cur, cc: newCc });
   }
 
   const mailOnCompanies = companies.filter(c =>
@@ -309,7 +293,7 @@ function ContactPickerDialog({
 
   const subtitle = sendMode === 'per_person'
     ? '各コンタクトに個別でメールが届きます（{{name}} が名前に置換されます）'
-    : 'To（必須・複数可）と CC（任意・複数可）を設定してください';
+    : '宛先（TO）を選択してください（複数選択可）';
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -467,68 +451,6 @@ function ContactPickerDialog({
                             </div>
                           </div>
 
-                          {/* CC セクション */}
-                          <div>
-                            <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1.5">CC</p>
-                            <div className="space-y-1">
-                              {contacts.map(contact => {
-                                const checked = target.cc.includes(contact.email);
-                                return (
-                                  <label
-                                    key={contact.email}
-                                    className={[
-                                      'flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
-                                      checked ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50',
-                                    ].join(' ')}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() => toggleCc(company.id, contact.email)}
-                                      className="accent-blue-600 w-3.5 h-3.5 flex-shrink-0"
-                                    />
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-xs font-medium text-slate-800 truncate">{contact.name}</p>
-                                      <p className="text-[10px] text-slate-500 truncate">
-                                        {contact.email}
-                                        {contact.role && <span className="ml-1.5 text-slate-400">· {contact.role}</span>}
-                                      </p>
-                                    </div>
-                                  </label>
-                                );
-                              })}
-
-                              <div className="flex items-center gap-2 py-1">
-                                <div className="flex-1 h-px bg-slate-100" />
-                                <span className="text-[9px] text-slate-400 flex-shrink-0">社内アドレス</span>
-                                <div className="flex-1 h-px bg-slate-100" />
-                              </div>
-
-                              {INTERNAL_CC.map(internal => {
-                                const checked = target.cc.includes(internal.email);
-                                return (
-                                  <label
-                                    key={internal.email}
-                                    className={[
-                                      'flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors',
-                                      checked ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50',
-                                    ].join(' ')}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={checked}
-                                      onChange={() => toggleCc(company.id, internal.email)}
-                                      className="accent-blue-600 w-3.5 h-3.5 flex-shrink-0"
-                                    />
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-xs font-medium text-slate-800 truncate">{internal.name}</p>
-                                      <p className="text-[10px] text-slate-500 truncate">{internal.email}</p>
-                                    </div>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </div>
                         </>
                       )}
                     </div>
@@ -578,8 +500,6 @@ function PreviewAndTestDialog({
   showActualSend,
   testMailTo,
   setTestMailTo,
-  testMailCc,
-  setTestMailCc,
   onTestSend,
   onActualSend,
   onClose,
@@ -594,8 +514,6 @@ function PreviewAndTestDialog({
   showActualSend:   boolean;
   testMailTo:          string;
   setTestMailTo:       (v: string) => void;
-  testMailCc:          string;
-  setTestMailCc:       (v: string) => void;
   onTestSend:       (ch: OutboundChannel) => void;
   onActualSend:     () => void;
   onClose:          () => void;
@@ -761,16 +679,6 @@ function PreviewAndTestDialog({
                     value={testMailTo}
                     onChange={e => setTestMailTo(e.target.value)}
                     placeholder="宛先メールアドレス（複数の場合はカンマ区切り）"
-                    className="text-sm h-9 flex-1"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs w-6 flex-shrink-0 font-medium text-slate-500">CC</span>
-                  <Input
-                    type="text"
-                    value={testMailCc}
-                    onChange={e => setTestMailCc(e.target.value)}
-                    placeholder="CCメールアドレス（複数の場合はカンマ区切り・省略可）"
                     className="text-sm h-9 flex-1"
                   />
                 </div>
@@ -1065,7 +973,6 @@ export function OutboundPage() {
   const [savedMailTargets, setSavedMailTargets] = useState<Map<string, MailTarget>>(new Map());
   const [testChannels,     setTestChannels]     = useState<OutboundChannelsResponse>({});
   const [testMailTo,       setTestMailTo]       = useState('');
-  const [testMailCc,       setTestMailCc]       = useState('');
   const [mentionAll,       setMentionAll]       = useState(false);
   const [testSending,      setTestSending]      = useState(false);
   const [testResult,       setTestResult]       = useState<string | null>(null);
@@ -1271,7 +1178,7 @@ export function OutboundPage() {
         : [...targets.entries()].map(([companyUid, t]) => ({
             companyUid,
             to: t.to,
-            cc: t.cc,
+            cc: [],
           }));
 
       const res = await fetch('/api/outbound/send', {
@@ -1317,7 +1224,6 @@ export function OutboundPage() {
         if (contacts && contacts.length > 0) {
           initTargets.set(uid, {
             to: [{ email: contacts[0].email, name: contacts[0].name }],
-            cc: [],
           });
         }
       }
@@ -1379,13 +1285,12 @@ export function OutboundPage() {
           setTestResult('❌ 宛先（To）を入力してください');
           return;
         }
-        const ccEmails = testMailCc.split(',').map(s => s.trim()).filter(Boolean);
         body = {
           companyUids:             ['__test__'],
           channels:                ['mail'],
           message,
           subject:                 subject.trim() || undefined,
-          mailTargets:             [{ companyUid: '__test__', to: toEmails.map(email => ({ email, name: '担当者' })), cc: ccEmails }],
+          mailTargets:             [{ companyUid: '__test__', to: toEmails.map(email => ({ email, name: '担当者' })), cc: [] }],
           _testCompanyNameOverride: previewCompanyName,
         };
       } else {
@@ -1448,7 +1353,7 @@ export function OutboundPage() {
   }
 
   async function handleSaveAudience(name: string) {
-    const mailTargetsRecord: Record<string, { to: { email: string; name: string }[]; cc: string[] }> = {};
+    const mailTargetsRecord: Record<string, { to: { email: string; name: string }[] }> = {};
     for (const [uid, t] of mailTargets.entries()) {
       mailTargetsRecord[uid] = t;
     }
@@ -1483,7 +1388,7 @@ export function OutboundPage() {
       setPerCompanyChannels(map);
     } catch { /* ignore */ }
     try {
-      const mt = JSON.parse(a.mail_targets) as Record<string, { to: { email: string; name: string }[]; cc: string[] }>;
+      const mt = JSON.parse(a.mail_targets) as Record<string, { to: { email: string; name: string }[] }>;
       const map = new Map<string, MailTarget>();
       for (const [uid, t] of Object.entries(mt)) {
         map.set(uid, t);
@@ -1727,7 +1632,7 @@ export function OutboundPage() {
                         </button>
                       ))}
                       <span className="text-[10px] text-slate-400">
-                        {sendMode === 'per_person' ? '各コンタクトに個別送信' : 'To/CC 設定で1社に1通'}
+                        {sendMode === 'per_person' ? '各コンタクトに個別送信' : '宛先選択で1社に1通'}
                       </span>
                     </div>
                   )}
@@ -1952,8 +1857,6 @@ export function OutboundPage() {
           mentionAll={mentionAll}
           testMailTo={testMailTo}
           setTestMailTo={setTestMailTo}
-          testMailCc={testMailCc}
-          setTestMailCc={setTestMailCc}
           onTestSend={handleTestSend}
           onActualSend={handleActualSendFromPreview}
           onClose={() => { setShowPreview(false); setTestResult(null); }}
