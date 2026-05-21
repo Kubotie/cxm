@@ -130,13 +130,10 @@
 
   html {
     font-size: var(--font-size);
-    height: 100%;
   }
 
   body {
     @apply bg-background text-foreground;
-    height: 100%;
-    overflow: hidden;
   }
 
   h1 {

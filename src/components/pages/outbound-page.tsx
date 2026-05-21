@@ -1502,7 +1502,7 @@ export function OutboundPage() {
   // ── レンダリング ──────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50">
+    <div className="fixed inset-0 flex bg-slate-50">
       <SidebarNav />
       <div className="flex flex-col flex-1 overflow-hidden min-h-0">
         <GlobalHeader />
