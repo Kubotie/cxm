@@ -116,11 +116,10 @@ export async function nocoDeleteWhere(
 ): Promise<void> {
   if (!API_TOKEN) throw new Error('NOCODB_API_TOKEN が未設定です');
 
-  const searchUrl = new URL(`${BASE_URL}/api/v2/tables/${tableId}/records`);
-  searchUrl.searchParams.set('where', where);
-  searchUrl.searchParams.set('limit', '1');
+  // URLSearchParams はフィルタ構文 ( ) , を percent-encode するため raw で構築する
+  const urlString = `${BASE_URL}/api/v2/tables/${tableId}/records?where=${where}&limit=1`;
 
-  const searchRes = await fetch(searchUrl.toString(), {
+  const searchRes = await fetch(urlString, {
     headers: { 'xc-token': API_TOKEN },
     cache: 'no-store',
   });
@@ -144,11 +143,10 @@ export async function nocoUpdateWhere<T>(
 ): Promise<T> {
   if (!API_TOKEN) throw new Error('NOCODB_API_TOKEN が未設定です');
 
-  const searchUrl = new URL(`${BASE_URL}/api/v2/tables/${tableId}/records`);
-  searchUrl.searchParams.set('where', where);
-  searchUrl.searchParams.set('limit', '1');
+  // URLSearchParams はフィルタ構文 ( ) , を percent-encode するため raw で構築する
+  const urlString = `${BASE_URL}/api/v2/tables/${tableId}/records?where=${where}&limit=1`;
 
-  const searchRes = await fetch(searchUrl.toString(), {
+  const searchRes = await fetch(urlString, {
     headers: { 'xc-token': API_TOKEN },
     cache: 'no-store',
   });

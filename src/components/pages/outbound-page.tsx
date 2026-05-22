@@ -804,7 +804,7 @@ function CampaignList({
 }) {
   const [campaigns,   setCampaigns]   = useState<OutboundCampaign[]>([]);
   const [loading,     setLoading]     = useState(true);
-  const [deletingId,  setDeletingId]  = useState<string | number | null>(null);
+  const [deletingId,  setDeletingId]  = useState<number | null>(null);
   const [teamMembers, setTeamMembers] = useState<string[]>([]);
 
   // スコープを localStorage から読み取る
@@ -876,8 +876,9 @@ function CampaignList({
 
   async function handleDelete(c: OutboundCampaign) {
     if (!window.confirm(`「${c.title}」を削除しますか？`)) return;
-    setDeletingId(c.campaign_id ?? c.Id ?? null);
+    setDeletingId(c.Id);
     try {
+      // campaign_id が設定済みなら UUID で、なければ row Id（数値）でルーティング
       const key = c.campaign_id || c.Id;
       await fetch(`/api/outbound/campaigns/${key}`, { method: 'DELETE' });
       void load();
@@ -957,7 +958,7 @@ function CampaignList({
 
               return (
                 <div
-                  key={c.campaign_id ?? c.Id ?? idx}
+                  key={c.Id ?? c.campaign_id ?? idx}
                   className="bg-white border border-slate-200 rounded-xl px-5 py-4 flex items-center gap-4 hover:border-slate-300 transition-colors group"
                 >
                   {/* ステータスアイコン */}
@@ -1034,10 +1035,10 @@ function CampaignList({
                     <button
                       onClick={() => handleDelete(c)}
                       title="削除"
-                      disabled={deletingId === (c.campaign_id ?? c.Id)}
+                      disabled={deletingId === c.Id}
                       className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors"
                     >
-                      {deletingId === (c.campaign_id ?? c.Id)
+                      {deletingId === c.Id
                         ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         : <Trash2 className="w-3.5 h-3.5" />}
                     </button>

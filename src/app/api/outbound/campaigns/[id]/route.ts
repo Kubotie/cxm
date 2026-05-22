@@ -1,11 +1,13 @@
-// PATCH  /api/outbound/campaigns/[id] — 更新 ([id] = campaign_id UUID)
-// DELETE /api/outbound/campaigns/[id] — 削除 ([id] = campaign_id UUID)
+// PATCH  /api/outbound/campaigns/[id] — 更新 ([id] = campaign_id UUID or row Id)
+// DELETE /api/outbound/campaigns/[id] — 削除 ([id] = campaign_id UUID or row Id)
 
-import { NextResponse }                       from 'next/server';
-import { getCurrentUserProfile }              from '@/lib/auth/session';
-import { TABLE_IDS }                          from '@/lib/nocodb/client';
-import { nocoDeleteWhere, nocoUpdateWhere }   from '@/lib/nocodb/write';
-import type { OutboundCampaign }              from '../route';
+import { NextResponse }                                      from 'next/server';
+import { getCurrentUserProfile }                             from '@/lib/auth/session';
+import { TABLE_IDS }                                         from '@/lib/nocodb/client';
+import { nocoDelete, nocoDeleteWhere, nocoUpdate, nocoUpdateWhere } from '@/lib/nocodb/write';
+import type { OutboundCampaign }                             from '../route';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function PATCH(
   req: Request,
@@ -31,11 +33,15 @@ export async function PATCH(
   if (body.sent_at      !== undefined) patch.sent_at      = body.sent_at;
   if (body.send_count   !== undefined) patch.send_count   = body.send_count;
 
-  const result = await nocoUpdateWhere<OutboundCampaign>(
-    tableId,
-    `(campaign_id,eq,${id})`,
-    patch,
-  );
+  // UUID なら campaign_id フィールドで検索、数値なら row Id 直接指定
+  let result: OutboundCampaign;
+  if (UUID_RE.test(id)) {
+    result = await nocoUpdateWhere<OutboundCampaign>(tableId, `(campaign_id,eq,${id})`, patch);
+  } else {
+    const rowId = parseInt(id, 10);
+    if (isNaN(rowId)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
+    result = await nocoUpdate<OutboundCampaign>(tableId, rowId, patch);
+  }
   return NextResponse.json(result);
 }
 
@@ -52,6 +58,12 @@ export async function DELETE(
   const tableId = TABLE_IDS.outbound_campaigns;
   if (!tableId) return NextResponse.json({ error: 'Table not configured' }, { status: 500 });
 
-  await nocoDeleteWhere(tableId, `(campaign_id,eq,${id})`);
+  // UUID なら campaign_id フィールドで検索、数値なら row Id 直接指定
+  if (UUID_RE.test(id)) {
+    await nocoDeleteWhere(tableId, `(campaign_id,eq,${id})`);
+  } else {
+    const rowId = parseInt(id, 10);
+    if (!isNaN(rowId)) await nocoDelete(tableId, rowId);
+  }
   return NextResponse.json({ ok: true });
 }
