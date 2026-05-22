@@ -160,6 +160,8 @@ export function GlobalHeader({ currentView }: GlobalHeaderProps) {
       prefsKey,
       JSON.stringify({ ...prefs, default_home_scope: scope })
     );
+    // storage イベントは他タブにしか届かないため、同一タブ内のリスナーに手動で通知する
+    window.dispatchEvent(new Event("storage"));
 
     setUser((prev) => (prev ? { ...prev, default_home_scope: scope } : null));
     if (window.location.pathname === "/") window.location.reload();
