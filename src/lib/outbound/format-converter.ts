@@ -126,6 +126,8 @@ export function htmlToSlack(html: string): string {
   // 残りタグ除去（Slack リンクプレースホルダーは除く）
   t = t.replace(/<[^>]+>/g, '');
   t = decodeHtmlEntities(t);
+  // **bold** → *bold*（Markdown 二重 * は Slack で無効。単一 * に統一）
+  t = t.replace(/\*\*([^*\n]+)\*\*/g, '*$1*');
   // Slack リンクプレースホルダーを復元
   t = t.replace(/\x00SLACKLINK\[([^\]]*)\]\x00/g, '<$1>');
   return t.replace(/\n{3,}/g, '\n\n').trim();
@@ -158,6 +160,9 @@ export function htmlToChatwork(html: string): string {
   t = t.replace(/<hr[^>]*\/?>/gi, '------\n');
   t = t.replace(/<[^>]+>/g, '');
   t = decodeHtmlEntities(t);
+  // **bold** / *bold* → プレーンテキスト（Chatwork は Slack 記法を解釈しない）
+  t = t.replace(/\*\*([^*\n]+)\*\*/g, '$1');
+  t = t.replace(/\*([^*\n]+)\*/g, '$1');
   return t.replace(/\n{3,}/g, '\n\n').trim();
 }
 
@@ -185,6 +190,9 @@ export function htmlToPlainText(html: string): string {
   t = t.replace(/<hr[^>]*\/?>/gi, '---\n');
   t = t.replace(/<[^>]+>/g, '');
   t = decodeHtmlEntities(t);
+  // **bold** / *bold* → プレーンテキスト
+  t = t.replace(/\*\*([^*\n]+)\*\*/g, '$1');
+  t = t.replace(/\*([^*\n]+)\*/g, '$1');
   return t.replace(/\n{3,}/g, '\n\n').trim();
 }
 
@@ -196,6 +204,20 @@ export function htmlToPlainText(html: string): string {
 export function applyMentionAll(text: string, channel: 'slack' | 'chatwork'): string {
   if (channel === 'slack') return `<!channel>\n${text}`;
   return `[toall]\n${text}`;
+}
+
+/**
+ * {{name}} を含む行を除去する（Slack / Chatwork 用）。
+ * Slack/Chatwork はチャンネル宛のため個人名変数を使用しない。
+ * 例: "{{name}}様\n" の行ごと削除。
+ */
+export function stripNameLines(text: string): string {
+  return text
+    .split('\n')
+    .filter(line => !line.includes('{{name}}'))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /**

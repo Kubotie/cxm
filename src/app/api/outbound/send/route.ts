@@ -36,6 +36,7 @@ import {
   addSubjectToChatwork,
   applyVariables,
   applyMentionAll,
+  stripNameLines,
 } from '@/lib/outbound/format-converter';
 
 type OutboundChannel = 'slack' | 'chatwork' | 'mail';
@@ -86,8 +87,9 @@ export async function POST(req: Request) {
   }
 
   // HTML → 各チャンネル形式に変換（変数適用前のベース）
-  const slackBodyBase    = htmlToSlack(message);
-  const chatworkBodyBase = htmlToChatwork(message);
+  // Slack/Chatwork はチャンネル宛送信のため {{name}} 行を除去する
+  const slackBodyBase    = stripNameLines(htmlToSlack(message));
+  const chatworkBodyBase = stripNameLines(htmlToChatwork(message));
   const plainBase        = htmlToPlainText(message);
   const mailSubjectBase  = subject ?? '';
   const intercomAdminId  = profile.intercom_admin_id ?? null;
