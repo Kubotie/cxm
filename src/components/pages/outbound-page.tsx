@@ -889,8 +889,9 @@ function CampaignList({
   const mine = currentUser?.name2;
 
   const visible = useMemo(() => {
-    if (scope === 'mine') return campaigns.filter(c => c.created_by === mine);
-    if (scope === 'team') return campaigns.filter(c => teamMembers.includes(c.created_by ?? ''));
+    // created_by 未設定（旧データ）は全スコープで表示する
+    if (scope === 'mine') return campaigns.filter(c => !c.created_by || c.created_by === mine);
+    if (scope === 'team') return campaigns.filter(c => !c.created_by || teamMembers.includes(c.created_by));
     return campaigns; // 'all'
   }, [campaigns, scope, mine, teamMembers]);
 
