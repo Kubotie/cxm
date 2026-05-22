@@ -802,9 +802,49 @@ function CampaignList({
   onEdit:       (campaign: OutboundCampaign) => void;
   currentUser:  AppUserProfile | null;
 }) {
-  const [campaigns,  setCampaigns]  = useState<OutboundCampaign[]>([]);
-  const [loading,    setLoading]    = useState(true);
-  const [deletingId, setDeletingId] = useState<string | number | null>(null);
+  const [campaigns,   setCampaigns]   = useState<OutboundCampaign[]>([]);
+  const [loading,     setLoading]     = useState(true);
+  const [deletingId,  setDeletingId]  = useState<string | number | null>(null);
+  const [teamMembers, setTeamMembers] = useState<string[]>([]);
+
+  // スコープを localStorage から読み取る
+  const getScope = useCallback((): 'mine' | 'team' | 'all' => {
+    if (!currentUser?.name2) return currentUser?.default_home_scope ?? 'all';
+    try {
+      const prefs = JSON.parse(localStorage.getItem(`cxm_prefs_${currentUser.name2}`) ?? '{}') as { default_home_scope?: string };
+      const s = prefs.default_home_scope;
+      if (s === 'mine' || s === 'team' || s === 'all') return s;
+    } catch { /* ignore */ }
+    return currentUser?.default_home_scope ?? 'all';
+  }, [currentUser]);
+
+  const [scope, setScope] = useState<'mine' | 'team' | 'all'>('all');
+
+  // currentUser が確定してからスコープを初期化
+  useEffect(() => {
+    if (currentUser) setScope(getScope());
+  }, [currentUser, getScope]);
+
+  // グローバルヘッダーのスコープ変更を検知
+  useEffect(() => {
+    const handler = () => { if (currentUser) setScope(getScope()); };
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }, [currentUser, getScope]);
+
+  // scope='team' のときチームメンバー一覧を取得
+  useEffect(() => {
+    if (scope !== 'team' || !currentUser?.team) { setTeamMembers([]); return; }
+    fetch('/api/users')
+      .then(r => r.json())
+      .then((profiles: AppUserProfile[]) => {
+        const members = profiles
+          .filter(p => p.team === currentUser.team && p.name2)
+          .map(p => p.name2);
+        setTeamMembers(members);
+      })
+      .catch(() => setTeamMembers([]));
+  }, [scope, currentUser?.team]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -846,11 +886,13 @@ function CampaignList({
     }
   }
 
-  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'ops';
-  const mine    = currentUser?.name2;
+  const mine = currentUser?.name2;
 
-  // admin は全件、csm は自分が作成したもののみ
-  const visible = isAdmin ? campaigns : campaigns.filter(c => c.created_by === mine);
+  const visible = useMemo(() => {
+    if (scope === 'mine') return campaigns.filter(c => c.created_by === mine);
+    if (scope === 'team') return campaigns.filter(c => teamMembers.includes(c.created_by ?? ''));
+    return campaigns; // 'all'
+  }, [campaigns, scope, mine, teamMembers]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
