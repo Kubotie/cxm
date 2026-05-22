@@ -889,11 +889,17 @@ function CampaignList({
   const mine = currentUser?.name2;
 
   const visible = useMemo(() => {
-    // created_by 未設定（旧データ）は全スコープで表示する
+    const isAdminUser = currentUser?.role === 'admin' || currentUser?.role === 'ops';
+    // admin/ops は全件、未設定 mine は全件
+    if (isAdminUser || !mine || scope === 'all') return campaigns;
+    // created_by 未設定（旧データ）は全スコープで表示
     if (scope === 'mine') return campaigns.filter(c => !c.created_by || c.created_by === mine);
-    if (scope === 'team') return campaigns.filter(c => !c.created_by || teamMembers.includes(c.created_by));
-    return campaigns; // 'all'
-  }, [campaigns, scope, mine, teamMembers]);
+    if (scope === 'team') {
+      if (teamMembers.length === 0) return campaigns; // チーム未設定時は全件
+      return campaigns.filter(c => !c.created_by || teamMembers.includes(c.created_by));
+    }
+    return campaigns;
+  }, [campaigns, scope, mine, teamMembers, currentUser]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
