@@ -317,14 +317,14 @@ function ContactPickerDialog({
                 className="text-xs border border-slate-200 rounded-md px-2 py-1.5 text-slate-600 bg-white hover:border-slate-300 transition-colors max-w-[180px]"
                 defaultValue=""
                 onChange={e => {
-                  const found = savedAudiences.find(a => String(a.Id) === e.target.value);
+                  const found = savedAudiences.find(a => a.audience_id === e.target.value);
                   if (found) onLoadAudience(found);
                   e.target.value = '';
                 }}
               >
                 <option value="" disabled>保存済みを読み込む</option>
                 {savedAudiences.map(a => (
-                  <option key={a.Id} value={String(a.Id)}>{a.name}</option>
+                  <option key={a.audience_id} value={a.audience_id}>{a.name}</option>
                 ))}
               </select>
             )}
@@ -343,7 +343,7 @@ function ContactPickerDialog({
               const mailOn     = isMailOn(company.id);
               const contacts   = channelMap[company.id]?.mail?.contacts ?? [];
               const hasContacts = contacts.length > 0;
-              const target     = mailTargets.get(company.id) ?? { to: [], cc: [] };
+              const target     = mailTargets.get(company.id) ?? { to: [] };
               const allEntries = getAllEntries(company.id);
 
               return (
@@ -804,7 +804,7 @@ function CampaignList({
 }) {
   const [campaigns,  setCampaigns]  = useState<OutboundCampaign[]>([]);
   const [loading,    setLoading]    = useState(true);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<string | number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -836,9 +836,10 @@ function CampaignList({
 
   async function handleDelete(c: OutboundCampaign) {
     if (!window.confirm(`「${c.title}」を削除しますか？`)) return;
-    setDeletingId(c.Id);
+    setDeletingId(c.campaign_id ?? c.Id ?? null);
     try {
-      await fetch(`/api/outbound/campaigns/${c.Id}`, { method: 'DELETE' });
+      const key = c.campaign_id || c.Id;
+      await fetch(`/api/outbound/campaigns/${key}`, { method: 'DELETE' });
       void load();
     } finally {
       setDeletingId(null);
@@ -907,7 +908,7 @@ function CampaignList({
 
               return (
                 <div
-                  key={c.Id ?? idx}
+                  key={c.campaign_id ?? c.Id ?? idx}
                   className="bg-white border border-slate-200 rounded-xl px-5 py-4 flex items-center gap-4 hover:border-slate-300 transition-colors group"
                 >
                   {/* ステータスアイコン */}
@@ -984,10 +985,10 @@ function CampaignList({
                     <button
                       onClick={() => handleDelete(c)}
                       title="削除"
-                      disabled={deletingId === c.Id}
+                      disabled={deletingId === (c.campaign_id ?? c.Id)}
                       className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors"
                     >
-                      {deletingId === c.Id
+                      {deletingId === (c.campaign_id ?? c.Id)
                         ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         : <Trash2 className="w-3.5 h-3.5" />}
                     </button>
@@ -1096,7 +1097,8 @@ export function OutboundPage() {
       ...patch,
     };
     if (editingCampaign) {
-      await fetch(`/api/outbound/campaigns/${editingCampaign.Id}`, {
+      const key = editingCampaign.campaign_id || editingCampaign.Id;
+      await fetch(`/api/outbound/campaigns/${key}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(payload),

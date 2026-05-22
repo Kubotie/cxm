@@ -5,9 +5,11 @@ import { NextResponse }          from 'next/server';
 import { getCurrentUserProfile } from '@/lib/auth/session';
 import { nocoFetch, TABLE_IDS }  from '@/lib/nocodb/client';
 import { nocoCreate }            from '@/lib/nocodb/write';
+import { randomUUID }            from 'crypto';
 
 export interface OutboundCampaign {
   Id:           number;
+  campaign_id:  string;
   title:        string;
   status:       'draft' | 'sent';
   channels:     string;          // JSON: string[]
@@ -46,6 +48,7 @@ export async function POST(req: Request) {
   if (!tableId) return NextResponse.json({ error: 'Table not configured' }, { status: 500 });
 
   const record = await nocoCreate<OutboundCampaign>(tableId, {
+    campaign_id:  randomUUID(),
     title:        body.title        ?? '（無題）',
     status:       'draft',
     channels:     body.channels     ?? '["slack"]',

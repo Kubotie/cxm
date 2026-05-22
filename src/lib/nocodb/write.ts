@@ -106,6 +106,62 @@ export async function nocoDelete(
 }
 
 /**
+ * where 句に一致するレコードを 1 件探して削除する。
+ * 見つからない場合は何もしない（冪等）。
+ * Id フィールドがないテーブルでは Error をスローする。
+ */
+export async function nocoDeleteWhere(
+  tableId: string,
+  where: string,
+): Promise<void> {
+  if (!API_TOKEN) throw new Error('NOCODB_API_TOKEN が未設定です');
+
+  const searchUrl = new URL(`${BASE_URL}/api/v2/tables/${tableId}/records`);
+  searchUrl.searchParams.set('where', where);
+  searchUrl.searchParams.set('limit', '1');
+
+  const searchRes = await fetch(searchUrl.toString(), {
+    headers: { 'xc-token': API_TOKEN },
+    cache: 'no-store',
+  });
+  if (!searchRes.ok) return;
+
+  const { list } = await searchRes.json() as { list: { Id?: number }[] };
+  if (!list.length) return;
+  if (!list[0].Id) throw new Error(`NocoDB: テーブル [${tableId}] に Id フィールドがありません`);
+
+  await nocoDelete(tableId, list[0].Id);
+}
+
+/**
+ * where 句に一致するレコードを 1 件探して部分更新する。
+ * Id フィールドがないテーブルでは Error をスローする。
+ */
+export async function nocoUpdateWhere<T>(
+  tableId: string,
+  where: string,
+  patch: object,
+): Promise<T> {
+  if (!API_TOKEN) throw new Error('NOCODB_API_TOKEN が未設定です');
+
+  const searchUrl = new URL(`${BASE_URL}/api/v2/tables/${tableId}/records`);
+  searchUrl.searchParams.set('where', where);
+  searchUrl.searchParams.set('limit', '1');
+
+  const searchRes = await fetch(searchUrl.toString(), {
+    headers: { 'xc-token': API_TOKEN },
+    cache: 'no-store',
+  });
+  if (!searchRes.ok) throw new Error(`NocoDB lookup ${searchRes.status} [${tableId}]`);
+
+  const { list } = await searchRes.json() as { list: (T & { Id?: number })[] };
+  if (!list.length) throw new Error(`NocoDB: レコードが見つかりません [${tableId}] where=${where}`);
+  if (!list[0].Id) throw new Error(`NocoDB: テーブル [${tableId}] に Id フィールドがありません`);
+
+  return nocoUpdate<T>(tableId, list[0].Id, patch);
+}
+
+/**
  * lookup → なければ create、あれば update を行う。
  *
  * @param tableId      対象テーブル ID

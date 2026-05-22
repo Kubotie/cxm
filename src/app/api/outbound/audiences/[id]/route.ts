@@ -1,11 +1,11 @@
-// PATCH  /api/outbound/audiences/[id] — 更新
-// DELETE /api/outbound/audiences/[id] — 削除
+// PATCH  /api/outbound/audiences/[id] — 更新 ([id] = audience_id UUID)
+// DELETE /api/outbound/audiences/[id] — 削除 ([id] = audience_id UUID)
 
-import { NextResponse }           from 'next/server';
-import { getCurrentUserProfile }  from '@/lib/auth/session';
-import { TABLE_IDS }              from '@/lib/nocodb/client';
-import { nocoUpdate, nocoDelete } from '@/lib/nocodb/write';
-import type { OutboundAudience }  from '../route';
+import { NextResponse }                       from 'next/server';
+import { getCurrentUserProfile }              from '@/lib/auth/session';
+import { TABLE_IDS }                          from '@/lib/nocodb/client';
+import { nocoDeleteWhere, nocoUpdateWhere }   from '@/lib/nocodb/write';
+import type { OutboundAudience }              from '../route';
 
 export async function PATCH(
   req: Request,
@@ -15,8 +15,7 @@ export async function PATCH(
   if (!profile) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  const rowId = Number(id);
-  if (!rowId) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
+  if (!id) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
 
   const body = await req.json().catch(() => ({})) as Partial<OutboundAudience>;
   const tableId = TABLE_IDS.outbound_audiences;
@@ -28,7 +27,11 @@ export async function PATCH(
   if (body.per_company_channels !== undefined) patch.per_company_channels = body.per_company_channels;
   if (body.mail_targets         !== undefined) patch.mail_targets         = body.mail_targets;
 
-  const result = await nocoUpdate<OutboundAudience>(tableId, rowId, patch);
+  const result = await nocoUpdateWhere<OutboundAudience>(
+    tableId,
+    `(audience_id,eq,${id})`,
+    patch,
+  );
   return NextResponse.json(result);
 }
 
@@ -40,12 +43,11 @@ export async function DELETE(
   if (!profile) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { id } = await params;
-  const rowId = Number(id);
-  if (!rowId) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
+  if (!id) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
 
   const tableId = TABLE_IDS.outbound_audiences;
   if (!tableId) return NextResponse.json({ error: 'Table not configured' }, { status: 500 });
 
-  await nocoDelete(tableId, rowId);
+  await nocoDeleteWhere(tableId, `(audience_id,eq,${id})`);
   return NextResponse.json({ ok: true });
 }
