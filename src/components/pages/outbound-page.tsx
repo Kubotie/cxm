@@ -1022,6 +1022,7 @@ export function OutboundPage() {
   const [subject,          setSubject]          = useState('');
   const [message,          setMessage]          = useState('');
 
+  const [campaignTitle,    setCampaignTitle]    = useState('');
   const [sending,          setSending]          = useState(false);
   const [summary,          setSummary]          = useState<SendSummary | null>(null);
   const [currentUser,      setCurrentUser]      = useState<AppUserProfile | null>(null);
@@ -1061,6 +1062,7 @@ export function OutboundPage() {
 
   function openNew() {
     setEditingCampaign(null);
+    setCampaignTitle('');
     setSelectedUids(new Set());
     setSelectedChannels(new Set(['slack']));
     setSubject('');
@@ -1071,6 +1073,7 @@ export function OutboundPage() {
 
   function openEdit(campaign: OutboundCampaign) {
     setEditingCampaign(campaign);
+    setCampaignTitle(campaign.title ?? '');
     // キャンペーンからエディタ状態を復元
     try {
       const chList = JSON.parse(campaign.channels) as string[];
@@ -1089,7 +1092,7 @@ export function OutboundPage() {
   // キャンペーンを保存（下書き更新 or 新規作成）
   async function saveCampaign(patch: Partial<OutboundCampaign> = {}) {
     const payload = {
-      title:        patch.title ?? editingCampaign?.title ?? '（無題）',
+      title:        patch.title ?? (campaignTitle.trim() || '（無題）'),
       channels:     JSON.stringify([...selectedChannels]),
       subject:      subject.trim(),
       message,
@@ -1500,9 +1503,13 @@ export function OutboundPage() {
                 </button>
                 <div className="w-px h-4 bg-slate-200" />
                 <div>
-                  <h1 className="text-base font-semibold text-slate-900">
-                    {editingCampaign?.title || '新規キャンペーン'}
-                  </h1>
+                  <input
+                    type="text"
+                    value={campaignTitle}
+                    onChange={e => setCampaignTitle(e.target.value)}
+                    placeholder="キャンペーン名を入力..."
+                    className="text-base font-semibold text-slate-900 bg-transparent border-0 border-b border-transparent hover:border-slate-300 focus:border-slate-500 focus:outline-none w-64 pb-0.5 placeholder:text-slate-300 placeholder:font-normal"
+                  />
                   <p className="text-xs text-slate-500 mt-0.5">複数顧客への一斉送信</p>
                 </div>
               </div>
