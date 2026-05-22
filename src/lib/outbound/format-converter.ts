@@ -144,10 +144,11 @@ export function htmlToChatwork(html: string): string {
     (_, c) => '[code]' + decodeHtmlEntities(c.replace(/<[^>]+>/g, '')) + '[/code]');
   t = t.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '$1');
   t = t.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '$1');
-  // リンク: テキスト==URLなら URL のみ、異なれば テキスト\nURL（ベア URL で自動リンク）
+  // リンク: テキスト==URLならURLのみ、テキストリンクなら「テキスト( URL )」形式
+  // Chatwork はハイパーリンク記法非対応のため URL を括弧+スペースで後置する
   t = t.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_, url, rawText) => {
     const text = rawText.replace(/<[^>]+>/g, '').trim();
-    return text === url ? url : `${text}\n${url}`;
+    return text === url ? url : `${text}( ${url} )`;
   });
   t = t.replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, '$1\n');
   t = t.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi,
