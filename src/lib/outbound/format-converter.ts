@@ -106,8 +106,8 @@ export function htmlToSlack(html: string): string {
   // 太字・斜体
   t = t.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '*$1*');
   t = t.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '_$1_');
-  // リンク
-  t = t.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '<$1|$2>');
+  // リンク: <a href="url">text</a> → <url|text>（Slack mrkdwn形式）
+  t = t.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '\x00SLACKLINK[$1|$2]\x00');
   // 見出し
   t = t.replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, '*$1*\n');
   // 番号付きリスト
@@ -123,9 +123,11 @@ export function htmlToSlack(html: string): string {
   // 改行・水平線
   t = t.replace(/<br\s*\/?>/gi, '\n');
   t = t.replace(/<hr[^>]*\/?>/gi, '---\n');
-  // 残りタグ除去
+  // 残りタグ除去（Slack リンクプレースホルダーは除く）
   t = t.replace(/<[^>]+>/g, '');
   t = decodeHtmlEntities(t);
+  // Slack リンクプレースホルダーを復元
+  t = t.replace(/\x00SLACKLINK\[([^\]]*)\]\x00/g, '<$1>');
   return t.replace(/\n{3,}/g, '\n\n').trim();
 }
 
@@ -140,7 +142,11 @@ export function htmlToChatwork(html: string): string {
     (_, c) => '[code]' + decodeHtmlEntities(c.replace(/<[^>]+>/g, '')) + '[/code]');
   t = t.replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, '$1');
   t = t.replace(/<em[^>]*>([\s\S]*?)<\/em>/gi, '$1');
-  t = t.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '$2（$1）');
+  // リンク: テキスト==URLなら URL のみ、異なれば テキスト\nURL（ベア URL で自動リンク）
+  t = t.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_, url, rawText) => {
+    const text = rawText.replace(/<[^>]+>/g, '').trim();
+    return text === url ? url : `${text}\n${url}`;
+  });
   t = t.replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, '$1\n');
   t = t.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi,
     (_, inner) => processListItems(inner, i => `${i}. `));
