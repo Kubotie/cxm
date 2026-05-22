@@ -807,30 +807,36 @@ function CampaignList({
   const [deletingId,  setDeletingId]  = useState<number | null>(null);
   const [teamMembers, setTeamMembers] = useState<string[]>([]);
 
-  // スコープを localStorage から読み取る
-  const getScope = useCallback((): 'mine' | 'team' | 'all' => {
-    if (!currentUser?.name2) return currentUser?.default_home_scope ?? 'all';
+  // localStorage からスコープを読む（storage イベント経由のリアルタイム変更専用）
+  const getScopeFromStorage = useCallback((): 'mine' | 'team' | 'all' => {
+    if (!currentUser?.name2) return 'all';
     try {
       const prefs = JSON.parse(localStorage.getItem(`cxm_prefs_${currentUser.name2}`) ?? '{}') as { default_home_scope?: string };
       const s = prefs.default_home_scope;
       if (s === 'mine' || s === 'team' || s === 'all') return s;
     } catch { /* ignore */ }
-    return currentUser?.default_home_scope ?? 'all';
+    return 'all';
   }, [currentUser]);
 
   const [scope, setScope] = useState<'mine' | 'team' | 'all'>('all');
 
-  // currentUser が確定してからスコープを初期化
+  // currentUser 確定時は DB 値（default_home_scope）を優先して使用。
+  // localStorage はセッション内のリアルタイム変更のみに使用し、
+  // DB 値と食い違うステイル状態を防ぐ。
   useEffect(() => {
-    if (currentUser) setScope(getScope());
-  }, [currentUser, getScope]);
+    if (!currentUser) return;
+    const dbScope = currentUser.default_home_scope as 'mine' | 'team' | 'all' | undefined;
+    if (dbScope === 'mine' || dbScope === 'team' || dbScope === 'all') {
+      setScope(dbScope);
+    }
+  }, [currentUser]);
 
-  // グローバルヘッダーのスコープ変更を検知
+  // グローバルヘッダーのリアルタイムスコープ変更を検知（同一タブ含む）
   useEffect(() => {
-    const handler = () => { if (currentUser) setScope(getScope()); };
+    const handler = () => { if (currentUser) setScope(getScopeFromStorage()); };
     window.addEventListener('storage', handler);
     return () => window.removeEventListener('storage', handler);
-  }, [currentUser, getScope]);
+  }, [currentUser, getScopeFromStorage]);
 
   // scope='team' のときチームメンバー一覧を取得
   useEffect(() => {
