@@ -298,7 +298,9 @@ function ContactPickerDialog({
     ? (mailOnCompanies.length === 0 || mailOnCompanies.some(c => (mailTargets.get(c.id)?.to?.length ?? 0) > 0))
     : (mailOnCompanies.length === 0 || mailOnCompanies.every(c => (mailTargets.get(c.id)?.to?.length ?? 0) > 0));
 
-  const subtitle = sendMode === 'per_person'
+  const subtitle = !selectedChannels.has('mail')
+    ? '各企業の送信チャンネルを確認・選択してください'
+    : sendMode === 'per_person'
     ? '各コンタクトに個別でメールが届きます（{{name}} が名前に置換されます）'
     : '宛先（TO）を選択してください（複数選択可）';
 
@@ -1345,8 +1347,8 @@ export function OutboundPage() {
   async function handleSend() {
     if (isMessageEmpty || totalSendableChannels === 0) return;
 
+    // Mail チャンネルがある場合は第1候補をデフォルト To として初期化
     if (selectedChannels.has('mail')) {
-      // コンタクト選択ダイアログを開く（各企業の第1候補をデフォルト To 選択）
       const initTargets = new Map<string, MailTarget>();
       for (const uid of selectedUids) {
         const contacts = channelMap[uid]?.mail?.contacts;
@@ -1357,16 +1359,14 @@ export function OutboundPage() {
         }
       }
       setMailTargets(initTargets);
-      // オーディエンス一覧を非同期取得
-      fetch('/api/outbound/audiences')
-        .then(r => r.ok ? r.json() as Promise<OutboundAudience[]> : [])
-        .then(data => setSavedAudiences(Array.isArray(data) ? data : []))
-        .catch(() => {});
-      setShowContactPicker(true);
-      return;
     }
 
-    await doSend(new Map());
+    // 常に宛先確認ダイアログを経由する（Slack チャンネル選択も含む）
+    fetch('/api/outbound/audiences')
+      .then(r => r.ok ? r.json() as Promise<OutboundAudience[]> : [])
+      .then(data => setSavedAudiences(Array.isArray(data) ? data : []))
+      .catch(() => {});
+    setShowContactPicker(true);
   }
 
   // テストチャンネルを読み込む（company_uid=test1/test2）
@@ -1947,9 +1947,7 @@ export function OutboundPage() {
                     )}
                     {sending
                       ? '送信中...'
-                      : selectedChannels.has('mail')
-                      ? `宛先を選択してプレビュー（${canSendCount}社）`
-                      : `送信する（${canSendCount}社 / ${totalSendableChannels}件）`}
+                      : `宛先確認・プレビュー（${canSendCount}社）`}
                   </Button>
                 </div>
               </div>
