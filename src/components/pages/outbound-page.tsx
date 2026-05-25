@@ -1298,6 +1298,10 @@ export function OutboundPage() {
   // ── 実際の送信処理 ────────────────────────────────────────────────────────
 
   async function doSend(targets: Map<string, MailTarget>) {
+    // 送信時点の状態をスナップショット（送信後にエディター状態が変わっても正しく記録される）
+    const snapshotChannels  = JSON.stringify([...selectedChannels]);
+    const snapshotUids      = JSON.stringify([...selectedUids]);
+
     setSending(true);
     setSummary(null);
     try {
@@ -1327,13 +1331,17 @@ export function OutboundPage() {
       });
       const data = await res.json() as SendSummary;
       setSummary(data);
-      // 送信成功時にキャンペーンを「送信済」に更新
+      // 送信成功時にキャンペーンを「送信済」に更新（スナップショットで上書き防止）
       if (data.sentCount > 0) {
         await saveCampaign({
-          status:     'sent',
-          sent_at:    new Date().toISOString(),
-          send_count: data.sentCount,
+          status:       'sent',
+          sent_at:      new Date().toISOString(),
+          send_count:   data.sentCount,
+          channels:     snapshotChannels,
+          company_uids: snapshotUids,
         }).catch(() => {});
+        // 送信完了後はリセット → 次の送信が別レコードとして新規作成される
+        setEditingCampaign(null);
       }
     } catch { /* ignore */ } finally {
       setSending(false);
