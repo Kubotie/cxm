@@ -43,12 +43,24 @@ export const PTMIND_DECK_TEMPLATE: DeckTemplate = {
 ### レイアウト選択（必ずコンテンツに合わせて選ぶ）
 bullets（箇条書き）ばかりにしないこと。以下を積極的に使う：
 
+**基本レイアウト**
 - **three_column** — 「課題 / 解決策 / 期待効果」「3つの価値」「比較」などに。columns に3要素を設定
 - **kpi_grid** — 成果数値・KPIレビューに。kpis にラベル+数値（+変化量）を最大6件設定
 - **before_after** — 「導入前 vs 導入後」「課題 vs 改善後」に。before_*/after_*/arrow_keywords を設定
 - **timeline** — 導入プロセス・ロードマップ・施策フローに。phases で各フェーズ（期間+活動）を設定
 - **next_steps** — アクションプラン・提案の締めくくりに。steps に3段階（時期+タイトル+アクション）設定
 - **exec_summary** — 報告資料冒頭の全体まとめに。achievement/challenge/next_move を各1-3項目設定
+- **four_grid** — 「4つの課題・特徴・提供価値」に。cards（最大4件）に number/title/body/color を設定
+- **formula_flow** — 成果ドライバーを「A×B×C」形式で可視化。variables に変数を設定
+- **decomposition_grid** — 変数ごとの式と現状説明（最大6件）。cells に label/formula/body を設定
+
+**表・比較系レイアウト**
+- **risk_countermeasure** — リスク一覧。左列=リスクID/名称（紫）、中列=なぜ起きるか、右列=対策（緑）。risk_rows に { id, label, why, countermeasure } を設定
+- **track_comparison** — 2〜4列の属性比較表（各オプション/プランを横に並べる）。tracks に { label, color, rows:[{key,value}] } を設定。color は lime/forest/orange/black から選択
+- **phase_progression** — Phase1 → Phase2 の移行を大きい矢印で可視化。phase1/phase2 に { label, items } を設定、trigger に移行条件を記述
+- **mobility_table** — 「◯◯から△△へ」行形式の移行表。各行: from（左ボックス）→ 矢印 → to（右ボックス）+ 説明。mobility_rows に { from, to, description } を設定
+- **ng_ok_comparison** — 左に NG（薄赤地）、右に OK（濃緑地）の2カラム対比。底部の statement に結論1行を設定。ng_items/ok_items に各5項目以内で設定
+- **function_table** — 役割×レベルのマトリクス表。func_columns に列ヘッダー、func_rows に { role, cells } を設定。役割列は緑背景で自動着色
 
 ### 数値・データの扱い
 - KPI数字は大きく、単位は小さく（CVR 28%のような強調）

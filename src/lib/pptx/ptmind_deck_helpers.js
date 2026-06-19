@@ -1723,6 +1723,313 @@ function addDecompositionGrid(pres, opts) {
   return slide;
 }
 
+// ─── 新レイアウト群 ────────────────────────────────────────────────────────────
+
+/**
+ * リスク＆対策表（risk_countermeasure）
+ * 3列レイアウト: リスクID/名称（左）| なぜ起きるか（中）| 対策（右）
+ * @param {object} opts
+ *   - title / eyebrow
+ *   - rows: [{ id, label, why, countermeasure }]
+ */
+function addRiskCountermeasure(pres, opts) {
+  const slide = pres.addSlide({ masterName: 'PTMIND_MASTER' });
+  _addSlideTitle(slide, opts.eyebrow ? { eyebrow: opts.eyebrow, title: opts.title || '' } : (opts.title || 'リスクと対策'));
+
+  const rows = opts.rows || [];
+  const n = Math.max(rows.length, 1);
+
+  const C1X = 0.55, C1W = 2.5;
+  const C2X = 3.15, C2W = 4.3;
+  const C3X = 7.55, C3W = 5.1;
+  const HDR_Y = 1.12, HDR_H = 0.46;
+  const RISK_COLOR = TOKENS.fuchsia;
+
+  // ヘッダー行
+  slide.addShape(pres.ShapeType.rect, { x: C1X, y: HDR_Y, w: C1W, h: HDR_H, fill: { color: RISK_COLOR }, line: { color: RISK_COLOR } });
+  slide.addText('リスク', { x: C1X, y: HDR_Y, w: C1W, h: HDR_H, fontFace: FONT_JP, fontSize: 13, bold: true, color: TOKENS.white, align: 'center', valign: 'middle' });
+
+  slide.addShape(pres.ShapeType.rect, { x: C2X, y: HDR_Y, w: C2W, h: HDR_H, fill: { color: TOKENS.textMuted }, line: { color: TOKENS.textMuted } });
+  slide.addText('なぜ起きるか', { x: C2X, y: HDR_Y, w: C2W, h: HDR_H, fontFace: FONT_JP, fontSize: 13, bold: true, color: TOKENS.white, align: 'center', valign: 'middle' });
+
+  slide.addShape(pres.ShapeType.rect, { x: C3X, y: HDR_Y, w: C3W, h: HDR_H, fill: { color: TOKENS.forest }, line: { color: TOKENS.forest } });
+  slide.addText('対策', { x: C3X, y: HDR_Y, w: C3W, h: HDR_H, fontFace: FONT_JP, fontSize: 13, bold: true, color: TOKENS.lime, align: 'center', valign: 'middle' });
+
+  // データ行
+  const AVAIL_H = 5.95 - HDR_H;
+  const ROW_H = Math.min(1.35, (AVAIL_H - 0.06 * n) / n);
+  const ROW_START_Y = HDR_Y + HDR_H + 0.06;
+
+  rows.forEach(function(row, i) {
+    const y = ROW_START_Y + i * (ROW_H + 0.06);
+    const isEven = i % 2 === 0;
+    const rowBg = isEven ? TOKENS.bgSection : TOKENS.white;
+
+    slide.addShape(pres.ShapeType.rect, { x: C1X, y: y, w: C1W, h: ROW_H, fill: { color: isEven ? 'EEE8F5' : 'F8F4FC' }, line: { color: TOKENS.divider, width: 1 } });
+    if (row.id) {
+      slide.addText(row.id, { x: C1X + 0.12, y: y + 0.06, w: 0.65, h: 0.32, fontFace: FONT_EN, fontSize: 13, bold: true, color: RISK_COLOR });
+    }
+    slide.addText(row.label || '', {
+      x: C1X + 0.12, y: y + (row.id ? 0.38 : 0.1), w: C1W - 0.24, h: ROW_H - (row.id ? 0.48 : 0.2),
+      fontFace: FONT_JP, fontSize: 12, bold: true, color: TOKENS.black, wrap: true, valign: 'top',
+    });
+
+    slide.addShape(pres.ShapeType.rect, { x: C2X, y: y, w: C2W, h: ROW_H, fill: { color: rowBg }, line: { color: TOKENS.divider, width: 1 } });
+    slide.addText(row.why || '', { x: C2X + 0.15, y: y + 0.1, w: C2W - 0.3, h: ROW_H - 0.2, fontFace: FONT_JP, fontSize: 12, color: TOKENS.black, wrap: true, valign: 'middle' });
+
+    slide.addShape(pres.ShapeType.rect, { x: C3X, y: y, w: C3W, h: ROW_H, fill: { color: isEven ? 'E8F0EC' : TOKENS.white }, line: { color: TOKENS.divider, width: 1 } });
+    slide.addText(row.countermeasure || '', { x: C3X + 0.15, y: y + 0.1, w: C3W - 0.3, h: ROW_H - 0.2, fontFace: FONT_JP, fontSize: 12, color: TOKENS.black, wrap: true, valign: 'middle' });
+  });
+  return slide;
+}
+
+/**
+ * トラック比較表（track_comparison）
+ * N列（2〜4）の並列比較。各列にヘッダーと行アイテム。
+ * @param {object} opts
+ *   - title / eyebrow
+ *   - tracks: [{ label, color?, rows: [{ key?, value }] }]
+ */
+function addTrackComparison(pres, opts) {
+  const slide = pres.addSlide({ masterName: 'PTMIND_MASTER' });
+  _addSlideTitle(slide, opts.eyebrow ? { eyebrow: opts.eyebrow, title: opts.title || '' } : (opts.title || ''));
+
+  const tracks = opts.tracks || [];
+  const n = Math.max(tracks.length, 1);
+  const TOTAL_W = 12.2, START_X = 0.55, GAP = 0.12;
+  const colW = (TOTAL_W - GAP * (n - 1)) / n;
+  const HDR_Y = 1.12, HDR_H = 0.52;
+
+  const COLOR_MAP = {
+    lime:   { bg: TOKENS.lime,   txt: TOKENS.black  },
+    forest: { bg: TOKENS.forest, txt: TOKENS.white  },
+    orange: { bg: TOKENS.orange, txt: TOKENS.white  },
+    black:  { bg: TOKENS.black,  txt: TOKENS.white  },
+    red:    { bg: TOKENS.red,    txt: TOKENS.white  },
+    blue:   { bg: TOKENS.blue,   txt: TOKENS.white  },
+  };
+  const DEFAULT_ORDER = ['lime', 'forest', 'orange', 'black', 'red'];
+
+  const maxRows = tracks.reduce(function(m, t) { return Math.max(m, (t.rows || []).length); }, 0);
+  const AVAIL_H = 5.85 - HDR_H;
+  const rowH = Math.min(1.05, (AVAIL_H - 0.06 * maxRows) / Math.max(maxRows, 1));
+  const ROW_START_Y = HDR_Y + HDR_H + 0.08;
+
+  tracks.forEach(function(track, ti) {
+    const x = START_X + ti * (colW + GAP);
+    const ck = track.color || DEFAULT_ORDER[ti % DEFAULT_ORDER.length];
+    const c = COLOR_MAP[ck] || { bg: TOKENS.forest, txt: TOKENS.white };
+
+    slide.addShape(pres.ShapeType.rect, { x: x, y: HDR_Y, w: colW, h: HDR_H, fill: { color: c.bg }, line: { color: c.bg } });
+    slide.addText(track.label || '', { x: x + 0.1, y: HDR_Y, w: colW - 0.2, h: HDR_H, fontFace: FONT_JP, fontSize: 14, bold: true, color: c.txt, align: 'center', valign: 'middle' });
+
+    (track.rows || []).forEach(function(row, ri) {
+      const ry = ROW_START_Y + ri * (rowH + 0.06);
+      const isEven = ri % 2 === 0;
+      slide.addShape(pres.ShapeType.rect, { x: x, y: ry, w: colW, h: rowH, fill: { color: isEven ? TOKENS.bgSection : TOKENS.white }, line: { color: TOKENS.divider, width: 1 } });
+      if (row.key) {
+        slide.addText(row.key, { x: x + 0.12, y: ry + 0.05, w: colW - 0.24, h: 0.28, fontFace: FONT_JP, fontSize: 10, color: TOKENS.textMuted });
+        slide.addText(row.value || '', { x: x + 0.12, y: ry + 0.32, w: colW - 0.24, h: rowH - 0.42, fontFace: FONT_JP, fontSize: 12, bold: true, color: TOKENS.black, wrap: true, valign: 'top' });
+      } else {
+        slide.addText(row.value || '', { x: x + 0.12, y: ry + 0.1, w: colW - 0.24, h: rowH - 0.2, fontFace: FONT_JP, fontSize: 12, color: TOKENS.black, wrap: true, valign: 'middle' });
+      }
+    });
+  });
+  return slide;
+}
+
+/**
+ * フェーズ移行（phase_progression）
+ * Phase1ボックス → 矢印（トリガー）→ Phase2ボックス の横並び
+ * @param {object} opts
+ *   - title / eyebrow
+ *   - phase1: { label, items }
+ *   - trigger: string
+ *   - phase2: { label, items }
+ */
+function addPhaseProgression(pres, opts) {
+  const slide = pres.addSlide({ masterName: 'PTMIND_MASTER' });
+  _addSlideTitle(slide, opts.eyebrow ? { eyebrow: opts.eyebrow, title: opts.title || '' } : (opts.title || ''));
+
+  const ph1 = opts.phase1 || {};
+  const ph2 = opts.phase2 || {};
+  const trigger = opts.trigger || '';
+
+  const CARD_Y = 1.5, CARD_H = 5.2, CARD_W = 5.0;
+  const PH1_X = 0.55, ARROW_X = 5.7, ARROW_W = 2.0, PH2_X = 7.85;
+
+  // Phase 1
+  slide.addShape(pres.ShapeType.rect, { x: PH1_X, y: CARD_Y, w: CARD_W, h: CARD_H, fill: { color: TOKENS.bgSection }, line: { color: TOKENS.divider, width: 1 } });
+  slide.addShape(pres.ShapeType.rect, { x: PH1_X, y: CARD_Y, w: CARD_W, h: 0.52, fill: { color: TOKENS.forest }, line: { color: TOKENS.forest } });
+  slide.addText('PHASE 1', { x: PH1_X, y: CARD_Y, w: CARD_W, h: 0.52, fontFace: FONT_EN, fontSize: 12, bold: true, color: TOKENS.lime, align: 'center', valign: 'middle', charSpacing: 2 });
+  slide.addText(ph1.label || '', { x: PH1_X + 0.2, y: CARD_Y + 0.62, w: CARD_W - 0.4, h: 0.65, fontFace: FONT_JP, fontSize: 18, bold: true, color: TOKENS.black, align: 'center', valign: 'middle' });
+  (ph1.items || []).forEach(function(item, i) {
+    slide.addText('・' + item, { x: PH1_X + 0.25, y: CARD_Y + 1.4 + i * 0.55, w: CARD_W - 0.5, h: 0.5, fontFace: FONT_JP, fontSize: 13, color: TOKENS.black, wrap: true });
+  });
+
+  // 矢印
+  slide.addShape(pres.ShapeType.rightArrow, { x: ARROW_X, y: CARD_Y + CARD_H * 0.3, w: ARROW_W, h: CARD_H * 0.4, fill: { color: TOKENS.lime }, line: { color: TOKENS.lime } });
+  if (trigger) {
+    slide.addText(trigger, { x: ARROW_X, y: CARD_Y + CARD_H * 0.73, w: ARROW_W, h: 0.45, fontFace: FONT_JP, fontSize: 10, color: TOKENS.textMuted, align: 'center' });
+  }
+
+  // Phase 2
+  slide.addShape(pres.ShapeType.rect, { x: PH2_X, y: CARD_Y, w: CARD_W, h: CARD_H, fill: { color: TOKENS.white }, line: { color: TOKENS.lime, width: 2 } });
+  slide.addShape(pres.ShapeType.rect, { x: PH2_X, y: CARD_Y, w: CARD_W, h: 0.52, fill: { color: TOKENS.black }, line: { color: TOKENS.black } });
+  slide.addText('PHASE 2', { x: PH2_X, y: CARD_Y, w: CARD_W, h: 0.52, fontFace: FONT_EN, fontSize: 12, bold: true, color: TOKENS.lime, align: 'center', valign: 'middle', charSpacing: 2 });
+  slide.addText(ph2.label || '', { x: PH2_X + 0.2, y: CARD_Y + 0.62, w: CARD_W - 0.4, h: 0.65, fontFace: FONT_JP, fontSize: 18, bold: true, color: TOKENS.black, align: 'center', valign: 'middle' });
+  (ph2.items || []).forEach(function(item, i) {
+    slide.addText('・' + item, { x: PH2_X + 0.25, y: CARD_Y + 1.4 + i * 0.55, w: CARD_W - 0.5, h: 0.5, fontFace: FONT_JP, fontSize: 13, color: TOKENS.black, wrap: true });
+  });
+  return slide;
+}
+
+/**
+ * 移行テーブル（mobility_table）
+ * 各行: from（左）→ 矢印 → to（右）+ description（右端）
+ * @param {object} opts
+ *   - title / eyebrow
+ *   - rows: [{ from, to, description }]
+ */
+function addMobilityTable(pres, opts) {
+  const slide = pres.addSlide({ masterName: 'PTMIND_MASTER' });
+  _addSlideTitle(slide, opts.eyebrow ? { eyebrow: opts.eyebrow, title: opts.title || '' } : (opts.title || ''));
+
+  const rows = opts.rows || [];
+  const n = Math.max(rows.length, 1);
+  const START_Y = 1.15;
+  const AVAIL_H = 5.9;
+  const ROW_H = Math.min(1.1, (AVAIL_H - 0.08 * n) / n);
+  const GAP = 0.1;
+
+  const FROM_X = 0.55, FROM_W = 3.0;
+  const ARR_X  = 3.65,  ARR_W  = 0.85;
+  const TO_X   = 4.6,   TO_W   = 3.0;
+  const DESC_X = 7.75,  DESC_W = 4.9;
+
+  rows.forEach(function(row, i) {
+    const y = START_Y + i * (ROW_H + GAP);
+
+    slide.addShape(pres.ShapeType.roundRect, { x: FROM_X, y: y + 0.08, w: FROM_W, h: ROW_H - 0.16, fill: { color: TOKENS.bgSection }, line: { color: TOKENS.divider, width: 1 }, rectRadius: 0.06 });
+    slide.addText(row.from || '', { x: FROM_X + 0.12, y: y + 0.08, w: FROM_W - 0.24, h: ROW_H - 0.16, fontFace: FONT_JP, fontSize: 13, bold: true, color: TOKENS.black, align: 'center', valign: 'middle', wrap: true });
+
+    slide.addShape(pres.ShapeType.rightArrow, { x: ARR_X, y: y + ROW_H * 0.25, w: ARR_W, h: ROW_H * 0.5, fill: { color: TOKENS.lime }, line: { color: TOKENS.lime } });
+
+    slide.addShape(pres.ShapeType.roundRect, { x: TO_X, y: y + 0.08, w: TO_W, h: ROW_H - 0.16, fill: { color: TOKENS.black }, line: { color: TOKENS.black }, rectRadius: 0.06 });
+    slide.addText(row.to || '', { x: TO_X + 0.12, y: y + 0.08, w: TO_W - 0.24, h: ROW_H - 0.16, fontFace: FONT_JP, fontSize: 13, bold: true, color: TOKENS.white, align: 'center', valign: 'middle', wrap: true });
+
+    if (row.description) {
+      slide.addText(row.description, { x: DESC_X, y: y + 0.1, w: DESC_W, h: ROW_H - 0.2, fontFace: FONT_JP, fontSize: 12, color: TOKENS.black, wrap: true, valign: 'middle' });
+    }
+
+    if (i < rows.length - 1) {
+      slide.addShape(pres.ShapeType.line, { x: 0.55, y: y + ROW_H + GAP * 0.5, w: 12.2, h: 0, line: { color: TOKENS.divider, width: 1 } });
+    }
+  });
+  return slide;
+}
+
+/**
+ * NG/OK比較（ng_ok_comparison）
+ * 左：NG（薄地＋赤枠）、右：OK（濃地）、底部：Limeハイライトまとめ
+ * @param {object} opts
+ *   - title / eyebrow
+ *   - ng_items: string[]
+ *   - ok_items: string[]
+ *   - statement: string（底部まとめ）
+ */
+function addNgOkComparison(pres, opts) {
+  const slide = pres.addSlide({ masterName: 'PTMIND_MASTER' });
+  _addSlideTitle(slide, opts.eyebrow ? { eyebrow: opts.eyebrow, title: opts.title || '' } : (opts.title || ''));
+
+  const ngItems = opts.ng_items || [];
+  const okItems = opts.ok_items || [];
+  const stmt = opts.statement || '';
+
+  const CARD_Y = 1.4;
+  const CARD_H = stmt ? 4.45 : 5.5;
+  const NG_X = 0.55, NG_W = 5.85;
+  const OK_X = 6.95, OK_W = 5.85;
+
+  // NG
+  slide.addShape(pres.ShapeType.rect, { x: NG_X, y: CARD_Y, w: NG_W, h: CARD_H, fill: { color: 'FFF5F8' }, line: { color: TOKENS.red, width: 2 } });
+  slide.addShape(pres.ShapeType.rect, { x: NG_X, y: CARD_Y, w: NG_W, h: 0.5, fill: { color: TOKENS.red }, line: { color: TOKENS.red } });
+  slide.addText('NG', { x: NG_X, y: CARD_Y, w: NG_W, h: 0.5, fontFace: FONT_EN, fontSize: 16, bold: true, color: TOKENS.white, align: 'center', valign: 'middle', charSpacing: 3 });
+  ngItems.forEach(function(item, i) {
+    slide.addText('✕ ' + item, { x: NG_X + 0.3, y: CARD_Y + 0.7 + i * 0.55, w: NG_W - 0.5, h: 0.5, fontFace: FONT_JP, fontSize: 13, color: TOKENS.black, wrap: true });
+  });
+
+  // OK
+  slide.addShape(pres.ShapeType.rect, { x: OK_X, y: CARD_Y, w: OK_W, h: CARD_H, fill: { color: TOKENS.forest }, line: { color: TOKENS.forest } });
+  slide.addShape(pres.ShapeType.rect, { x: OK_X, y: CARD_Y, w: OK_W, h: 0.5, fill: { color: TOKENS.lime }, line: { color: TOKENS.lime } });
+  slide.addText('OK', { x: OK_X, y: CARD_Y, w: OK_W, h: 0.5, fontFace: FONT_EN, fontSize: 16, bold: true, color: TOKENS.black, align: 'center', valign: 'middle', charSpacing: 3 });
+  okItems.forEach(function(item, i) {
+    slide.addText('✓ ' + item, { x: OK_X + 0.3, y: CARD_Y + 0.7 + i * 0.55, w: OK_W - 0.5, h: 0.5, fontFace: FONT_JP, fontSize: 13, color: TOKENS.white, wrap: true });
+  });
+
+  // 底部まとめ
+  if (stmt) {
+    const STMT_Y = CARD_Y + CARD_H + 0.2;
+    slide.addShape(pres.ShapeType.rect, { x: 0.55, y: STMT_Y, w: 12.2, h: 0.8, fill: { color: TOKENS.lime }, line: { color: TOKENS.lime } });
+    slide.addText(stmt, { x: 0.75, y: STMT_Y, w: 11.8, h: 0.8, fontFace: FONT_JP, fontSize: 15, bold: true, color: TOKENS.black, valign: 'middle', wrap: true });
+  }
+  return slide;
+}
+
+/**
+ * 機能・役割テーブル（function_table）
+ * 行=役割/機能名（濃色背景）、列=レベル/カテゴリ（交互背景）
+ * @param {object} opts
+ *   - title / eyebrow
+ *   - columns: string[]（役割列の右に並ぶ列ヘッダー）
+ *   - rows: [{ role, cells: string[] }]
+ */
+function addFunctionTable(pres, opts) {
+  const slide = pres.addSlide({ masterName: 'PTMIND_MASTER' });
+  _addSlideTitle(slide, opts.eyebrow ? { eyebrow: opts.eyebrow, title: opts.title || '' } : (opts.title || ''));
+
+  const colHeaders = opts.columns || [];
+  const rows = opts.rows || [];
+  const nRows = Math.max(rows.length, 1);
+
+  const START_X = 0.55, TOTAL_W = 12.2, START_Y = 1.1;
+  const ROLE_W = 2.4;
+  const OTHER_W = colHeaders.length > 0 ? (TOTAL_W - ROLE_W) / colHeaders.length : TOTAL_W - ROLE_W;
+  const HDR_H = 0.5;
+  const ROW_H = Math.min(0.95, (5.95 - HDR_H - 0.05 * nRows) / nRows);
+  const ROW_GAP = 0.05;
+  const HDR_COLORS = [TOKENS.forest, TOKENS.olive, TOKENS.lime, TOKENS.black, TOKENS.orange];
+
+  // 左上空セル
+  slide.addShape(pres.ShapeType.rect, { x: START_X, y: START_Y, w: ROLE_W, h: HDR_H, fill: { color: TOKENS.black }, line: { color: TOKENS.black } });
+
+  // 列ヘッダー
+  colHeaders.forEach(function(col, ci) {
+    const x = START_X + ROLE_W + ci * OTHER_W;
+    const hdrBg = HDR_COLORS[ci % HDR_COLORS.length];
+    const hdrTxt = hdrBg === TOKENS.lime ? TOKENS.black : TOKENS.white;
+    slide.addShape(pres.ShapeType.rect, { x: x, y: START_Y, w: OTHER_W, h: HDR_H, fill: { color: hdrBg }, line: { color: hdrBg } });
+    slide.addText(col, { x: x + 0.08, y: START_Y, w: OTHER_W - 0.16, h: HDR_H, fontFace: FONT_JP, fontSize: 12, bold: true, color: hdrTxt, align: 'center', valign: 'middle' });
+  });
+
+  // データ行
+  rows.forEach(function(row, ri) {
+    const y = START_Y + HDR_H + ri * (ROW_H + ROW_GAP);
+    const isEven = ri % 2 === 0;
+    const roleBg = isEven ? TOKENS.forest : '2A5E40';
+
+    slide.addShape(pres.ShapeType.rect, { x: START_X, y: y, w: ROLE_W, h: ROW_H, fill: { color: roleBg }, line: { color: TOKENS.divider, width: 1 } });
+    slide.addText(row.role || '', { x: START_X + 0.1, y: y, w: ROLE_W - 0.2, h: ROW_H, fontFace: FONT_JP, fontSize: 12, bold: true, color: TOKENS.white, valign: 'middle', wrap: true });
+
+    (row.cells || []).forEach(function(cell, ci) {
+      const x = START_X + ROLE_W + ci * OTHER_W;
+      slide.addShape(pres.ShapeType.rect, { x: x, y: y, w: OTHER_W, h: ROW_H, fill: { color: isEven ? TOKENS.bgSection : TOKENS.white }, line: { color: TOKENS.divider, width: 1 } });
+      slide.addText(cell || '', { x: x + 0.1, y: y + 0.05, w: OTHER_W - 0.2, h: ROW_H - 0.1, fontFace: FONT_JP, fontSize: 11, color: TOKENS.black, wrap: true, valign: 'middle' });
+    });
+  });
+  return slide;
+}
+
 module.exports = {
   TOKENS,
   FONT_JP,
@@ -1749,6 +2056,13 @@ module.exports = {
   addFourGrid,
   addFormulaFlow,
   addDecompositionGrid,
+  // === 表/比較系レイアウト ===
+  addRiskCountermeasure,
+  addTrackComparison,
+  addPhaseProgression,
+  addMobilityTable,
+  addNgOkComparison,
+  addFunctionTable,
   // === チャート系（references/charts.md 準拠）===
   addLineChartSlide,
   addBarChartSlide,

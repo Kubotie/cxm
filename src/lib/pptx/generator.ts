@@ -62,6 +62,33 @@ const P = require('./ptmind_deck_helpers.js') as {
     title?: string; eyebrow?: string;
     cells: { number?: string; label: string; formula?: string; body?: string; color?: string; is_hypothesis?: boolean }[];
   }) => void;
+  addRiskCountermeasure: (pres: PptxGenJS, opts: {
+    title?: string; eyebrow?: string;
+    rows: { id?: string; label: string; why: string; countermeasure: string }[];
+  }) => void;
+  addTrackComparison: (pres: PptxGenJS, opts: {
+    title?: string; eyebrow?: string;
+    tracks: { label: string; color?: string; rows: { key?: string; value: string }[] }[];
+  }) => void;
+  addPhaseProgression: (pres: PptxGenJS, opts: {
+    title?: string; eyebrow?: string;
+    phase1?: { label: string; items?: string[] };
+    trigger?: string;
+    phase2?: { label: string; items?: string[] };
+  }) => void;
+  addMobilityTable: (pres: PptxGenJS, opts: {
+    title?: string; eyebrow?: string;
+    rows: { from: string; to: string; description?: string }[];
+  }) => void;
+  addNgOkComparison: (pres: PptxGenJS, opts: {
+    title?: string; eyebrow?: string;
+    ng_items?: string[]; ok_items?: string[]; statement?: string;
+  }) => void;
+  addFunctionTable: (pres: PptxGenJS, opts: {
+    title?: string; eyebrow?: string;
+    columns?: string[];
+    rows?: { role: string; cells: string[] }[];
+  }) => void;
   TOKENS: Record<string, string>;
   FONT_JP: string;
 };
@@ -167,6 +194,77 @@ function addPtmindSlide(pres: PptxGenJS, slide: SlideContent) {
           title:   slide.title,
           eyebrow: slide.eyebrow,
           cells:   slide.cells,
+        });
+        return;
+      }
+      break;
+
+    case 'risk_countermeasure':
+      if (slide.risk_rows && slide.risk_rows.length > 0) {
+        P.addRiskCountermeasure(pres, {
+          title:   slide.title,
+          eyebrow: slide.eyebrow,
+          rows:    slide.risk_rows,
+        });
+        return;
+      }
+      break;
+
+    case 'track_comparison':
+      if (slide.tracks && slide.tracks.length > 0) {
+        P.addTrackComparison(pres, {
+          title:   slide.title,
+          eyebrow: slide.eyebrow,
+          tracks:  slide.tracks,
+        });
+        return;
+      }
+      break;
+
+    case 'phase_progression':
+      if (slide.phase1 || slide.phase2) {
+        P.addPhaseProgression(pres, {
+          title:   slide.title,
+          eyebrow: slide.eyebrow,
+          phase1:  slide.phase1,
+          trigger: slide.trigger,
+          phase2:  slide.phase2,
+        });
+        return;
+      }
+      break;
+
+    case 'mobility_table':
+      if (slide.mobility_rows && slide.mobility_rows.length > 0) {
+        P.addMobilityTable(pres, {
+          title:   slide.title,
+          eyebrow: slide.eyebrow,
+          rows:    slide.mobility_rows,
+        });
+        return;
+      }
+      break;
+
+    case 'ng_ok_comparison':
+      if ((slide.ng_items && slide.ng_items.length > 0) || (slide.ok_items && slide.ok_items.length > 0)) {
+        P.addNgOkComparison(pres, {
+          title:     slide.title,
+          eyebrow:   slide.eyebrow,
+          ng_items:  slide.ng_items,
+          ok_items:  slide.ok_items,
+          statement: slide.statement,
+        });
+        return;
+      }
+      break;
+
+    case 'function_table':
+      if (slide.func_rows && slide.func_rows.length > 0) {
+        P.addFunctionTable(pres, {
+          title:   slide.title,
+          eyebrow: slide.eyebrow,
+          columns: slide.func_columns,
+          rows:    slide.func_rows,
         });
         return;
       }

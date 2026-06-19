@@ -12,7 +12,13 @@ export type SlideLayout =
   | 'exec_summary'       // エグゼクティブサマリー（成果/伸びしろ/次の一手）
   | 'four_grid'          // 2×2グリッド（課題・特徴・業界比較など）
   | 'formula_flow'       // 変数式フロー（A×B×C = 成果、など）
-  | 'decomposition_grid';// 変数分解グリッド（各変数の式と説明）
+  | 'decomposition_grid' // 変数分解グリッド（各変数の式と説明）
+  | 'risk_countermeasure'// リスク＆対策表（R1/R2行 × リスク/なぜ/対策列）
+  | 'track_comparison'   // トラック比較（2〜4列 × N行アトリビュート）
+  | 'phase_progression'  // フェーズ移行（Phase1 → Phase2、トリガー付き）
+  | 'mobility_table'     // 移行テーブル（from → to + 説明）
+  | 'ng_ok_comparison'   // NG/OK比較（左薄地 + 右濃地 + 底部まとめ）
+  | 'function_table';    // 機能・役割テーブル（行=役割、列=レベル/項目）
 
 export interface ColumnItem {
   header: string;
@@ -67,6 +73,36 @@ export interface DecompositionCell {
   is_hypothesis?: boolean;
 }
 
+export interface RiskRow {
+  id?: string;
+  label: string;
+  why: string;
+  countermeasure: string;
+}
+
+export interface TrackItem {
+  key?: string;
+  value: string;
+}
+
+export interface TrackColumn {
+  label: string;
+  /** ヘッダー色: 'lime'|'forest'|'orange'|'black'|'red'|'blue' */
+  color?: string;
+  rows: TrackItem[];
+}
+
+export interface MobilityRow {
+  from: string;
+  to: string;
+  description?: string;
+}
+
+export interface FunctionTableRow {
+  role: string;
+  cells: string[];
+}
+
 export interface SlideContent {
   slide_number: number;
   title: string;
@@ -103,6 +139,23 @@ export interface SlideContent {
   note?: { bold: string; body?: string };
   // decomposition_grid
   cells?: DecompositionCell[];
+  // risk_countermeasure
+  risk_rows?: RiskRow[];
+  // track_comparison
+  tracks?: TrackColumn[];
+  // phase_progression
+  phase1?: { label: string; items?: string[] };
+  trigger?: string;
+  phase2?: { label: string; items?: string[] };
+  // mobility_table
+  mobility_rows?: MobilityRow[];
+  // ng_ok_comparison
+  ng_items?: string[];
+  ok_items?: string[];
+  statement?: string;
+  // function_table
+  func_columns?: string[];
+  func_rows?: FunctionTableRow[];
   speaker_note?: string;
 }
 
@@ -136,7 +189,7 @@ export const DOCUMENT_GENERATE_TOOL = {
               },
               layout: {
                 type: 'string',
-                enum: ['bullets', 'section_divider', 'three_column', 'kpi_grid', 'before_after', 'timeline', 'next_steps', 'exec_summary', 'four_grid', 'formula_flow', 'decomposition_grid'],
+                enum: ['bullets', 'section_divider', 'three_column', 'kpi_grid', 'before_after', 'timeline', 'next_steps', 'exec_summary', 'four_grid', 'formula_flow', 'decomposition_grid', 'risk_countermeasure', 'track_comparison', 'phase_progression', 'mobility_table', 'ng_ok_comparison', 'function_table'],
                 description: [
                   'スライドレイアウト。内容に最も合うものを選ぶ:',
                   '• section_divider: 章扉。section_numberを必ず設定',
@@ -149,6 +202,12 @@ export const DOCUMENT_GENERATE_TOOL = {
                   '• four_grid: 2×2グリッド（業界課題・特徴・機能4点など） → cards（最大4件）必須。各cardにnumber/title/body/result/colorを設定',
                   '• formula_flow: 変数式フロー（A×B×C=成果、業績ドライバーなど） → variables必須。left_title/left_body/denominator/noteも設定',
                   '• decomposition_grid: 変数ごとの分解グリッド（各変数の式と意味） → cells必須（最大6件）。各cellにnumber/label/formula/body/colorを設定',
+                  '• risk_countermeasure: リスク表（R1/R2行 × リスク名/なぜ起きるか/対策の3列） → risk_rows必須',
+                  '• track_comparison: トラック比較（2〜4列 × N行の属性比較） → tracks必須。各trackにlabel/color/rows設定',
+                  '• phase_progression: フェーズ移行（Phase1ボックス→矢印→Phase2ボックス） → phase1/phase2必須。triggerに移行条件',
+                  '• mobility_table: 移行テーブル（from→to行、右に説明） → mobility_rows必須',
+                  '• ng_ok_comparison: NG/OK対比（左薄地NG + 右濃地OK + 底部lime強調） → ng_items/ok_items必須、statementに結論',
+                  '• function_table: 機能・役割テーブル（行=役割/機能、列=レベル/カテゴリ） → func_columns/func_rows必須',
                   '• bullets: 上記のどれにも当てはまらない場合のみ。多用禁止（全体の20%以内）',
                 ].join('\n'),
               },
@@ -288,6 +347,101 @@ export const DOCUMENT_GENERATE_TOOL = {
                     is_hypothesis: { type: 'boolean', description: '仮説カード（右下固定）として表示する場合 true' },
                   },
                   required: ['label'],
+                },
+              },
+              // risk_countermeasure
+              risk_rows: {
+                type: 'array',
+                description: 'layout=risk_countermeasure の場合に必須。',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id:              { type: 'string', description: 'リスクID（例："R1"）' },
+                    label:           { type: 'string', description: 'リスク名' },
+                    why:             { type: 'string', description: 'なぜ起きるか（1〜2行）' },
+                    countermeasure:  { type: 'string', description: '対策（1〜2行）' },
+                  },
+                  required: ['label', 'why', 'countermeasure'],
+                },
+              },
+              // track_comparison
+              tracks: {
+                type: 'array',
+                description: 'layout=track_comparison の場合に必須。2〜4列。',
+                items: {
+                  type: 'object',
+                  properties: {
+                    label: { type: 'string' },
+                    color: { type: 'string', description: 'ヘッダー色: lime/forest/orange/black/red/blue' },
+                    rows: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          key:   { type: 'string', description: '行ラベル（任意）' },
+                          value: { type: 'string' },
+                        },
+                        required: ['value'],
+                      },
+                    },
+                  },
+                  required: ['label', 'rows'],
+                },
+              },
+              // phase_progression
+              phase1: {
+                type: 'object',
+                description: 'layout=phase_progression の第1フェーズ',
+                properties: {
+                  label: { type: 'string' },
+                  items: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['label'],
+              },
+              trigger: { type: 'string', description: 'フェーズ移行トリガー（例："ダッシュボード完成"）' },
+              phase2: {
+                type: 'object',
+                description: 'layout=phase_progression の第2フェーズ',
+                properties: {
+                  label: { type: 'string' },
+                  items: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['label'],
+              },
+              // mobility_table
+              mobility_rows: {
+                type: 'array',
+                description: 'layout=mobility_table の場合に必須。',
+                items: {
+                  type: 'object',
+                  properties: {
+                    from:        { type: 'string', description: '移行元' },
+                    to:          { type: 'string', description: '移行先' },
+                    description: { type: 'string', description: '説明（任意）' },
+                  },
+                  required: ['from', 'to'],
+                },
+              },
+              // ng_ok_comparison
+              ng_items:  { type: 'array', items: { type: 'string' }, description: 'NG側の箇条書き（2〜5項目）' },
+              ok_items:  { type: 'array', items: { type: 'string' }, description: 'OK側の箇条書き（2〜5項目）' },
+              statement: { type: 'string', description: 'ng_ok_comparison の底部ハイライトまとめ文' },
+              // function_table
+              func_columns: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'function_table の列ヘッダー（ロール列の右に並ぶ）',
+              },
+              func_rows: {
+                type: 'array',
+                description: 'function_table の行データ',
+                items: {
+                  type: 'object',
+                  properties: {
+                    role:  { type: 'string', description: '役割/機能名' },
+                    cells: { type: 'array', items: { type: 'string' } },
+                  },
+                  required: ['role', 'cells'],
                 },
               },
               speaker_note: { type: 'string' },
@@ -445,6 +599,12 @@ ${guidance}
 | **4つの課題・特徴・機能を2×2で見せたい** | **four_grid** | **cards（最大4件）。各cardにnumber/title/body/result/colorを設定。footerに1行まとめ** |
 | **変数の掛け算・式で成果を説明** | **formula_flow** | **variables（×でつなぐ変数群）。left_title/left_body=左側の成果ブロック。denominator=下段の負の変数。note=底部メモ** |
 | **変数ごとの式と現状を分解説明** | **decomposition_grid** | **cells（最大6件、3列×2行）。各cellにnumber/label/formula/body/color。最後のcellをis_hypothesis:trueにして仮説カードに** |
+| **リスク一覧（ID/名称/なぜ/対策）** | **risk_countermeasure** | **risk_rows に {id,label,why,countermeasure} を設定** |
+| **2〜4プランを属性ごとに横並び比較** | **track_comparison** | **tracks に {label,color,rows:[{key,value}]} を設定** |
+| **Phase1→Phase2 の移行を可視化** | **phase_progression** | **phase1/phase2 に {label,items} 設定。trigger に移行条件** |
+| **◯◯→△△ の移行・変換を一覧化** | **mobility_table** | **mobility_rows に {from,to,description} を設定** |
+| **NG例 vs OK例 の対比** | **ng_ok_comparison** | **ng_items/ok_items に各項目設定。statement に結論** |
+| **役割×レベルのマトリクス表** | **function_table** | **func_columns に列ヘッダー、func_rows に {role,cells} を設定** |
 | 上記のどれにも当てはまらない | bullets | content |
 
 ### STEP 2: 必須フィールドを確実に埋める
@@ -457,6 +617,12 @@ ${guidance}
 - **four_grid** → cards に1〜4件を必ず設定（title必須、color は orange/lime/forest/black/red/blue から選択）
 - **formula_flow** → variables に2〜5件を必ず設定（各変数に n/label/color）。left_title と left_body で左ブロックを必ず設定
 - **decomposition_grid** → cells に3〜6件を必ず設定（label必須、formula で式を表現）
+- **risk_countermeasure** → risk_rows に2〜5件を必ず設定（label/why/countermeasure 必須）
+- **track_comparison** → tracks に2〜4件を必ず設定（label/rows 必須、color は lime/forest/orange/black）
+- **phase_progression** → phase1 と phase2 を両方設定（label 必須、items に3〜5行）
+- **mobility_table** → mobility_rows に2〜6件を必ず設定（from/to 必須）
+- **ng_ok_comparison** → ng_items と ok_items を両方設定（各2〜5件）、statement に1行まとめ
+- **function_table** → func_columns に1〜5列、func_rows に各 {role, cells} を設定
 
 ### STEP 3: eyebrow（小見出し）を設定する
 - 全スライドに eyebrow（章名・文脈を示す12pt小文字）を設定することを推奨
@@ -608,6 +774,12 @@ export function buildSlideReviewPrompt(structure: SlideStructure): string {
 - layout=four_grid なのに cards が設定されていない
 - layout=formula_flow なのに variables が設定されていない
 - layout=decomposition_grid なのに cells が設定されていない
+- layout=risk_countermeasure なのに risk_rows が設定されていない
+- layout=track_comparison なのに tracks が設定されていない
+- layout=phase_progression なのに phase1/phase2 のいずれかが欠けている
+- layout=mobility_table なのに mobility_rows が設定されていない
+- layout=ng_ok_comparison なのに ng_items/ok_items のいずれかが欠けている
+- layout=function_table なのに func_columns/func_rows のいずれかが欠けている
 
 ### 3. タイトル重複（duplicate_title）
 - 2枚以上のスライドで全く同じタイトルを使っている
