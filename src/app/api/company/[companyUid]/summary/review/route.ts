@@ -80,14 +80,27 @@ export async function POST(
     );
   }
 
-  const existing    = list[0];
-  const reviewedAt  = new Date().toISOString();
+  const existing   = list[0];
+  const reviewedAt = new Date().toISOString();
 
-  await nocoUpdate<RawCompanySummaryState>(tableId, existing.Id, {
+  // 明示的に指定された場合のみ reviewed_by を更新（未指定時は既存値を保持）
+  const patch: Partial<RawCompanySummaryState> = {
     human_review_status: status,
-    reviewed_by:         reviewed_by ?? null,
     reviewed_at:         reviewedAt,
-  });
+  };
+  if (reviewed_by !== undefined) {
+    patch.reviewed_by = reviewed_by;
+  }
+
+  try {
+    await nocoUpdate<RawCompanySummaryState>(tableId, existing.Id, patch);
+  } catch (err) {
+    console.error('[POST /api/company/[companyUid]/summary/review] nocoUpdate failed:', err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({ ok: true, status });
 }
