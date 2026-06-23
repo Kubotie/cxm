@@ -78,7 +78,12 @@ export async function saveCompanySummaryState(
   const summaryType = payload.summary_type ?? DEFAULT_TYPE;
 
   // 1. 既存レコードを company_uid + summary_type で検索
-  const where = `(company_uid,eq,${payload.company_uid})~and(summary_type,eq,${summaryType})`;
+  // summary_type='default' のときは null/blank レコードも対象とする（read 側と整合させる）
+  // 旧データには summary_type 未設定のレコードが残っているため
+  const typeFilter = summaryType === DEFAULT_TYPE
+    ? `(summary_type,eq,${DEFAULT_TYPE})~or(summary_type,blank)`
+    : `(summary_type,eq,${summaryType})`;
+  const where = `(company_uid,eq,${payload.company_uid})~and(${typeFilter})`;
 
   let existingList: RawCompanySummaryState[];
   try {

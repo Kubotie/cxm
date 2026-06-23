@@ -70,8 +70,14 @@ export async function POST(
   }
 
   // 既存レコードを取得
-  const where = `(company_uid,eq,${companyUid})~and(summary_type,eq,${summaryType})`;
-  const list  = await nocoFetch<RawCompanySummaryState>(tableId, { where, limit: '1' }).catch(() => null);
+  // summary_type='default' のときは null/blank レコードも対象に（read 側と整合）。
+  // 旧データには summary_type 未設定のレコードが残っているため、
+  // それらも含めて全件まとめて更新することで重複レコードを統一する。
+  const typeFilter = summaryType === DEFAULT_TYPE
+    ? `(summary_type,eq,${DEFAULT_TYPE})~or(summary_type,blank)`
+    : `(summary_type,eq,${summaryType})`;
+  const where = `(company_uid,eq,${companyUid})~and(${typeFilter})`;
+  const list  = await nocoFetch<RawCompanySummaryState>(tableId, { where, limit: '50' }).catch(() => null);
 
   if (!list || list.length === 0) {
     return NextResponse.json(
@@ -80,20 +86,23 @@ export async function POST(
     );
   }
 
-  const existing   = list[0];
   const reviewedAt = new Date().toISOString();
 
   // 明示的に指定された場合のみ reviewed_by を更新（未指定時は既存値を保持）
-  const patch: Partial<RawCompanySummaryState> = {
+  const basePatch: Partial<RawCompanySummaryState> = {
     human_review_status: status,
     reviewed_at:         reviewedAt,
+    summary_type:        summaryType, // 重複統一: null/blank レコードを default に正規化
   };
   if (reviewed_by !== undefined) {
-    patch.reviewed_by = reviewed_by;
+    basePatch.reviewed_by = reviewed_by;
   }
 
+  // マッチした全レコードを更新（重複の orphan レコードもまとめてダウングレード）
   try {
-    await nocoUpdate<RawCompanySummaryState>(tableId, existing.Id, patch);
+    for (const existing of list) {
+      await nocoUpdate<RawCompanySummaryState>(tableId, existing.Id, basePatch);
+    }
   } catch (err) {
     console.error('[POST /api/company/[companyUid]/summary/review] nocoUpdate failed:', err);
     return NextResponse.json(
@@ -102,5 +111,5 @@ export async function POST(
     );
   }
 
-  return NextResponse.json({ ok: true, status });
+  return NextResponse.json({ ok: true, status, updated: list.length });
 }
