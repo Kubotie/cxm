@@ -3,6 +3,22 @@
     {
       "path": "/api/batch/company-summary-staleness",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/batch/tier-sync",
+      "schedule": "0 17 * * *"
+    },
+    {
+      "path": "/api/batch/paid-watched-sync",
+      "schedule": "30 17 * * *"
+    },
+    {
+      "path": "/api/batch/company-snapshot-light",
+      "schedule": "30 18 * * *"
+    },
+    {
+      "path": "/api/batch/churn-analysis-weekly",
+      "schedule": "0 19 * * 0"
     }
   ]
 }

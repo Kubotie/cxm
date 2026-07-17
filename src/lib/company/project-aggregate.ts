@@ -18,6 +18,7 @@
 import type { AppProjectInfo } from '@/lib/nocodb/types';
 import { PROJECT_STALLED_THRESHOLD_DAYS } from '@/lib/company/badges';
 import type { ProjectUserActivity } from '@/lib/metabase/project-user-activity';
+import type { ProjectSignalData } from '@/lib/metabase/project-signals';
 export type { ProjectUserActivity };
 
 // ── 型定義 ────────────────────────────────────────────────────────────────────
@@ -122,16 +123,22 @@ function deriveProjectStatus(
  * project_info リストから ProjectAggregateVM を構築する。
  * @param projects         fetchProjectsByCompany の結果
  * @param userActivityMap  Metabase から取得したプロジェクト別ユーザー活動 Map（省略可）
+ * @param signalMap        Metabase project-signals CSV の Map（省略可）。渡された場合、
+ *                         NocoDB に無い monthPvCount を metabase 値で上書きする。
  */
 export function buildProjectAggregateVM(
   projects: AppProjectInfo[],
   userActivityMap?: Map<string, ProjectUserActivity>,
+  signalMap?: Map<string, ProjectSignalData>,
 ): ProjectAggregateVM {
   // ── derived status 付きに変換 ────────────────────────────────────────────
   const projectVMs: ProjectItemVM[] = projects.map(p => {
     const { derivedStatus, stalledDays } = deriveProjectStatus(p);
     const userActivity = userActivityMap?.get(p.id) ?? null;
-    return { ...p, derivedStatus, stalledDays, userActivity };
+    const signal       = signalMap?.get(p.id);
+    // metabase 値が取れれば NocoDB 由来の null を上書き
+    const monthPvCount = signal?.monthPvCount ?? p.monthPvCount;
+    return { ...p, monthPvCount, derivedStatus, stalledDays, userActivity };
   });
 
   const total    = projectVMs.length;

@@ -1201,6 +1201,8 @@ export function OutboundPage() {
           reason:              '',
           updatedAt:           null,
           sfAccountId:         null,
+          tier:                null,
+          isPaidWatched:       false,
         }));
         setCompanies(list);
 

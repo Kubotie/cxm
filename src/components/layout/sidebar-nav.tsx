@@ -6,7 +6,7 @@ import {
   Home, Building2, Headphones, BrainCircuit,
   Activity, Zap, ClipboardList, Database, Settings,
   ChevronLeft, ChevronRight, UserCircle, CheckSquare, Send,
-  BookOpen, FileText,
+  BookOpen, FileText, Layers, TrendingDown,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,8 @@ const NAV_ITEMS: NavItem[] = [
   // ── メインナビ ──
   { title: 'Home',       icon: Home,            href: '/' },
   { title: 'Companies',  icon: Building2,        href: '/companies' },
+  { title: 'Tier 3',     icon: Layers,           href: '/console/tier3' },
+  { title: '解約分析',   icon: TrendingDown,     href: '/console/churn-analysis' },
   { title: 'Actions',    icon: CheckSquare,      href: '/actions' },
   { title: 'Assets',     icon: BookOpen,         href: '/assets' },
   { title: 'Documents',  icon: FileText,         href: '/documents' },

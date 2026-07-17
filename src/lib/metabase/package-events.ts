@@ -221,3 +221,67 @@ export async function fetchPackageEventsBySfId(sfId: string): Promise<PackageEve
   const events = await loadEvents();
   return events.filter(ev => ev.sfId === sfId);
 }
+
+/**
+ * 指定期間内の Package-Churn イベントを sfId 付きで返す（遡及分析用）。
+ * @param fromStr YYYY-MM-DD 以上
+ * @param toStr   YYYY-MM-DD 以下
+ */
+export async function fetchChurnEventsWithinWindow(
+  fromStr: string,
+  toStr:   string,
+): Promise<PackageEvent[]> {
+  const events = await loadEvents();
+  return events.filter(ev =>
+    ev.changeType === 'Package-Churn' &&
+    ev.sfId !== null &&
+    ev.statDate >= fromStr &&
+    ev.statDate <= toStr,
+  );
+}
+
+/**
+ * sfId ごとに「anchor 日から N 日前まで」の Package events を返す（遡及分析用）。
+ * anchor 日そのものは含まない（Churn 当日を除いた "予兆" イベントのみ）。
+ *
+ * @param sfIdAnchors [sfId, anchorDate(YYYY-MM-DD)] のペア配列
+ * @param windowDays  遡る日数（例: 90）
+ * @returns Map<sfId, PackageEvent[]> — 日付昇順ソート
+ */
+export async function fetchPrecedingEventsBySfId(
+  sfIdAnchors: Array<{ sfId: string; anchorDate: string }>,
+  windowDays:  number,
+): Promise<Map<string, PackageEvent[]>> {
+  const events = await loadEvents();
+  const result = new Map<string, PackageEvent[]>();
+  if (sfIdAnchors.length === 0) return result;
+
+  // sfId → anchor 日 の逆引き
+  const anchorMap = new Map<string, string>();
+  for (const { sfId, anchorDate } of sfIdAnchors) {
+    anchorMap.set(sfId, anchorDate);
+    result.set(sfId, []);
+  }
+
+  for (const ev of events) {
+    if (!ev.sfId) continue;
+    const anchor = anchorMap.get(ev.sfId);
+    if (!anchor) continue;
+
+    // anchor から windowDays 前の日付を計算
+    const anchorDt = new Date(`${anchor}T00:00:00Z`);
+    const fromDt   = new Date(anchorDt);
+    fromDt.setUTCDate(fromDt.getUTCDate() - windowDays);
+    const fromStr  = fromDt.toISOString().slice(0, 10);
+
+    if (ev.statDate >= fromStr && ev.statDate < anchor) {
+      result.get(ev.sfId)!.push(ev);
+    }
+  }
+
+  // 日付昇順ソート
+  for (const list of result.values()) {
+    list.sort((a, b) => a.statDate.localeCompare(b.statDate));
+  }
+  return result;
+}

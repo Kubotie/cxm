@@ -12,7 +12,11 @@ export interface RawCompany {
   last_contact?: string | null;
   open_alert_count?: number | null;
   open_action_count?: number | null;
-  is_csm_managed?: boolean | null; // true のみ実データあり
+  is_csm_managed?: boolean | null; // true のみ実データあり（tier 導入により順次 deprecated 予定）
+  /** CSM Tier: 1/2 = 重点管理、3 = 標準管理、5 = パートナー、null = 未分類 */
+  tier?: number | null;
+  /** 有料顧客自動監視フラグ (Metabase paid 顧客リストから同期される) */
+  is_paid_watched?: boolean | null;
   /** Salesforce Account ID（SF Contact sync / SF Task sync で使用） */
   sf_account_id?: string | null;
   [key: string]: unknown;
@@ -78,6 +82,10 @@ export interface AppCompany {
   updatedAt: string | null; // NocoDB UpdatedAt システムカラム (source_updated_at に使用)
   /** Salesforce Account ID（SF Contact/Task sync で使用。未設定時は null） */
   sfAccountId: string | null;
+  /** CSM Tier: 1/2 = 重点、3 = 標準、5 = パートナー、null = 未分類 */
+  tier: 1 | 2 | 3 | 5 | null;
+  /** 有料顧客自動監視フラグ (Metabase 有料リスト由来) */
+  isPaidWatched: boolean;
 }
 
 export interface AppAlert {
@@ -279,7 +287,20 @@ export function toAppCompany(raw: RawCompany): AppCompany {
     reason: '—',
     updatedAt:    raw.UpdatedAt ? String(raw.UpdatedAt).slice(0, 16).replace('T', ' ') : null,
     sfAccountId:  raw.sf_account_id ? String(raw.sf_account_id) : null,
+    tier:         toTier(raw.tier),
+    isPaidWatched: toBoolLoose(raw.is_paid_watched),
   };
+}
+
+function toTier(raw: unknown): 1 | 2 | 3 | 5 | null {
+  if (raw == null) return null;
+  const n = typeof raw === 'number' ? raw : parseInt(String(raw), 10);
+  return (n === 1 || n === 2 || n === 3 || n === 5) ? n : null;
+}
+
+/** NocoDB Checkbox は true / "true" / 1 / "1" などで返ってくることがある */
+function toBoolLoose(raw: unknown): boolean {
+  return raw === true || raw === 'true' || raw === 1 || raw === '1';
 }
 
 export function toAppAlert(raw: RawAlert): AppAlert {
@@ -1132,6 +1153,8 @@ export interface RawProjectInfo {
   healthy_score?: number | null;            // プロジェクト利用健全性スコア
   depth_score?:   number | null;            // 機能深度スコア
   breadth_score?: number | null;            // 機能横断利用スコア
+  // ── PV 実績（NocoDB では未提供。metabase CSV から buildProjectAggregateVM で注入）
+  month_period_pv_count?: number | null;    // 当月PV実績
   // ── 互換用（将来テーブルが正規化された場合のフォールバック）────────────────
   status?:         string | null;
   start_date?:     string | null;
@@ -1168,6 +1191,11 @@ export interface AppProjectInfo {
   depthScore:         number | null;
   /** 機能横断利用スコア（Heatmap/Goal/UserGroup/Segment 等を幅広く使えているか） */
   breadthScore:       number | null;
+  /**
+   * 当月 PV 実績。NocoDB `project_info` にはカラムが無いため、通常は null。
+   * metabase `Month Period Pv Count` を `buildProjectAggregateVM(signalMap)` 経由で注入する。
+   */
+  monthPvCount:       number | null;
 }
 
 /**
@@ -1226,6 +1254,7 @@ export function toAppProjectInfo(raw: RawProjectInfo, companyUid?: string): AppP
     healthyScore:       raw.healthy_score != null ? Number(raw.healthy_score) : null,
     depthScore:         raw.depth_score   != null ? Number(raw.depth_score)   : null,
     breadthScore:       raw.breadth_score != null ? Number(raw.breadth_score) : null,
+    monthPvCount:       raw.month_period_pv_count != null ? Number(raw.month_period_pv_count) : null,
   };
 }
 

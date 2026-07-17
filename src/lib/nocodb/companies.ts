@@ -84,23 +84,68 @@ export async function fetchCanonicalNameMap(uids: string[]): Promise<Map<string,
 }
 
 /**
- * CSM管理企業を取得（Console 一覧用）
+ * CSM 重点管理企業を取得（Console 一覧用）
  *
  * 表示ルール:
- *   - is_csm_managed=true の企業のみ対象（現在96社）
- *     → この条件を持つ企業のみ current_phase / open_alert_count 等が入っている
- *   - is_csm_managed=null/false の企業（約4500社）は canonical_name 以外が空のため除外
+ *   - tier IN (1, 2) の企業のみ対象（Tier 1: 22社 / Tier 2: 28社 = 50社）
+ *   - Tier 3（44社）は /console/tier3 で別途表示
+ *   - Tier なしは対象外
  *
  * ソート順:
  *   1. open_alert_count 降順（アラート多い＝緊急度高い）
  *   2. last_contact 降順（最近接点あり＝アクティブ）
  */
 export async function fetchAllCompanies(limit = 50, ownerName?: string): Promise<AppCompany[]> {
-  const cacheKey = `${limit}:${ownerName ?? ''}`;
+  return fetchCompaniesByTiers([1, 2], limit, ownerName);
+}
+
+/**
+ * Light watch 対象を取得する:
+ *   - tier=3 の企業（Metabase Tier マスターで標準管理指定）
+ *   - is_paid_watched=true かつ tier が空の企業（自動監視対象）
+ * Tier 1/2 は Deep batch が担当するので除外。
+ * Light snapshot batch と Tier 3 一覧画面で使用。
+ */
+export async function fetchLightWatchCompanies(limit = 2000): Promise<AppCompany[]> {
+  const cacheKey = `light-watch:${limit}`;
   const cached = _allCompaniesCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < ALL_COMPANIES_TTL_MS) return cached.data;
 
-  const baseWhere = '(status,eq,active)~and(is_csm_managed,eq,true)';
+  // NocoDB の where は "or" 内で "and" を書ける
+  //   (status=active) AND ( (tier=3) OR (is_paid_watched=true AND tier IS NULL) )
+  const where = '(status,eq,active)~and((tier,eq,3)~or((is_paid_watched,eq,true)~and(tier,null)))';
+  const raw = await nocoFetch<RawCompany>(TABLE_IDS.companies, {
+    where,
+    sort:  '-last_contact',
+    limit: String(limit),
+  });
+  const seen = new Set<string>();
+  const data = raw.map(toAppCompany).filter(c => {
+    if (!c.id || seen.has(c.id)) return false;
+    seen.add(c.id);
+    return true;
+  });
+  _allCompaniesCache.set(cacheKey, { data, ts: Date.now() });
+  return data;
+}
+
+/**
+ * 指定 Tier 群に属する企業を取得する。
+ *   - Tier 1/2 = 重点管理（Home / Console）
+ *   - Tier 3   = 標準管理（Tier 3 別画面）
+ *   - Tier 5   = パートナー（別画面）
+ */
+export async function fetchCompaniesByTiers(
+  tiers:    (1 | 2 | 3 | 5)[],
+  limit    = 50,
+  ownerName?: string,
+): Promise<AppCompany[]> {
+  const tierKey = tiers.slice().sort().join(',');
+  const cacheKey = `tiers:${tierKey}:${limit}:${ownerName ?? ''}`;
+  const cached = _allCompaniesCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < ALL_COMPANIES_TTL_MS) return cached.data;
+
+  const baseWhere = `(status,eq,active)~and(tier,in,${tiers.join(',')})`;
   const where = ownerName
     ? `${baseWhere}~and(owner_name,eq,${ownerName})`
     : baseWhere;
@@ -120,7 +165,7 @@ export async function fetchAllCompanies(limit = 50, ownerName?: string): Promise
 }
 
 /**
- * 担当がついているCSM管理企業を全件取得（SF一括同期用）。
+ * 担当がついている CSM 重点管理企業（Tier 1/2）を全件取得（SF一括同期用）。
  * owner_name が空でない企業のみ対象。
  */
 export async function fetchAssignedCompanies(): Promise<Array<{
@@ -131,7 +176,7 @@ export async function fetchAssignedCompanies(): Promise<Array<{
   if (!TABLE_IDS.companies) return [];
   try {
     const rows = await nocoFetch<RawCompany>(TABLE_IDS.companies, {
-      where:  '(status,eq,active)~and(is_csm_managed,eq,true)~and(owner_name,notblank,)',
+      where:  '(status,eq,active)~and(tier,in,1,2)~and(owner_name,notblank,)',
       fields: 'company_uid,sf_account_id,owner_name',
       limit:  '300',
     }, false);

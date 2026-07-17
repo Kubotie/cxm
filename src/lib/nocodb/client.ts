@@ -52,6 +52,8 @@ export const TABLE_IDS = {
   company_daily_snapshot:      process.env.NOCODB_COMPANY_DAILY_SNAPSHOT_TABLE_ID ?? '',
   // プロジェクト単位の日次スナップショット（新規ユーザー追加・Campaign急増の差分検出用）
   project_user_snapshots:      process.env.NOCODB_PROJECT_USER_SNAPSHOTS_TABLE_ID ?? 'm9nw1u7b0fztc9v',
+  // 解約遡及分析の週次レポート（AI サマリー + JSON）
+  churn_retrospective_reports: process.env.NOCODB_CHURN_RETROSPECTIVE_REPORTS_TABLE_ID ?? 'mlbtuf6b5b4732r',
   // ── Ops: 監査ログ ──────────────────────────────────────────────────────────
   // 未設定の場合は writeBatchRunLog が console.log fallback になる
   audit_logs:                  process.env.NOCODB_AUDIT_LOGS_TABLE_ID                  ?? '',

@@ -1,7 +1,11 @@
-// ─── POST /api/batch/company-snapshot ─────────────────────────────────────────
+// ─── POST /api/batch/company-snapshot (Deep) ─────────────────────────────────
 //
-// 全 CSM 管理企業の日次スナップショットを company_daily_snapshot テーブルに書き込む。
+// 重点管理企業（Tier 1/2）の日次スナップショットを company_daily_snapshot に書き込む。
+// AI 生成の overall_health を含む「フルシグナル」を記録する Deep batch。
 // 変動コックピット（Home）で「前回からの差分」を計算するための履歴基盤。
+//
+// 対象: fetchAllCompanies() → tier IN (1, 2) の active 企業
+// Tier 3 + is_paid_watched は Light batch (/api/batch/company-snapshot-light) が別途処理する。
 //
 // ── 書き込むフィールド ────────────────────────────────────────────────────────
 //   company_uid        : 企業 UID
@@ -103,7 +107,7 @@ async function runSnapshotJob(
   const startedAt = new Date();
   console.log(`[batch/company-snapshot] 開始 dry_run=${dryRun} limit=${limit} date=${snapshotDate}`);
 
-  // ── Step 1: 全企業リスト取得 ─────────────────────────────────────────────────
+  // ── Step 1: 対象企業リスト取得 (Tier 1/2 のみ) ──────────────────────────
   let targets: Awaited<ReturnType<typeof resolveCompanySummaryTargets>>;
   try {
     targets = await resolveCompanySummaryTargets({ limit });
@@ -182,7 +186,7 @@ async function runSnapshotJob(
 
     // ── プロジェクト集計（project-signals に蓄積）──────────────────────────────
     const projectVM = projList.length > 0
-      ? buildProjectAggregateVM(projList, activityMap)
+      ? buildProjectAggregateVM(projList, activityMap, signalDataMap)
       : null;
 
     // Metabase シグナルから企業単位の Campaign 合計・PV上限アラート数を集計

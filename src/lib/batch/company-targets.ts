@@ -3,7 +3,7 @@
 //
 // ルール:
 //   - company_uids 指定あり → 指定 UID のみ取得（limit でキャップ）
-//   - 指定なし              → is_csm_managed=true の全企業を limit 件取得
+//   - 指定なし              → Tier 1/2 の全企業を limit 件取得
 
 import { fetchAllCompanies, fetchCompanyByUid } from '@/lib/nocodb/companies';
 import type { AppCompany } from '@/lib/nocodb/types';
