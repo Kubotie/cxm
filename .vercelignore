@@ -1,0 +1,4 @@
+# Vercel デプロイに含めない（アプリ本体と無関係 / 秘密情報を含む）
+ptengine-analytics-mcp/
+.claude/
+docs-src/
