@@ -240,7 +240,9 @@ export function CompanyDetail() {
   const [detail, setDetail]         = useState<CompanyDetailApiResponse | null>(null);
   // coreData: /core エンドポイントから高速取得（company + phase + summary のみ）
   // detail が揃った後は null にリセットして detail を優先させる
-  const [coreData, setCoreData]     = useState<Pick<CompanyDetailApiResponse, 'company' | 'phase' | 'summary'> | null>(null);
+  const [coreData, setCoreData]     = useState<Pick<CompanyDetailApiResponse, 'company' | 'phase' | 'summary' | 'chronicSilent'> | null>(null);
+  // 休眠バッジ用: /core からのみ届くため coreData の null リセットとは独立に保持する
+  const [chronicSilent, setChronicSilent] = useState<CompanyDetailApiResponse['chronicSilent']>(null);
   const [loading, setLoading]       = useState(true);
   const [loadError, setLoadError]   = useState<string | null>(null);
 
@@ -406,9 +408,10 @@ export function CompanyDetail() {
     if (!refresh) {
       fetch(`/api/company/${companyId}/core`)
         .then(r => r.ok ? r.json() : null)
-        .then((data: Pick<CompanyDetailApiResponse, 'company' | 'phase' | 'summary'> | null) => {
+        .then((data: Pick<CompanyDetailApiResponse, 'company' | 'phase' | 'summary' | 'chronicSilent'> | null) => {
           if (data) {
             setCoreData(data);
+            setChronicSilent(data.chronicSilent ?? null);
             setLoading(false); // ヘッダーが表示できるのでローディング解除
           }
         })
@@ -847,6 +850,39 @@ export function CompanyDetail() {
                             <div className="text-orange-600">{phase.stagnationDays}日間フェーズ変化なし</div>
                           )}
                           <div className="text-slate-400 text-[10px] pt-0.5">クリックで Overview を表示</div>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+                {/* Ptengine 休眠（chronic silent）バッジ */}
+                {chronicSilent?.isChronicSilent && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] py-0 flex-shrink-0 border-amber-400 text-amber-600 cursor-default"
+                        >
+                          休眠{chronicSilent.l30Active != null && ` L30:${chronicSilent.l30Active}`}
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" align="start" className="text-xs max-w-xs">
+                        <div className="space-y-1">
+                          <div className="font-medium">Ptengine 持続休眠（chronic silent）</div>
+                          <div className="text-slate-500">
+                            {chronicSilent.riskLevel ?? '—'}
+                            {chronicSilent.refMonth && `（基準月 ${chronicSilent.refMonth}）`}
+                          </div>
+                          {chronicSilent.portraitSequence && (
+                            <div className="text-slate-500">機能操作の遷移: {chronicSilent.portraitSequence}</div>
+                          )}
+                          {chronicSilent.l30Active != null && (
+                            <div className="text-slate-500">直近30日アクティブ: {chronicSilent.l30Active}</div>
+                          )}
+                          <div className="text-slate-400 text-[10px] pt-0.5">
+                            2ヶ月以上連続で分析機能の操作が少なく、かつ直近30日アクティブが低い（&lt;3）有料プロジェクト
+                          </div>
                         </div>
                       </TooltipContent>
                     </Tooltip>

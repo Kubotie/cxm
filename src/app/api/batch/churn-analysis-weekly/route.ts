@@ -17,6 +17,7 @@ import { writeBatchRunLog, sanitizeRequestParams } from '@/lib/batch/logger';
 import { generateChurnRetrospective } from '@/lib/company/churn-retrospective';
 import { generateChurnAiReport } from '@/lib/company/churn-report-ai';
 import { insertChurnReport } from '@/lib/nocodb/churn-reports';
+import { fetchLatestChronicSilentSnapshot } from '@/lib/nocodb/chronic-silent';
 import { randomUUID } from 'crypto';
 
 export const maxDuration = 300;
@@ -61,8 +62,18 @@ async function runWeeklyReport(dryRun: boolean, windowDays: number): Promise<{
     `warning=${report.aggregate.metabase.warningCount}`,
   );
 
-  // Step 2: AI サマリー
-  const ai = await generateChurnAiReport(report).catch(err => {
+  // Step 2: AI サマリー（Ptengine 休眠スナップショットがあれば注入）
+  const silentSnapshot = await fetchLatestChronicSilentSnapshot('JP').catch(err => {
+    console.warn('[batch/churn-analysis-weekly] 休眠スナップショット取得失敗（注入スキップ）:', err);
+    return null;
+  });
+  if (silentSnapshot) {
+    console.log(
+      `[batch/churn-analysis-weekly] 休眠スナップショット注入 ref=${silentSnapshot.refMonth} ` +
+      `accounts=${silentSnapshot.items.length}`,
+    );
+  }
+  const ai = await generateChurnAiReport(report, silentSnapshot).catch(err => {
     console.error('[batch/churn-analysis-weekly] AI サマリー生成失敗:', err);
     return null;
   });

@@ -5,6 +5,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchChurnReportById } from '@/lib/nocodb/churn-reports';
 import type { ChurnRetrospectiveReport } from '@/lib/company/churn-retrospective';
+import {
+  fetchLatestChronicSilentSnapshot,
+  buildSilentSfIdMap,
+  computeSilentChurnOverlap,
+  type SilentChurnOverlap,
+} from '@/lib/nocodb/chronic-silent';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +28,10 @@ export interface ChurnReportDetail {
   report:          ChurnRetrospectiveReport | null;
   generatedAt:     string;
   modelUsed:       string;
+  // ── Ptengine 休眠（chronic silent）enrichment ──────────────────────────────
+  silentRefMonth:      string | null;   // 休眠スナップショットの基準月（無ければ null）
+  silentSfAccountIds:  string[];        // 休眠アカウントの sf_account_id 一覧（UI バッジ判定用）
+  silentOverlap:       SilentChurnOverlap | null;  // 解約 × 休眠 の突合サマリ
 }
 
 function safeParseArr(raw: string | null | undefined): string[] {
@@ -53,6 +63,24 @@ export async function GET(
     if (!row) {
       return NextResponse.json({ error: 'report not found' }, { status: 404 });
     }
+
+    const report = safeParseReport(row.report_json);
+
+    // ── 休眠 enrichment: 最新スナップショットと突合（失敗しても本体は返す）──────
+    const silentSnapshot = await fetchLatestChronicSilentSnapshot('JP').catch(() => null);
+    const silentMap = buildSilentSfIdMap(silentSnapshot);
+    const silentOverlap = report
+      ? computeSilentChurnOverlap(
+          silentSnapshot,
+          report.perCompany.map(c => ({
+            sfAccountId:        c.sfAccountId,
+            canonicalName:      c.canonicalName,
+            churnDate:          c.churnDate,
+            metabaseHasWarning: c.metabase.hasWarning,
+          })),
+        )
+      : null;
+
     return NextResponse.json({
       reportId:          row.report_id,
       weekStart:         row.week_start,
@@ -64,9 +92,12 @@ export async function GET(
       aiSummary:         row.ai_summary ?? '',
       aiKeyFindings:     safeParseArr(row.ai_key_findings),
       aiRecommendations: safeParseArr(row.ai_recommendations),
-      report:            safeParseReport(row.report_json),
+      report,
       generatedAt:       row.generated_at,
       modelUsed:         row.model_used ?? '',
+      silentRefMonth:     silentSnapshot?.refMonth ?? null,
+      silentSfAccountIds: Array.from(silentMap.keys()),
+      silentOverlap,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -5,6 +5,11 @@
 
 import { getAnthropicClient, getAnthropicModel } from '@/lib/anthropic/client';
 import type { ChurnRetrospectiveReport } from './churn-retrospective';
+import {
+  computeSilentChurnOverlap,
+  type ChronicSilentSnapshot,
+  type SilentChurnOverlap,
+} from '@/lib/nocodb/chronic-silent';
 
 export interface ChurnAiReport {
   summary:         string;          // 3-5 文の全体総括
@@ -42,7 +47,27 @@ const CHURN_REPORT_TOOL = {
   },
 } as const;
 
-function buildPrompt(report: ChurnRetrospectiveReport): string {
+/** 休眠（chronic silent）シグナルのプロンプト節を組み立てる。overlap が無ければ空文字。 */
+function buildSilentSection(overlap: SilentChurnOverlap | null): string {
+  if (!overlap) return '';
+  const newList = overlap.silentOnlyNew
+    .slice(0, 15)
+    .map(c => `  - ${c.companyName ?? c.sfAccountId} (解約=${c.churnDate}, ${c.riskLevel ?? '—'}, 遷移=${c.portraitSequence ?? '—'})`)
+    .join('\n');
+  return `
+
+## Ptengine 休眠シグナル（chronic silent, 参考: 2ヶ月連続で分析機能の操作が少なく直近30日アクティブも低い<3 有料プロジェクト / 基準月 ${overlap.refMonth}）
+- スナップショット上の休眠アカウント総数: ${overlap.silentAccountCount} 社
+- 今回の解約 ${overlap.churnTotal} 社のうち、休眠だった: ${overlap.churnSilentCount} 社
+  - うち Metabase 予兆（Downsell/別PJ解約）と重複: ${overlap.overlapWithMetabase} 社
+  - 休眠のみで拾えた純新規（Metabase 未検知）: ${overlap.silentOnlyNewCount} 社
+- 休眠シグナルの精度（休眠アカウント中、窓内に実際に解約した割合）: ${(overlap.precision * 100).toFixed(1)}%
+${overlap.silentOnlyNewCount > 0 ? `- 休眠のみ純新規リスト:\n${newList}` : ''}
+
+⚠️ caveat: このスナップショットは基準月時点の断面のため、「解約後に休眠化した」post-churn ケースを含みうる。純新規は解約日より前に休眠だったかを個別に確認すること。また精度が低い（＝休眠は件数が多く誤検知が多い）ため、単独アラートではなく他シグナルの補助として扱う前提で言及すること。`;
+}
+
+function buildPrompt(report: ChurnRetrospectiveReport, overlap: SilentChurnOverlap | null): string {
   const { window, churnEvents, aggregate, perCompany } = report;
 
   const tierBreakdown = aggregate.byTier
@@ -93,6 +118,7 @@ ${tierBreakdown}
 
 ## 予兆が立った主要企業 (最大20社)
 ${topWarnings || '(該当なし)'}
+${buildSilentSection(overlap)}
 
 ## 依頼
 CSM 向けの週次レポートとして generate_churn_analysis を呼び出してください。
@@ -106,12 +132,25 @@ CSM 向けの週次レポートとして generate_churn_analysis を呼び出し
 
 /**
  * ChurnRetrospectiveReport を AI に渡して週次サマリー JSON を返す。
+ * @param report    解約遡及分析結果
+ * @param silentSnapshot Ptengine 休眠スナップショット（あれば AI プロンプトに休眠シグナル節を注入）
  */
 export async function generateChurnAiReport(
   report: ChurnRetrospectiveReport,
+  silentSnapshot: ChronicSilentSnapshot | null = null,
 ): Promise<ChurnAiReport> {
   const client = getAnthropicClient();
   const model  = getAnthropicModel();
+
+  const overlap = computeSilentChurnOverlap(
+    silentSnapshot,
+    report.perCompany.map(c => ({
+      sfAccountId:        c.sfAccountId,
+      canonicalName:      c.canonicalName,
+      churnDate:          c.churnDate,
+      metabaseHasWarning: c.metabase.hasWarning,
+    })),
+  );
 
   const response = await client.chat.completions.create({
     model,
@@ -121,7 +160,7 @@ export async function generateChurnAiReport(
     messages: [
       {
         role: 'user',
-        content: buildPrompt(report),
+        content: buildPrompt(report, overlap),
       },
     ],
   });

@@ -87,6 +87,12 @@ export function ChurnAnalysisPage() {
 
   const nextRunLabel = useMemo(() => formatNextRun(computeNextWeeklyRun(new Date())), []);
 
+  // Ptengine 休眠（chronic silent）アカウントの sf_account_id 集合（バッジ判定用）
+  const silentSet = useMemo(
+    () => new Set(detail?.silentSfAccountIds ?? []),
+    [detail],
+  );
+
   // 一覧取得
   const loadList = () => {
     setListLoading(true);
@@ -461,13 +467,20 @@ export function ChurnAnalysisPage() {
                     )}
 
                     {/* Per-company signals table */}
-                    {detail.report && detail.report.perCompany.filter(c => c.metabase.hasWarning || c.firstWarningAt !== 'none').length > 0 && (
+                    {detail.report && detail.report.perCompany.filter(c => c.metabase.hasWarning || c.firstWarningAt !== 'none' || silentSet.has(c.sfAccountId)).length > 0 && (
                       <Card>
                         <CardHeader className="pb-2">
                           <CardTitle className="text-sm flex items-center gap-2">
                             <Building2 className="w-4 h-4 text-slate-500" />
                             予兆が立った企業
                           </CardTitle>
+                          {detail.silentOverlap && detail.silentOverlap.silentOnlyNewCount > 0 && (
+                            <p className="text-xs text-slate-500 mt-1">
+                              うち <span className="font-medium text-amber-600 dark:text-amber-400">{detail.silentOverlap.silentOnlyNewCount} 社</span> は
+                              Ptengine「休眠」でのみ検知（Metabase 予兆なし・基準月 {detail.silentRefMonth}）。
+                              休眠 = 分析機能の操作が少なく直近30日アクティブも低い（&lt;3）状態。精度 {formatPercent(detail.silentOverlap.precision)} のため補助シグナル扱い。
+                            </p>
+                          )}
                         </CardHeader>
                         <CardContent className="p-0">
                           <div className="overflow-x-auto">
@@ -480,12 +493,13 @@ export function ChurnAnalysisPage() {
                                   <TableHead>解約日</TableHead>
                                   <TableHead>Snapshot 予兆</TableHead>
                                   <TableHead>Metabase 予兆</TableHead>
+                                  <TableHead>休眠 (Ptengine)</TableHead>
                                   <TableHead className="text-right">リードタイム</TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
                                 {detail.report.perCompany
-                                  .filter(c => c.metabase.hasWarning || c.firstWarningAt !== 'none')
+                                  .filter(c => c.metabase.hasWarning || c.firstWarningAt !== 'none' || silentSet.has(c.sfAccountId))
                                   .map(c => (
                                     <TableRow key={`${c.sfAccountId}-${c.churnDate}-${c.projectName ?? ''}`}>
                                       <TableCell className="font-medium">
@@ -529,6 +543,18 @@ export function ChurnAnalysisPage() {
                                             <span className="text-slate-400 text-xs">—</span>
                                           )}
                                         </div>
+                                      </TableCell>
+                                      <TableCell>
+                                        {silentSet.has(c.sfAccountId) ? (
+                                          <Badge
+                                            variant="outline"
+                                            className="text-xs border-amber-400 text-amber-600 dark:text-amber-400"
+                                          >
+                                            休眠
+                                          </Badge>
+                                        ) : (
+                                          <span className="text-slate-400 text-xs">—</span>
+                                        )}
                                       </TableCell>
                                       <TableCell className="text-right text-sm tabular-nums text-slate-600">
                                         {c.metabase.earliestSignalDaysBefore != null

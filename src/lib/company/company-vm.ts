@@ -183,6 +183,16 @@ export interface CompanyDetailApiResponse {
     vm:                CompanySummaryViewModel;
   };
 
+  // ── Ptengine 休眠（chronic silent）enrichment ─────────────────────────────
+  //   /core エンドポイントのみ付与。sf_account_id が休眠スナップショットに含まれる場合のみ非 null。
+  chronicSilent?: {
+    isChronicSilent:  boolean;
+    riskLevel:        string | null;
+    portraitSequence: string | null;
+    l30Active:        number | null;
+    refMonth:         string | null;
+  } | null;
+
   // ── Alerts（open alerts 一覧）─────────────────────────────────────────────
   /** status=open の全アラート。source が "policy:xxx" のものは Policy 由来 */
   alerts:    AppAlert[];

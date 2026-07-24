@@ -27,6 +27,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveCompanySummaryTargets } from '@/lib/batch/company-summary-targets';
+import { fetchLatestChronicSilentSnapshot, buildSilentItemByCompanyUid } from '@/lib/nocodb/chronic-silent';
 import type {
   SummaryFreshnessStatus,
   SummaryHumanReviewStatus,
@@ -456,6 +457,13 @@ export async function GET(req: NextRequest) {
   }
   // 'regenerate_priority_desc' は resolveCompanySummaryTargets がすでに適用済み
 
+  // ── Ptengine 休眠（chronic silent）company_uid 一覧（一覧UIのバッジ用）──────
+  const silentSnapshot = await fetchLatestChronicSilentSnapshot('JP').catch(() => null);
+  const silentByUid = buildSilentItemByCompanyUid(silentSnapshot);
+  const silentCompanyUids = Array.from(silentByUid.keys());
+  const silentL30ByUid: Record<string, number | null> = {};
+  for (const [uid, it] of silentByUid) silentL30ByUid[uid] = it.l30Active ?? null;
+
   return NextResponse.json({
     total:   items.length,
     filters: {
@@ -466,5 +474,7 @@ export async function GET(req: NextRequest) {
       summary_type: summaryType,
     },
     items,
+    silentCompanyUids,
+    silentL30ByUid,
   });
 }

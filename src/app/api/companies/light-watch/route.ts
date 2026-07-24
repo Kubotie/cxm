@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchLightWatchCompanies } from '@/lib/nocodb/companies';
 import { fetchLatestSnapshotsByUids } from '@/lib/nocodb/company-snapshot';
+import { fetchLatestChronicSilentSnapshot, buildSilentItemByCompanyUid } from '@/lib/nocodb/chronic-silent';
 
 export interface LightWatchItem {
   companyUid:            string;
@@ -27,6 +28,10 @@ export interface LightWatchItem {
   totalL30Active:        number | null;
   runningCampaignTotal:  number | null;
   pvCeilingAlertCount:   number | null;
+
+  // ── Ptengine 休眠（chronic silent）─────────────────────────────────────────
+  isChronicSilent:       boolean;
+  chronicSilentL30:      number | null;
 }
 
 export interface LightWatchResponse {
@@ -51,9 +56,11 @@ export async function GET(
     const limit = parseInt(req.nextUrl.searchParams.get('limit') ?? '2000', 10) || 2000;
     const companies = await fetchLightWatchCompanies(limit);
     const uids = companies.map(c => c.id);
-    const snapshotMap = uids.length > 0
-      ? await fetchLatestSnapshotsByUids(uids).catch(() => new Map())
-      : new Map();
+    const [snapshotMap, silentSnapshot] = await Promise.all([
+      uids.length > 0 ? fetchLatestSnapshotsByUids(uids).catch(() => new Map()) : Promise.resolve(new Map()),
+      fetchLatestChronicSilentSnapshot('JP').catch(() => null),
+    ]);
+    const silentByUid = buildSilentItemByCompanyUid(silentSnapshot);
 
     const items: LightWatchItem[] = companies.map(c => {
       const snap = snapshotMap.get(c.id) ?? null;
@@ -75,6 +82,8 @@ export async function GET(
         totalL30Active:        n(snap?.total_l30_active),
         runningCampaignTotal:  n(snap?.running_campaign_total),
         pvCeilingAlertCount:   n(snap?.pv_ceiling_alert_count),
+        isChronicSilent:       silentByUid.has(c.id),
+        chronicSilentL30:      silentByUid.get(c.id)?.l30Active ?? null,
       };
     });
 

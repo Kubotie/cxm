@@ -13,6 +13,7 @@ import { getCompanySummaryState } from '@/lib/nocodb/company-summary-read';
 import { fetchBothPhases }        from '@/lib/nocodb/phases';
 import { buildCompanySummaryViewModel } from '@/lib/company/company-summary-state-policy';
 import { buildPhaseComparisonVM, hasAssignedCsm } from '@/lib/company/phase-comparison';
+import { fetchLatestChronicSilentSnapshot, buildSilentSfIdMap } from '@/lib/nocodb/chronic-silent';
 
 export async function GET(
   _req: Request,
@@ -23,11 +24,12 @@ export async function GET(
     return NextResponse.json({ error: 'companyUid が指定されていません' }, { status: 400 });
   }
 
-  // 3つのソースを並列取得
-  const [company, summaryState, { csmPhase, crmPhase }] = await Promise.all([
+  // 4つのソースを並列取得（休眠スナップショットは失敗しても null 扱い）
+  const [company, summaryState, { csmPhase, crmPhase }, silentSnapshot] = await Promise.all([
     fetchCompanyByUid(companyUid).catch(() => null),
     getCompanySummaryState(companyUid).catch(() => null),
     fetchBothPhases(companyUid).catch(() => ({ csmPhase: null, crmPhase: null })),
+    fetchLatestChronicSilentSnapshot('JP').catch(() => null),
   ]);
 
   if (!company) {
@@ -37,6 +39,20 @@ export async function GET(
   const summaryVM = buildCompanySummaryViewModel(summaryState);
   const phaseVM   = buildPhaseComparisonVM(csmPhase, crmPhase, hasAssignedCsm(company.owner));
 
+  // ── Ptengine 休眠 enrichment（sf_account_id が休眠スナップショットに含まれるか）──
+  const silentItem = company.sfAccountId
+    ? buildSilentSfIdMap(silentSnapshot).get(company.sfAccountId) ?? null
+    : null;
+  const chronicSilent = silentItem
+    ? {
+        isChronicSilent:  true,
+        riskLevel:        silentItem.riskLevel,
+        portraitSequence: silentItem.portraitSequence,
+        l30Active:        silentItem.l30Active,
+        refMonth:         silentSnapshot?.refMonth ?? null,
+      }
+    : null;
+
   return NextResponse.json({
     company,
     phase: phaseVM,
@@ -44,5 +60,6 @@ export async function GET(
       state: summaryState,
       vm:    summaryVM,
     },
+    chronicSilent,
   });
 }

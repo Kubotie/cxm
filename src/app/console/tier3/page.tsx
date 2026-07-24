@@ -207,12 +207,23 @@ export default function Tier3Page() {
                     {sorted.map(item => (
                       <TableRow key={item.companyUid}>
                         <TableCell className="font-medium">
-                          <Link
-                            href={`/companies/${item.companyUid}`}
-                            className="text-slate-900 dark:text-slate-100 hover:text-blue-600 hover:underline"
-                          >
-                            {item.canonicalName}
-                          </Link>
+                          <div className="flex items-center gap-1.5">
+                            <Link
+                              href={`/companies/${item.companyUid}`}
+                              className="text-slate-900 dark:text-slate-100 hover:text-blue-600 hover:underline"
+                            >
+                              {item.canonicalName}
+                            </Link>
+                            {item.isChronicSilent && (
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] py-0 border-amber-400 text-amber-600"
+                                title="Ptengine 持続休眠: 2ヶ月以上連続で分析機能の操作が少なく直近30日アクティブも低い(<3)。全プロジェクトが休眠のアカウントのみ表示。"
+                              >
+                                休眠{item.chronicSilentL30 != null && ` L30:${item.chronicSilentL30}`}
+                              </Badge>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>{tierBadge(item.tier, item.isPaidWatched)}</TableCell>
                         <TableCell className="text-slate-600 dark:text-slate-400 text-sm">

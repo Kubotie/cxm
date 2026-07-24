@@ -368,7 +368,7 @@ function FreshnessBadge({ status }: { status: string }) {
 // Row 1 (固定列): health | 企業名 | フェーズ | 空白日数 | support | 更新[urgent] | アクション | →
 // Row 2 (理由):   ↑機会理由 → リスク理由 …  │  [推奨アクション ボタン]
 
-function CompanyCard({ item, segment, isExcluded, onToggleExclude }: { item: CompanyListItemVM; segment: SegmentKey; isExcluded: boolean; onToggleExclude: () => void }) {
+function CompanyCard({ item, segment, isExcluded, onToggleExclude, isChronicSilent, chronicSilentL30 }: { item: CompanyListItemVM; segment: SegmentKey; isExcluded: boolean; onToggleExclude: () => void; isChronicSilent?: boolean; chronicSilentL30?: number | null }) {
   const [actionOpen, setActionOpen] = useState(false);
 
   const health     = getHealthBadge(item.overallHealth);
@@ -418,6 +418,17 @@ function CompanyCard({ item, segment, isExcluded, onToggleExclude }: { item: Com
           >
             {item.companyName}
           </Link>
+
+          {/* Ptengine 休眠バッジ */}
+          {isChronicSilent && (
+            <Badge
+              variant="outline"
+              className="flex-shrink-0 text-[10px] py-0 border-amber-400 text-amber-600"
+              title="Ptengine 持続休眠: 2ヶ月以上連続で分析機能の操作が少なく直近30日アクティブも低い(<3)。全プロジェクトが休眠のアカウントのみ表示。"
+            >
+              休眠{chronicSilentL30 != null && ` L30:${chronicSilentL30}`}
+            </Badge>
+          )}
 
           {/* フェーズ（固定幅 88px, sm+）— 短縮表示 + title で full tooltip */}
           <div className="w-[88px] flex-shrink-0 hidden sm:flex items-center gap-0.5 justify-end">
@@ -549,6 +560,8 @@ export function CompanyList() {
 
   // ── データ ──────────────────────────────────────────────────────────────────
   const [allItems,    setAllItems]    = useState<CompanyListItemVM[] | null>(null);
+  const [silentUids,  setSilentUids]  = useState<Set<string>>(new Set());
+  const [silentL30,   setSilentL30]   = useState<Record<string, number | null>>({});
   const [loadError,   setLoadError]   = useState<string | null>(null);
   const [refreshing,  setRefreshing]  = useState(false);
   const [lastFetched, setLastFetched] = useState<string | null>(null);
@@ -615,8 +628,10 @@ export function CompanyList() {
     setLoadError(null);
     apiFetch('/api/company-summary-list?limit=500&sort=priority_desc')
       .then(r => r.ok ? r.json() : r.json().then((e: {error?:string}) => Promise.reject(e.error ?? '取得エラー')))
-      .then((data: { items: CompanyListItemVM[] }) => {
+      .then((data: { items: CompanyListItemVM[]; silentCompanyUids?: string[]; silentL30ByUid?: Record<string, number | null> }) => {
         setAllItems(data.items ?? []);
+        setSilentUids(new Set(data.silentCompanyUids ?? []));
+        setSilentL30(data.silentL30ByUid ?? {});
         setLastFetched(new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }));
       })
       .catch((err: unknown) => setLoadError(String(err)))
@@ -1050,7 +1065,7 @@ export function CompanyList() {
             ) : (
               <div className="space-y-1.5">
                 {displayed.map(item => (
-                  <CompanyCard key={item.companyUid} item={item} segment={segment} isExcluded={excludedUids.includes(item.companyUid)} onToggleExclude={() => handleToggleExclude(item.companyUid)} />
+                  <CompanyCard key={item.companyUid} item={item} segment={segment} isExcluded={excludedUids.includes(item.companyUid)} onToggleExclude={() => handleToggleExclude(item.companyUid)} isChronicSilent={silentUids.has(item.companyUid)} chronicSilentL30={silentL30[item.companyUid]} />
                 ))}
                 {displayed.length >= 500 && (
                   <p className="text-xs text-slate-400 text-center py-2">
