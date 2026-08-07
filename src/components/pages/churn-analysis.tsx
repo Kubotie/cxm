@@ -127,13 +127,16 @@ export function ChurnAnalysisPage() {
     setRegenerating(true);
     setRegenerateNote(null);
     try {
-      const res = await fetch('/api/batch/churn-analysis-weekly', {
+      const res = await fetch('/api/ops/churn-reports/regenerate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      if (!res.ok) throw new Error(`status=${res.status}`);
-      setRegenerateNote('レポート生成をバックグラウンドで開始しました。数分後に一覧を再読み込みしてください。');
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`status=${res.status}${body ? ` body=${body.slice(0, 120)}` : ''}`);
+      }
+      setRegenerateNote('レポート生成をバックグラウンドで開始しました。数分後に「更新」ボタンで一覧を再読み込みしてください（AI 呼び出し込みで 1〜2 分かかります）。');
     } catch (err) {
       setRegenerateNote(`生成に失敗しました: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
