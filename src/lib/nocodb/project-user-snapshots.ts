@@ -30,6 +30,15 @@ export interface ProjectUserSnapshot {
   l30_active_users:       number | null;
   l7_active_users:        number | null;
   running_campaign_count: number | null;
+  // ── 利用実績（CXM v2 個社ページの CSV 直読み廃止のため追加。Metabase signals 由来）──
+  heatmap_count?:         number | null;   // Pti History Heatmap Count
+  pv_ceiling?:            number | null;   // Pv Ceiling
+  month_pv_count?:        number | null;   // Month Period Pv Count
+  last_active_date?:      string | null;   // Last Active Date "YYYY-MM-DD"
+  // ── 活用スコア（記録開始後のバッチで書き込み。未設定時 undefined）──────────
+  healthy_score?:         number | null;
+  depth_score?:           number | null;
+  breadth_score?:         number | null;
 }
 
 // ── 書き込み ─────────────────────────────────────────────────────────────────
@@ -98,4 +107,58 @@ export async function fetchProjectSnapshotsByDate(
     if (!result.has(row.project_id)) result.set(row.project_id, row);
   }
   return result;
+}
+
+/**
+ * 複数プロジェクトの「最新スナップショット（各 project_id につき最新日1件）」を返す。
+ * CXM v2 個社ページ（/api/company/[companyUid]/usage）が Metabase CSV 全件DLを避け、
+ * 日次スナップショットから利用実績を読むために使う。
+ *
+ * @returns Map<project_id, ProjectUserSnapshot>（該当なしは空 Map）
+ */
+export async function fetchLatestProjectSnapshots(
+  projectIds: string[],
+): Promise<Map<string, ProjectUserSnapshot>> {
+  const tableId = TABLE_IDS.project_user_snapshots;
+  if (!tableId || projectIds.length === 0) return new Map();
+
+  const where = `(project_id,in,${projectIds.join(',')})`;
+  const limit = String(Math.min(projectIds.length * 3, 3000));
+
+  const rows = await nocoFetch<ProjectUserSnapshot>(tableId, {
+    where,
+    sort:  '-snapshot_date',
+    limit,
+  }, false).catch(() => [] as ProjectUserSnapshot[]);
+
+  const result = new Map<string, ProjectUserSnapshot>();
+  for (const row of rows) {
+    if (!row.project_id) continue;
+    if (!result.has(row.project_id)) result.set(row.project_id, row); // sort 済み先頭 = 最新
+  }
+  return result;
+}
+
+/**
+ * 複数プロジェクトの「sinceDate 以降」の全スナップショットを日付昇順で返す。
+ * CXM v2 会社詳細の時系列（/api/company/[companyUid]/timeseries）で使用。
+ * 返却は日別集計前のフラットな配列。日付ごとの集約は呼び出し側で行う。
+ */
+export async function fetchProjectSnapshotHistory(
+  projectIds: string[],
+  sinceDate: string,
+): Promise<ProjectUserSnapshot[]> {
+  const tableId = TABLE_IDS.project_user_snapshots;
+  if (!tableId || projectIds.length === 0) return [];
+
+  const where = `(project_id,in,${projectIds.join(',')})~and(snapshot_date,gte,${sinceDate})`;
+  const limit = String(Math.min(projectIds.length * 120, 5000));
+
+  const rows = await nocoFetch<ProjectUserSnapshot>(tableId, {
+    where,
+    sort:  'snapshot_date',
+    limit,
+  }, false).catch(() => [] as ProjectUserSnapshot[]);
+
+  return rows;
 }

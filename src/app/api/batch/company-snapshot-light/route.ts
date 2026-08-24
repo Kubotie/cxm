@@ -20,7 +20,7 @@ import { writeBatchRunLog, sanitizeRequestParams } from '@/lib/batch/logger';
 import { fetchLightWatchCompanies } from '@/lib/nocodb/companies';
 import { fetchCrmPhasesByUids } from '@/lib/nocodb/phases';
 import { fetchProjectsByUids } from '@/lib/nocodb/project-info';
-import { fetchSupportCountsByUids } from '@/lib/nocodb/support-by-company';
+import { fetchSupportCountsByUids, SUPPORT_COUNTS_BATCH_BUDGET_MS } from '@/lib/nocodb/support-by-company';
 import { fetchProjectMrrMap } from '@/lib/metabase/mrr';
 import { fetchProjectUserActivityMap } from '@/lib/metabase/project-user-activity';
 import { fetchProjectSignalMap } from '@/lib/metabase/project-signals';
@@ -90,7 +90,7 @@ async function runLightSnapshotJob(
       new Map(allUids.map(u => [u, [] as import('@/lib/nocodb/types').AppProjectInfo[]])),
     ),
     fetchProjectMrrMap().catch(() => new Map()),
-    fetchSupportCountsByUids(allUids).catch(() =>
+    fetchSupportCountsByUids(allUids, { timeoutMs: SUPPORT_COUNTS_BATCH_BUDGET_MS }).catch(() =>
       new Map() as Awaited<ReturnType<typeof fetchSupportCountsByUids>>,
     ),
     fetchProjectUserActivityMap().catch(() => new Map()),
@@ -120,7 +120,9 @@ async function runLightSnapshotJob(
     const { bucket: renewalBucket } = computeRenewal(renewalDate);
 
     const support = supportMap.get(uid);
-    const openSupportCount = support?.openCount ?? 0;
+    // 未取得（NocoDB 失敗・予算超過）は null。0 を書くと「摩擦なし」と誤判定され
+    // priority-score / 提案準備度 / 解約遡及分析が誤った根拠を持つ。
+    const openSupportCount = support?.openCount ?? null;
 
     const projectVM = projList.length > 0
       ? buildProjectAggregateVM(projList, activityMap, signalDataMap)
@@ -175,6 +177,11 @@ async function runLightSnapshotJob(
           l30_active_users:       activity?.l30ActiveUsers        ?? sd?.l30Active        ?? null,
           l7_active_users:        activity?.l7ActiveUsers         ?? sd?.l7EventCount     ?? null,
           running_campaign_count: sd?.runningCampaignWithGoalCount ?? null,
+          // ── 利用実績（個社ページの CSV 直読み廃止のため蓄積。Deep と同じ）─────
+          heatmap_count:          sd?.heatmapCount   ?? null,
+          pv_ceiling:             sd?.pvCeiling      ?? null,
+          month_pv_count:         sd?.monthPvCount   ?? null,
+          last_active_date:       sd?.lastActiveDate ?? activity?.maxLastActiveDate ?? null,
         }).catch(err => {
           console.warn(`[batch/company-snapshot-light] project snapshot upsert 失敗 ${p.id}:`, err);
         });

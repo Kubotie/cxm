@@ -10,7 +10,7 @@
 // 統一型 CommunicationEntry は company/communication-signal.ts で定義する。
 // このファイルは NocoDB アクセスのみに責任を持つ。
 
-import { nocoFetch, nocoFetchByUids, TABLE_IDS } from '@/lib/nocodb/client';
+import { nocoFetch, nocoFetchByUids, nocoFetchAllByUids, TABLE_IDS } from '@/lib/nocodb/client';
 import {
   toAppLogChatwork,
   toAppLogSlack,
@@ -202,34 +202,42 @@ export async function fetchLatestCommunicationDatesByUids(
 ): Promise<Map<string, LatestCommunicationDate>> {
   if (companyUids.length === 0) return new Map();
 
-  // sort=-sent_at/-meeting_date で最新1件/社を取得。余裕をみて × 3。
-  const fetchOpts = { limit: String(Math.min(companyUids.length * 3, 300)) };
-
-  // 最終日時だけ必要なため最小カラムのみ取得。no-store でキャッシュ警告を回避。
-  const [chatworkMap, slackMap, notionMap, intercomMailMap] = await Promise.all([
+  // ⚠️ 実カラム名は sent_at_jst / creat_at_jst である（sent_at / meeting_date は存在しない）。
+  //    誤ったカラム名を指定していたため、以前は chatwork / slack / notion が常に null になっていた。
+  //
+  // ⚠️ nocoFetchByUids は「1リクエスト・limit 上限あり」なので、対象企業が多いと
+  //    sort 順の先頭を占めた数社だけが返り、残りは 0 件になる（open_support_count=0 と同じ罠）。
+  //    最終接点日は全企業について正しく出す必要があるため nocoFetchAllByUids を使う。
+  //    日付カラムのみ fields で絞れば、chatwork/slack/notion は各 1000 件強で軽い。
+  // ⚠️ 1ソースの失敗で全体を捨てないよう、必ず個別に catch する。
+  //    以前は Promise.all の中で1本が reject すると全ソースが失われ、
+  //    最終接点日が全企業 null になっていた。
+  const [chatworkMap, slackMap, notionMap, intercomMap] = await Promise.all([
     TABLE_IDS.log_chatwork
-      ? nocoFetchByUids<RawLogChatwork>(TABLE_IDS.log_chatwork, companyUids, {
-          ...fetchOpts, sort: '-sent_at',
-          fields: 'company_uid,sent_at',
-        }, false)
+      ? nocoFetchAllByUids<RawLogChatwork>(TABLE_IDS.log_chatwork, companyUids, {
+          sort: '-sent_at_jst', fields: 'company_uid,sent_at_jst',
+        }).catch(logAndEmpty<RawLogChatwork>('log_chatwork'))
       : Promise.resolve(new Map<string, RawLogChatwork[]>()),
     TABLE_IDS.log_slack
-      ? nocoFetchByUids<RawLogSlack>(TABLE_IDS.log_slack, companyUids, {
-          ...fetchOpts, sort: '-sent_at',
-          fields: 'company_uid,sent_at',
-        }, false)
+      ? nocoFetchAllByUids<RawLogSlack>(TABLE_IDS.log_slack, companyUids, {
+          sort: '-sent_at_jst', fields: 'company_uid,sent_at_jst',
+        }).catch(logAndEmpty<RawLogSlack>('log_slack'))
       : Promise.resolve(new Map<string, RawLogSlack[]>()),
     TABLE_IDS.log_notion_minutes
-      ? nocoFetchByUids<RawLogNotionMinutes>(TABLE_IDS.log_notion_minutes, companyUids, {
-          ...fetchOpts, sort: '-meeting_date',
-          fields: 'company_uid,meeting_date',
-        }, false)
+      ? nocoFetchAllByUids<RawLogNotionMinutes>(TABLE_IDS.log_notion_minutes, companyUids, {
+          sort: '-creat_at_jst', fields: 'company_uid,creat_at_jst',
+        }).catch(logAndEmpty<RawLogNotionMinutes>('log_notion_minutes'))
       : Promise.resolve(new Map<string, RawLogNotionMinutes[]>()),
+    // intercom は件数が多い（1.6万件超）ため limit 方式に留める（best-effort）。
+    // メール種別での絞り込みはしない: 実カラムは message_type であり、
+    // コード全体で使われている massage_type は存在しない（FIELD_NOT_FOUND になる）。
+    // 最終接点日の観点ではサポート問い合わせも接点なので、種別を問わず最新日を取る。
     TABLE_IDS.log_intercom
       ? nocoFetchByUids<RawSupportCase>(TABLE_IDS.log_intercom, companyUids, {
-          ...fetchOpts, sort: '-sent_at_jst',
-          fields: 'company_uid,massage_type,sent_at_jst',
-        }, false)
+          limit: String(Math.min(companyUids.length * 5, 500)),
+          sort: '-sent_at_jst',
+          fields: 'company_uid,sent_at_jst',
+        }, false).catch(logAndEmpty<RawSupportCase>('log_intercom'))
       : Promise.resolve(new Map<string, RawSupportCase[]>()),
   ]);
 
@@ -239,20 +247,38 @@ export async function fetchLatestCommunicationDatesByUids(
     const cwRows         = chatworkMap.get(uid)     ?? [];
     const slackRows      = slackMap.get(uid)        ?? [];
     const notionRows     = notionMap.get(uid)       ?? [];
-    const intercomRows   = intercomMailMap.get(uid) ?? [];
+    const intercomRows   = intercomMap.get(uid)     ?? [];
 
-    const cwDate       = cwRows[0]?.sent_at         ? String(cwRows[0].sent_at) : null;
-    const slackDate    = slackRows[0]?.sent_at       ? String(slackRows[0].sent_at) : null;
-    const notionDate   = notionRows[0]?.meeting_date ? String(notionRows[0].meeting_date) : null;
-    // mail タイプのみ最新日付を取得（インメモリフィルタ）
-    const mailRow      = intercomRows.find(r => r.massage_type === 'mail');
-    const intercomDate = mailRow?.sent_at_jst ? String(mailRow.sent_at_jst) : null;
+    // sort 済みだが、ページング結合後の順序に依存しないよう最大値を取る
+    const cwDate     = maxDateOf(cwRows.map(r => r.sent_at_jst ?? r.sent_at));
+    const slackDate  = maxDateOf(slackRows.map(r => r.sent_at_jst ?? r.sent_at));
+    const notionDate = maxDateOf(notionRows.map(r => r.creat_at_jst ?? r.meeting_date));
+    const intercomDate = maxDateOf(intercomRows.map(r => r.sent_at_jst));
 
     const latestDate = latestOf(cwDate, slackDate, notionDate, intercomDate);
     result.set(uid, { latestDate, blankDays: daysSince(latestDate) });
   }
 
   return result;
+}
+
+/** 取得失敗を warn に落として空 Map を返す catch ハンドラ */
+function logAndEmpty<T>(source: string) {
+  return (e: unknown): Map<string, T[]> => {
+    console.warn(`[communication-logs] ${source} の最終接点日取得に失敗（他ソースで継続）:`, e);
+    return new Map<string, T[]>();
+  };
+}
+
+/** 日付らしい値の配列から最大値を返す。空 / 全て無効なら null */
+function maxDateOf(values: unknown[]): string | null {
+  let max: string | null = null;
+  for (const v of values) {
+    if (v === null || v === undefined || v === '') continue;
+    const s = String(v);
+    if (!max || s > max) max = s;
+  }
+  return max;
 }
 
 // ── 全ソース一括（Detail の Communication タブ向け）──────────────────────────

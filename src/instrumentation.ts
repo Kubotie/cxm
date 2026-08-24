@@ -14,18 +14,23 @@ export async function register() {
 
 async function warmMetabaseCaches() {
   try {
-    const [mrr, activity, pkgEvents, peopleSignals, staleDm] = await Promise.allSettled([
+    const tasks: [string, Promise<unknown>][] = [
       // Metabase CSV（大容量 → プロセスキャッシュに先読み）
-      import('@/lib/metabase/mrr').then(m => m.fetchProjectMrrMap()),
-      import('@/lib/metabase/project-user-activity').then(m => m.fetchProjectUserActivityMap()),
-      import('@/lib/metabase/package-events').then(m => m.fetchPackageEventSummary()),
+      // ⚠ signals は会社詳細 /usage の主データ源。暖め忘れると初回リクエストが数秒ブロックする。
+      ['signals',  import('@/lib/metabase/project-signals').then(m => m.fetchProjectSignalMap())],
+      ['activity', import('@/lib/metabase/project-user-activity').then(m => m.fetchProjectUserActivityMap())],
+      // mrr は unstable_cache 依存のため request 文脈外でも安全な warmMrrCache を使う
+      ['mrr',      import('@/lib/metabase/mrr').then(m => m.warmMrrCache())],
+      ['pkgEvents', import('@/lib/metabase/package-events').then(m => m.fetchPackageEventSummary())],
       // NocoDB 重量クエリ（2MB超でNext.jsキャッシュ不可 → プロセスキャッシュに先読み）
-      import('@/lib/nocodb/people').then(m => m.fetchPeopleSignalsByUids(['_warmup_dummy_'])),
-      import('@/lib/nocodb/people').then(m => m.fetchStaleDmSignalsByUids(['_warmup_dummy_'])),
-    ]);
-    const results = [mrr, activity, pkgEvents, peopleSignals, staleDm]
-      .map(r => r.status === 'fulfilled' ? 'ok' : 'err');
-    console.log('[instrumentation] cache warmup:', results.join(', '));
+      ['peopleSignals', import('@/lib/nocodb/people').then(m => m.fetchPeopleSignalsByUids(['_warmup_dummy_']))],
+      ['staleDm',       import('@/lib/nocodb/people').then(m => m.fetchStaleDmSignalsByUids(['_warmup_dummy_']))],
+    ];
+    const settled = await Promise.allSettled(tasks.map(([, p]) => p));
+    const summary = settled
+      .map((r, i) => `${tasks[i][0]}=${r.status === 'fulfilled' ? 'ok' : 'err'}`)
+      .join(', ');
+    console.log('[instrumentation] cache warmup:', summary);
   } catch (e) {
     console.warn('[instrumentation] warmup failed (non-critical):', e);
   }

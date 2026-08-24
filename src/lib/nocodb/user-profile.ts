@@ -53,6 +53,8 @@ interface RawStaffIdentify {
   preferred_summary_policy_id?: string | null;
   focus_areas?: string | null;
   excluded_company_uids?: string | null;
+  /** scrypt ハッシュ。AppUserProfile には**載せない**（クライアントへ出さない） */
+  password_hash?: string | null;
   is_active?: boolean | null;
   [key: string]: unknown;
 }
@@ -178,4 +180,60 @@ export async function updateUserProfile(
   if (patch.excluded_company_uids      !== undefined) payload.excluded_company_uids      = JSON.stringify(patch.excluded_company_uids);
 
   await nocoUpdate(tableId, rowId, payload);
+}
+
+// ── 認証情報（パスワード）────────────────────────────────────────────────────
+//
+// password_hash は AppUserProfile に載せない。/api/user/profile は
+// プロファイルをそのままクライアントへ返すため、混ぜるとハッシュが漏れる。
+// 認証に必要な最小限だけを別型で取り出す。
+
+export interface UserCredential {
+  /** NocoDB の行 ID（更新に使う） */
+  rowId: number;
+  name2: string;
+  role:  string;
+  /** 未設定なら null = 個別パスワード未登録（共有パスワード運用） */
+  passwordHash: string | null;
+}
+
+function toCredential(raw: RawStaffIdentify): UserCredential {
+  return {
+    rowId:        raw.Id,
+    name2:        raw.name2?.trim() ?? '',
+    role:         raw.role ?? 'csm',
+    passwordHash: raw.password_hash?.trim() || null,
+  };
+}
+
+/** 全行を引いて JS 側で突き合わせる（fetchAllUserProfiles と同じ理由） */
+async function fetchRawStaff(): Promise<RawStaffIdentify[]> {
+  const tableId = TABLE_IDS.staff_identify;
+  if (!tableId) return [];
+  return nocoFetch<RawStaffIdentify>(tableId, { limit: '100' }, false)
+    .catch(() => [] as RawStaffIdentify[]);
+}
+
+/** メールアドレスで認証情報を引く（ログイン用） */
+export async function fetchCredentialByEmail(email: string): Promise<UserCredential | null> {
+  const target = email.toLowerCase().trim();
+  if (!target) return null;
+  const rows = await fetchRawStaff();
+  const row = rows.find(r => r.email?.toLowerCase().trim() === target);
+  return row ? toCredential(row) : null;
+}
+
+/** name2 で認証情報を引く（パスワード変更用） */
+export async function fetchCredentialByName2(name2: string): Promise<UserCredential | null> {
+  if (!name2) return null;
+  const rows = await fetchRawStaff();
+  const row = rows.find(r => r.name2?.trim() === name2);
+  return row ? toCredential(row) : null;
+}
+
+/** password_hash を更新する。ハッシュ以外を渡さないこと */
+export async function updatePasswordHash(rowId: number, passwordHash: string): Promise<void> {
+  const tableId = TABLE_IDS.staff_identify;
+  if (!tableId) throw new Error('staff_identify のテーブル ID が未設定です');
+  await nocoUpdate(tableId, rowId, { password_hash: passwordHash });
 }

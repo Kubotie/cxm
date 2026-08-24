@@ -33,23 +33,55 @@ const SNAPSHOT_TTL_MS = 5 * 60 * 1000; // 5分
 
 interface SnapshotCacheEntry {
   data:      Map<string, CompanyDailySnapshot>;
+  /**
+   * この日付について**問い合わせ済みの company_uid**。
+   *
+   * ⚠️ ヒットした uid だけを持つと、少ない uid で呼ばれた結果が
+   * その日のキャッシュとして居座り、後から多い uid で呼んでも
+   * 取得済み分しか返らなくなる（実測: 10社で呼んだ後に102社で呼ぶと7社しか返らない）。
+   * 「引いたが該当が無かった uid」も含めて記録する。
+   */
+  asked:     Set<string>;
   cachedAt:  number;
 }
 const _snapshotCache = new Map<string, SnapshotCacheEntry>();
 
-function getSnapshotCache(key: string): Map<string, CompanyDailySnapshot> | null {
+function getSnapshotCache(key: string): SnapshotCacheEntry | null {
   const entry = _snapshotCache.get(key);
   if (!entry) return null;
   if (Date.now() - entry.cachedAt > SNAPSHOT_TTL_MS) {
     _snapshotCache.delete(key);
     return null;
   }
-  return entry.data;
+  return entry;
 }
 
-function setSnapshotCache(key: string, data: Map<string, CompanyDailySnapshot>): void {
-  _snapshotCache.set(key, { data, cachedAt: Date.now() });
+/** 既存エントリに追記する。問い合わせ済み uid を積み上げる */
+function mergeSnapshotCache(
+  key: string,
+  data: Map<string, CompanyDailySnapshot>,
+  asked: string[],
+): void {
+  const cur = _snapshotCache.get(key);
+  const fresh = cur && Date.now() - cur.cachedAt <= SNAPSHOT_TTL_MS;
+  const merged = fresh ? cur.data : new Map<string, CompanyDailySnapshot>();
+  for (const [k, v] of data) merged.set(k, v);
+  const askedSet = fresh ? cur.asked : new Set<string>();
+  for (const u of asked) askedSet.add(u);
+  _snapshotCache.set(key, { data: merged, asked: askedSet, cachedAt: fresh ? cur.cachedAt : Date.now() });
 }
+
+/**
+ * 1回のクエリで扱う uid 数。
+ *
+ * `snapshot_date` 降順で引くため、uid をまとめすぎると
+ * **新しい日付の行だけで limit を使い切って、一部の企業に到達しない**。
+ * 実測（2026-08-22）: 102社を limit 204 で引くと5日分で打ち切られ、49社しか返らなかった。
+ * 1社あたり十分な行数の余裕を持たせるため、チャンクを小さくする。
+ */
+const SNAPSHOT_UID_CHUNK = 20;
+/** 1チャンクあたりの取得上限（1社あたり約50行分の余裕） */
+const SNAPSHOT_CHUNK_LIMIT = 1000;
 
 // ── 型定義 ───────────────────────────────────────────────────────────────────
 
@@ -167,6 +199,24 @@ export async function fetchLatestSnapshotsByUids(
 }
 
 /**
+ * 指定企業の「sinceDate 以降」の全スナップショットを日付昇順で返す。
+ * CXM v2 会社詳細の時系列（/api/company/[companyUid]/timeseries）で使用。
+ */
+export async function fetchCompanySnapshotHistory(
+  companyUid: string,
+  sinceDate: string,
+): Promise<CompanyDailySnapshot[]> {
+  const tableId = TABLE_IDS.company_daily_snapshot;
+  if (!tableId) return [];
+  const rows = await nocoFetch<CompanyDailySnapshot>(tableId, {
+    where: `(company_uid,eq,${companyUid})~and(snapshot_date,gte,${sinceDate})`,
+    sort:  'snapshot_date',
+    limit: '400',
+  }).catch(() => [] as CompanyDailySnapshot[]);
+  return rows;
+}
+
+/**
  * 前日のスナップショット日付文字列を返す。
  * バッチで「昨日のスナップが存在するか」確認するのに使う。
  */
@@ -203,37 +253,70 @@ export async function fetchSnapshotsByDate(
   companyUids: string[],
   targetDate: string,
 ): Promise<Map<string, CompanyDailySnapshot>> {
+  return fetchSnapshotsUpTo(companyUids, targetDate, 'lte', `date:${targetDate}`);
+}
+
+/**
+ * 「指定日以前（または未満）で最新のスナップショット」を企業ごとに1件取る共通実装。
+ *
+ * ⚠️ 2つの落とし穴を踏んだので、両方ここで塞いでいる:
+ *   1. **limit 不足** — `snapshot_date` 降順で引くため、uid をまとめすぎると
+ *      新しい日付の行で limit を使い切り、一部の企業に到達しない。
+ *      実測（2026-08-22）: 102社を limit 204 で引くと5日分で打ち切られ49社しか返らず、
+ *      提案準備ボードの「実行体制」が102社中53社で未評価になっていた。
+ *   2. **キャッシュ汚染** — 取得済み uid を記録しないと、少ない uid で呼ばれた結果が
+ *      その日のキャッシュとして居座り、後から多い uid で呼んでも増えない。
+ */
+async function fetchSnapshotsUpTo(
+  companyUids: string[],
+  boundaryDate: string,
+  op: 'lte' | 'lt',
+  cacheKey: string,
+): Promise<Map<string, CompanyDailySnapshot>> {
   const tableId = TABLE_IDS.company_daily_snapshot;
   if (!tableId || companyUids.length === 0) return new Map();
 
-  const cacheKey = `date:${targetDate}`;
+  const targetDate = boundaryDate;
   const cached = getSnapshotCache(cacheKey);
-  if (cached) {
-    // キャッシュから要求 uid 分だけ返す
-    const filtered = new Map<string, CompanyDailySnapshot>();
-    for (const uid of companyUids) {
-      const v = cached.get(uid);
-      if (v) filtered.set(uid, v);
+
+  // まだ引いていない uid だけを対象にする。
+  // 取得済み uid 集合を見ずにキャッシュを返すと、少ない uid で呼ばれた結果が
+  // その日のキャッシュとして固定され、後から多い uid で呼んでも増えない。
+  const missing = cached
+    ? companyUids.filter(u => !cached.asked.has(u))
+    : companyUids;
+
+  if (missing.length > 0) {
+    const fetched = new Map<string, CompanyDailySnapshot>();
+
+    // uid をまとめすぎると、新しい日付の行だけで limit を使い切って
+    // 一部の企業に到達しない。チャンクに割って1社あたりの行数を確保する。
+    for (let i = 0; i < missing.length; i += SNAPSHOT_UID_CHUNK) {
+      const chunk = missing.slice(i, i + SNAPSHOT_UID_CHUNK);
+      const where = `(company_uid,in,${chunk.join(',')})~and(snapshot_date,${op},${targetDate})`;
+
+      const rows = await nocoFetch<CompanyDailySnapshot>(tableId, {
+        where,
+        sort:  '-snapshot_date',
+        limit: String(SNAPSHOT_CHUNK_LIMIT),
+      }).catch(() => [] as CompanyDailySnapshot[]);
+
+      for (const row of rows) {
+        const uid = row.company_uid;
+        if (!uid) continue;
+        if (!fetched.has(uid)) fetched.set(uid, row);   // 降順なので最初が最新
+      }
     }
-    return filtered;
+    // 該当が無かった uid も「引いた」として記録する（再取得のループを防ぐ）
+    mergeSnapshotCache(cacheKey, fetched, missing);
   }
 
-  const where = `(company_uid,in,${companyUids.join(',')})~and(snapshot_date,lte,${targetDate})`;
-  const limit = String(Math.min(companyUids.length * 2, 1000));
-
-  const rows = await nocoFetch<CompanyDailySnapshot>(tableId, {
-    where,
-    sort:  '-snapshot_date',
-    limit,
-  }).catch(() => [] as CompanyDailySnapshot[]);
-
+  const store = getSnapshotCache(cacheKey)?.data ?? new Map<string, CompanyDailySnapshot>();
   const result = new Map<string, CompanyDailySnapshot>();
-  for (const row of rows) {
-    const uid = row.company_uid;
-    if (!uid) continue;
-    if (!result.has(uid)) result.set(uid, row);
+  for (const uid of companyUids) {
+    const v = store.get(uid);
+    if (v) result.set(uid, v);
   }
-  setSnapshotCache(cacheKey, result);
   return result;
 }
 
@@ -247,36 +330,7 @@ export async function fetchSnapshotsByDate(
 export async function fetchPreviousSnapshotsByUids(
   companyUids: string[],
 ): Promise<Map<string, CompanyDailySnapshot>> {
-  const tableId = TABLE_IDS.company_daily_snapshot;
-  if (!tableId || companyUids.length === 0) return new Map();
-
-  const today    = todayDateStr();
-  const cacheKey = `prev:${today}`;
-  const cached   = getSnapshotCache(cacheKey);
-  if (cached) {
-    const filtered = new Map<string, CompanyDailySnapshot>();
-    for (const uid of companyUids) {
-      const v = cached.get(uid);
-      if (v) filtered.set(uid, v);
-    }
-    return filtered;
-  }
-
-  const where = `(company_uid,in,${companyUids.join(',')})~and(snapshot_date,lt,${today})`;
-  const limit = String(Math.min(companyUids.length * 2, 1000));
-
-  const rows = await nocoFetch<CompanyDailySnapshot>(tableId, {
-    where,
-    sort:  '-snapshot_date',
-    limit,
-  }).catch(() => [] as CompanyDailySnapshot[]);
-
-  const result = new Map<string, CompanyDailySnapshot>();
-  for (const row of rows) {
-    const uid = row.company_uid;
-    if (!uid) continue;
-    if (!result.has(uid)) result.set(uid, row);
-  }
-  setSnapshotCache(cacheKey, result);
-  return result;
+  // fetchSnapshotsByDate と同じ落とし穴（limit 不足・キャッシュ汚染）があるため
+  // 実装を共有する。境界だけ違う（前日 = 今日より前）。
+  return fetchSnapshotsUpTo(companyUids, todayDateStr(), 'lt', `prev:${todayDateStr()}`);
 }

@@ -42,7 +42,7 @@ import {
 import { fetchProjectsByUids }               from '@/lib/nocodb/project-info';
 import { fetchProjectMrrMap }                from '@/lib/metabase/mrr';
 import { fetchLatestCommunicationDatesByUids } from '@/lib/nocodb/communication-logs';
-import { fetchSupportCountsByUids }           from '@/lib/nocodb/support-by-company';
+import { fetchSupportCountsByUids, SUPPORT_COUNTS_UI_BUDGET_MS } from '@/lib/nocodb/support-by-company';
 import { fetchPeopleSignalsByUids, fetchStaleDmSignalsByUids } from '@/lib/nocodb/people';
 import { fetchOverdueActionSignalsByUids }    from '@/lib/nocodb/company-actions';
 import {
@@ -177,7 +177,9 @@ export async function GET(req: NextRequest) {
     fetchLatestCommunicationDatesByUids(allUids).catch(() =>
       new Map<string, import('@/lib/nocodb/communication-logs').LatestCommunicationDate>(),
     ),
-    fetchSupportCountsByUids(allUids).catch(() =>
+    // サポート件数は主要指標より優先度が低い。予算内に返らなければ「未取得」として
+    // 先に画面を返し、スナップショット値にフォールバックする（裏では完走してキャッシュに載る）。
+    fetchSupportCountsByUids(allUids, { timeoutMs: SUPPORT_COUNTS_UI_BUDGET_MS }).catch(() =>
       new Map<string, import('@/lib/nocodb/support-by-company').SupportCountSummary>(),
     ),
     // People signal: NOCODB_PEOPLE_TABLE_ID 未設定時は空 Map（graceful degradation）
@@ -252,7 +254,15 @@ export async function GET(req: NextRequest) {
     const blankDays = commDate.blankDays;
     const commRisk  = getCommunicationRiskLevel(blankDays);
 
-    const supportCounts = supportMap.get(uid) ?? { openCount: 0, waitingCseCount: 0, criticalCount: 0, recentSupportCount: 0 };
+    // live 取得が間に合わなかった場合は前日スナップショットの値で代替する。
+    // criticalCount はスナップショットに無いため 0（health は support 以外で判定）。
+    const liveSupport   = supportMap.get(uid);
+    const supportCounts = liveSupport ?? {
+      openCount:          prevSnapshotMap.get(uid)?.open_support_count ?? 0,
+      waitingCseCount:    0,
+      criticalCount:      0,
+      recentSupportCount: 0,
+    };
 
     // Health（List 向けに support_case_ai_state なしの簡易版）
     const healthVM = buildHealthSignalVM({
@@ -308,8 +318,10 @@ export async function GET(req: NextRequest) {
       };
 
       // ── 前日差分（prevSnap がある場合のみ計算）─────────────────────────────
+      // live 取得が未取得の場合、supportCounts はスナップショット由来なので差分は常に0になる。
+      // 「変動なし」と「未取得」を混ぜないため、live が無い場合は差分を出さない。
       const snapshotSupport = prevSnap?.open_support_count ?? 0;
-      const supportDelta    = (prevSnap ? supportCounts.openCount - snapshotSupport : 0);
+      const supportDelta    = (prevSnap && liveSupport ? liveSupport.openCount - snapshotSupport : 0);
       const snapshotMrr     = prevSnap?.mrr ?? null;
       const mrrDelta        = currentMrr_ !== null && snapshotMrr !== null
         ? currentMrr_ - snapshotMrr : null;
@@ -354,8 +366,8 @@ export async function GET(req: NextRequest) {
         // 前日差分
         phaseChanged:         prevSnap !== null && currentMPhase !== null && prevSnap.m_phase !== null && currentMPhase !== prevSnap.m_phase,
         previousMPhase:       prevSnap?.m_phase ?? null,
-        supportDelta:         prevSnap ? supportDelta : null,
-        supportIncreased:     prevSnap ? supportDelta > 0 : false,
+        supportDelta:         prevSnap && liveSupport ? supportDelta : null,
+        supportIncreased:     prevSnap && liveSupport ? supportDelta > 0 : false,
         renewalEnteredThirty: prevSnap !== null && snapshotBucket !== '0-30' && renewalBucket === '0-30',
         renewalEnteredNinety: prevSnap !== null && (snapshotBucket === '91-180' || snapshotBucket === '180+' || snapshotBucket === null) && renewalBucket === '31-90',
         mrrDelta,

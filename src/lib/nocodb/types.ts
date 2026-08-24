@@ -86,6 +86,8 @@ export interface AppCompany {
   tier: 1 | 2 | 3 | 5 | null;
   /** 有料顧客自動監視フラグ (Metabase 有料リスト由来) */
   isPaidWatched: boolean;
+  /** 代表ドメイン（業界特定などの外部調査で企業を一意に示すために使う）。未設定は null */
+  companyDomain: string | null;
 }
 
 export interface AppAlert {
@@ -199,6 +201,22 @@ export function s(v: unknown, fallback = '—'): string {
   return String(v);
 }
 
+/** 先頭から最初の非空値を文字列で返す。全て空なら空文字 */
+export function firstText(...vals: unknown[]): string {
+  for (const v of vals) {
+    if (v == null) continue;
+    const str = String(v).trim();
+    if (str) return str;
+  }
+  return '';
+}
+
+/** "YYYY-MM-DD HH:mm" に整形する。値が無ければ null */
+export function fmtDateTime(v: unknown): string | null {
+  if (v == null || v === '') return null;
+  return String(v).slice(0, 16).replace('T', ' ');
+}
+
 export function n(v: unknown, fallback = 0): number {
   const num = Number(v);
   return isNaN(num) ? fallback : num;
@@ -289,6 +307,7 @@ export function toAppCompany(raw: RawCompany): AppCompany {
     sfAccountId:  raw.sf_account_id ? String(raw.sf_account_id) : null,
     tier:         toTier(raw.tier),
     isPaidWatched: toBoolLoose(raw.is_paid_watched),
+    companyDomain: raw.company_domain ? String(raw.company_domain) : null,
   };
 }
 
@@ -388,15 +407,29 @@ export interface RawCseTicket {
   // 同期スクリプトが書き込む表示用キャッシュ列
   display_title?: string | null;    // AI生成タイトル（20〜40文字）
   display_message?: string | null;  // AI整形済み本文（挨拶・署名・引用を除去）
-  status?: string | null;          // "open" | "in_progress" | "resolved" | "closed"
+  // 実データの語彙（2026-08 実測）: "To Do" | "In Progress" | "Pending"
+  //   | "Waiting Confirm" | "Reopened" | "Closed"
+  // ※ "open" / "resolved" / "waiting_customer" は存在しない。
+  //   open 判定は support-by-company.ts の isCseOpen を使うこと。
+  status?: string | null;
   priority?: string | null;        // "high" | "medium" | "low"
   company_uid?: string | null;
   company_name?: string | null;
   linked_case_id?: string | null;
-  description?: string | null;
   created_at?: string | null;
-  updated_at?: string | null;
+  updated_at?: string | null;      // ほぼ null。更新日時は last_modified_at を使う
   waiting_hours?: number | null;
+  // ── 本文系の実在カラム（2026-08 実測）────────────────────────────────────
+  // description は存在しない。起票内容は describe、AI整形済みは display_message。
+  describe?: string | null;        // 起票時の記述（顧客報告内容）
+  body?: string | null;            // 補足コード / URL など（本文ではない場合が多い）
+  comment?: string | null;         // 社内コメントの追記ログ
+  raw_body?: string | null;        // Notion 原文（Title / Summary 等を含む）
+  last_modified_at?: string | null;// Notion 側の最終更新日時（= 更新日）
+  product?: string | null;         // "PTX" | "PTI" 等
+  type?: string | null;            // "Customize" 等
+  // ── 存在しない旧フィールド ───────────────────────────────────────────────
+  description?: string | null;     // 存在しない（describe / display_message を使用）
   [key: string]: unknown;
 }
 
@@ -417,15 +450,21 @@ export interface AppCseTicket {
 export function toAppCseTicket(raw: RawCseTicket): AppCseTicket {
   return {
     id: raw.ticket_id ? s(raw.ticket_id) : String(raw.Id),
-    title: s(raw.display_title) || s(raw.title) || '(タイトルなし)',
+    // display_title = AI生成タイトル（存在すれば優先）
+    title: s(raw.display_title, '') || s(raw.title, '') || '(タイトルなし)',
     status: s(raw.status, 'open'),
-    priority: s(raw.priority, 'medium'),
+    // priority カラムは存在しない → severity で代替する
+    priority: s(raw.priority ?? raw.severity, 'medium'),
     companyUid: s(raw.company_uid, ''),
     companyName: s(raw.company_name, s(raw.company_uid, '—')),
     linkedCaseId: raw.linked_case_id ? s(raw.linked_case_id) : null,
-    description: s(raw.description),
-    createdAt: raw.created_at ? String(raw.created_at).slice(0, 16).replace('T', ' ') : '—',
-    updatedAt: raw.updated_at ? String(raw.updated_at).slice(0, 16).replace('T', ' ') : null,
+    // 本文: description は存在しないため
+    //   display_message（AI整形済み）→ describe（起票内容）→ raw_body(原文) の順で採る。
+    //   本文が無い場合は空文字を返す（'—' を入れると「本文あり」と誤判定される）。
+    description: firstText(raw.display_message, raw.describe, raw.description, raw.raw_body),
+    createdAt: fmtDateTime(raw.created_at) ?? '—',
+    // 更新日時: Notion 側の last_modified_at が正。updated_at はほぼ null
+    updatedAt: fmtDateTime(raw.last_modified_at ?? raw.updated_at),
     waitingHours: raw.waiting_hours != null ? n(raw.waiting_hours) : null,
   };
 }
@@ -675,16 +714,20 @@ export interface RawSupportCase {
   display_title?: string | null;     // AI生成タイトル（20〜40文字）
   display_message?: string | null;   // AI整形済み本文（挨拶・署名・引用を除去）
   // ── log_intercom 実在カラム ──────────────────────────────────────────────────
-  body?: string | null;              // 問い合わせ本文（original_message は存在しない）
+  raw_body?: string | null;          // 会話全文（実カラム。body は存在しない）
+  case_title?: string | null;        // 同期が付ける件名（多くは null）
+  case_summary?: string | null;      // 同期が付ける要約（多くは null）
   sent_at_jst?: string | null;       // 受信日時 JST（created_at は存在しない）
-  update_at_jst?: string | null;
+  update_at_jst?: string | null;     // 最終更新日時 JST（= 更新日）
   close_at_unix?: number | null;
+  close_at?: string | null;
   account_name?: string | null;      // Intercom アカウント名（company_name は存在しない）
   first_response_at?: string | null; // 初回応答日時（first_response_time は存在しない）
-  message_count?: number | null;
+  massage_count?: number | null;     // 実カラム（message_count は存在しない）
   // ── log_intercom 行分類キー ──────────────────────────────────────────────────
-  // ※ スペルは DB の実カラム名に合わせて massage_type（message_ ではない）
-  massage_type?: string | null;      // "support" | "inquiry" | "billing"
+  // 実カラムは message_type。massage_type は存在しない（旧コードの綴り誤り）。
+  message_type?: string | null;      // "support" | "inquiry" | "billing" | "uncategorized" | "system"
+  massage_type?: string | null;      // 存在しない（message_type を使用）
   case_type?: string | null;         // "inquiry" | "support" | "cse_linked"
   // ── CSM チームが付与するカラム（存在する場合のみ値が入る）──────────────────
   company_uid?: string | null;
@@ -704,7 +747,9 @@ export interface RawSupportCase {
   waiting_duration?: string | null;
   // ── 将来追加予定 / 旧フィールド（現在 log_intercom には存在しない）─────────
   title?: string | null;             // 存在しない（resolveTitle で AI/body から導出）
-  original_message?: string | null;  // 存在しない（body を使用）
+  body?: string | null;              // 存在しない（raw_body を使用）
+  original_message?: string | null;  // 存在しない（raw_body を使用）
+  message_count?: number | null;     // 存在しない（massage_count を使用）
   company_name?: string | null;      // 存在しない（account_name を使用）
   source?: string | null;            // 存在しない（'Intercom' に固定）
   created_at?: string | null;        // 存在しない（sent_at_jst を使用）
@@ -727,6 +772,8 @@ export interface AppSupportCase {
   sourceStatus: string | null;
   severity: string;
   createdAt: string;
+  /** 最終更新日時（log_intercom: update_at_jst）。無ければ null */
+  updatedAt: string | null;
   firstResponseTime: string | null;
   openDuration: string;
   waitingDuration: string | null;
@@ -773,6 +820,30 @@ function deriveTitle(
   return '(タイトルなし)';
 }
 
+/**
+ * log_intercom.raw_body は
+ *   "[2026-01-14 16:22:52] foo@example.com: 本文…"
+ * という行が連なった会話ログ。タイトル導出に使う際は先頭行から
+ * タイムスタンプと発言者を落として、実際の発言だけを残す。
+ */
+function firstUtterance(text: string | null | undefined): string {
+  if (!text) return '';
+  const lines = String(text).split(/\r?\n/);
+  let fallback = '';
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (!fallback) fallback = line;
+    const m = line.match(/^\[[^\]]*\]\s*(?:([^\s:]+):\s*)?(.*)$/);
+    // タイムスタンプ行でなければそのまま採用する（誤って本文を削らない）
+    if (!m) return line;
+    const utterance = (m[2] ?? '').trim();
+    // 発言が空の行（添付のみ等）は飛ばして次の発言を探す
+    if (utterance) return utterance;
+  }
+  return fallback;
+}
+
 /** massage_type / case_type から caseType を確定する */
 function deriveCaseType(raw: RawSupportCase): string {
   // case_type フィールドが明示されている場合はそちらを優先
@@ -780,8 +851,9 @@ function deriveCaseType(raw: RawSupportCase): string {
     const mapped = CASE_TYPE_MAP[String(raw.case_type).toLowerCase()];
     if (mapped) return mapped;
   }
-  // log_intercom の massage_type からの導出
-  const mt = raw.massage_type ? String(raw.massage_type).toLowerCase() : '';
+  // log_intercom の message_type からの導出（massage_type は存在しない）
+  const mtRaw = raw.message_type ?? raw.massage_type;
+  const mt = mtRaw ? String(mtRaw).toLowerCase() : '';
   if (mt === 'support') return 'Support';
   if (mt === 'inquiry') return 'Inquiry';
   // fallback: Support（Inquiry に寄らない）
@@ -801,9 +873,11 @@ const CSE_STATUS_TO_ROUTING: Record<string, string> = {
  */
 export function cseTicketToAppSupportCase(raw: RawCseTicket): AppSupportCase {
   const statusKey = s(raw.status, 'open').toLowerCase();
+  // 本文: description は存在しない → display_message / describe / raw_body
+  const cseBody = firstText(raw.display_message, raw.describe, raw.description, raw.raw_body);
   return {
     id: raw.ticket_id ? s(raw.ticket_id) : String(raw.Id),
-    title: deriveTitle(raw.display_title ?? raw.title, raw.description),
+    title: deriveTitle(raw.display_title ?? raw.title, cseBody),
     caseType: raw.linked_case_id ? 'CSE Ticket Linked' : 'CSE Ticket',
     source: 'CSE Ticket',
     company: s(raw.company_name, s(raw.company_uid, '—')),
@@ -814,21 +888,25 @@ export function cseTicketToAppSupportCase(raw: RawCseTicket): AppSupportCase {
     assignedTeam: 'CSE',
     routingStatus: CSE_STATUS_TO_ROUTING[statusKey] ?? 'waiting on CSE',
     sourceStatus: s(raw.status, 'open'),
-    severity: s(raw.priority, 'medium'),
-    createdAt: raw.created_at ? String(raw.created_at).slice(0, 16).replace('T', ' ') : '—',
+    severity: s(raw.priority ?? raw.severity, 'medium'),
+    createdAt: fmtDateTime(raw.created_at) ?? '—',
+    updatedAt: fmtDateTime(raw.last_modified_at ?? raw.updated_at),
     firstResponseTime: null,
     openDuration: '—',
     waitingDuration: raw.waiting_hours != null ? `${raw.waiting_hours}h` : null,
     linkedCSETicket: raw.ticket_id ? s(raw.ticket_id) : String(raw.Id),
     relatedContent: 0,
-    originalMessage: raw.description ? s(raw.description) : undefined,
+    originalMessage: cseBody || undefined,
   };
 }
 
 export function toAppSupportCase(raw: RawSupportCase): AppSupportCase {
   const rawStatus = s(raw.routing_status).toLowerCase().replace(/ /g, '_');
-  // body: log_intercom の実カラム。original_message は存在しないため body を優先
-  const bodyText = raw.body ? s(raw.body) : (raw.original_message ? s(raw.original_message) : undefined);
+  // 本文: log_intercom の実カラムは raw_body（会話全文）。
+  //       body / original_message は存在しない。display_message（AI整形済み）があれば優先。
+  const bodyText = firstText(
+    raw.display_message, raw.raw_body, raw.body, raw.original_message,
+  ) || undefined;
   // company: account_name（Intercom アカウント名）→ company_name → company_uid の優先順
   const rawAccountName = raw.account_name ? String(raw.account_name).trim() : '';
   const companyDisplay = rawAccountName
@@ -836,8 +914,9 @@ export function toAppSupportCase(raw: RawSupportCase): AppSupportCase {
     || s(raw.company_uid, '—');
   return {
     id: raw.case_id ? s(raw.case_id) : String(raw.Id),
-    // display_title = AI生成タイトル（存在すれば優先）, title は log_intercom に存在しない
-    title: deriveTitle(raw.display_title ?? raw.title, bodyText),
+    // display_title = AI生成タイトル（存在すれば優先）, title は log_intercom に存在しない。
+    // case_title（同期が付ける件名）→ 本文冒頭からの導出、の順でフォールバックする。
+    title: deriveTitle(raw.display_title ?? raw.case_title ?? raw.title, firstUtterance(bodyText)),
     caseType: deriveCaseType(raw),
     // source: log_intercom に source カラムは存在しない → 固定値 'Intercom'
     source: s(raw.source) || 'Intercom',
@@ -851,9 +930,9 @@ export function toAppSupportCase(raw: RawSupportCase): AppSupportCase {
     sourceStatus: raw.source_status ? s(raw.source_status) : null,
     severity: s(raw.severity, 'medium'),
     // createdAt: log_intercom は sent_at_jst を使用（created_at は存在しない）
-    createdAt: (raw.sent_at_jst ?? raw.created_at)
-      ? String(raw.sent_at_jst ?? raw.created_at).slice(0, 16).replace('T', ' ')
-      : '—',
+    createdAt: fmtDateTime(raw.sent_at_jst ?? raw.created_at) ?? '—',
+    // updatedAt: 最終更新（最新メッセージ）日時
+    updatedAt: fmtDateTime(raw.update_at_jst ?? raw.updated_at),
     // firstResponseTime: log_intercom は first_response_at を使用
     firstResponseTime: (raw.first_response_at ?? raw.first_response_time)
       ? s(raw.first_response_at ?? raw.first_response_time)
@@ -1051,6 +1130,15 @@ export interface AppCsmPhase {
   healthScore:        number | null;
   targetRenewalDate:  string | null;
   note:               string | null;
+  /**
+   * オンボーディング完了日（実カラム `4_ONB完了`）。
+   * H2_Health_FirstGuideProgress_Complete の判定に使う。null = 未完了。
+   */
+  onboardingCompletedAt: string | null;
+  /** 契約種別（実カラム `paid_type`）。project_info 側が欠損しているときのフォールバック */
+  paidType:              string | null;
+  /** Tier（実カラム `tier`）例: "Tier1" */
+  tier:                  string | null;
 }
 
 export function toAppCsmPhase(raw: RawCsmPhase): AppCsmPhase {
@@ -1069,6 +1157,10 @@ export function toAppCsmPhase(raw: RawCsmPhase): AppCsmPhase {
                          ? String(raw.target_renewal_date).slice(0, 10)
                          : null,
     note:              raw.note ?? null,
+    // 実カラム名は日本語・数字始まりのため index アクセスのみ可
+    onboardingCompletedAt: raw['4_ONB完了'] ? String(raw['4_ONB完了']).slice(0, 10) : null,
+    paidType:              (raw.paid_type as string | null) ?? null,
+    tier:                  (raw.tier as string | null) ?? null,
   };
 }
 
@@ -1277,6 +1369,8 @@ export interface AppLogChatwork {
   id:          string;
   companyUid:  string;
   sentAt:      string | null;
+  /** 最終更新日時（update_at_jst）。無ければ null */
+  updatedAt:   string | null;
   senderName:  string | null;
   roomName:    string | null;
   body:        string;
@@ -1291,7 +1385,8 @@ export function toAppLogChatwork(raw: RawLogChatwork): AppLogChatwork {
   return {
     id:          raw.message_id ? String(raw.message_id) : String(raw.Id),
     companyUid:  raw.company_uid ?? '',
-    sentAt:      sentAtRaw ? String(sentAtRaw).slice(0, 16).replace('T', ' ') : null,
+    sentAt:      fmtDateTime(sentAtRaw),
+    updatedAt:   fmtDateTime(raw.update_at_jst),
     senderName,
     roomName,
     body:        raw.body ? String(raw.body) : '',
@@ -1319,6 +1414,8 @@ export interface AppLogSlack {
   id:          string;
   companyUid:  string;
   sentAt:      string | null;
+  /** 最終更新日時（update_at_jst）。無ければ null */
+  updatedAt:   string | null;
   userName:    string | null;
   channel:     string | null;
   text:        string;
@@ -1335,7 +1432,8 @@ export function toAppLogSlack(raw: RawLogSlack): AppLogSlack {
   return {
     id:          raw.message_id ? String(raw.message_id) : String(raw.Id),
     companyUid:  raw.company_uid ?? '',
-    sentAt:      sentAtRaw ? String(sentAtRaw).slice(0, 16).replace('T', ' ') : null,
+    sentAt:      fmtDateTime(sentAtRaw),
+    updatedAt:   fmtDateTime(raw.update_at_jst),
     userName,
     channel,
     text:        text ? String(text) : '',
@@ -1369,6 +1467,8 @@ export interface AppLogNotionMinutes {
   body:         string;
   actionItems:  string[];
   createdAt:    string | null;
+  /** 最終更新日時（update_at_jst）。無ければ null */
+  updatedAt:    string | null;
 }
 
 export function toAppLogNotionMinutes(raw: RawLogNotionMinutes): AppLogNotionMinutes {
@@ -1383,7 +1483,8 @@ export function toAppLogNotionMinutes(raw: RawLogNotionMinutes): AppLogNotionMin
     participants: parseParticipants(raw.participants),
     body:         raw.body ? String(raw.body) : '',
     actionItems:  parseStringJsonArray(raw.action_items),
-    createdAt:    dateRaw ? String(dateRaw).slice(0, 16).replace('T', ' ') : null,
+    createdAt:    fmtDateTime(dateRaw),
+    updatedAt:    fmtDateTime(raw.update_at_jst),
   };
 }
 
@@ -1412,23 +1513,25 @@ export interface AppLogIntercomMail {
   id:          string;
   companyUid:  string;
   sentAt:      string | null;   // sent_at_jst（"YYYY-MM-DD HH:mm" 形式）
+  updatedAt:   string | null;   // update_at_jst（最終更新日時）
   senderName:  string | null;   // account_name
-  subject:     string | null;   // display_title（AI生成件名）または body 冒頭
-  body:        string;          // display_message（整形済み）または body
+  subject:     string | null;   // display_title（AI生成件名）または本文冒頭
+  body:        string;          // display_message（整形済み）または raw_body
 }
 
 export function toAppLogIntercomMail(raw: RawSupportCase): AppLogIntercomMail {
-  const dateRaw = raw.sent_at_jst ?? null;
-  const bodyRaw = raw.display_message ?? raw.body ?? '';
+  // 本文の実カラムは raw_body（body は存在しない）
+  const bodyRaw = firstText(raw.display_message, raw.raw_body, raw.body);
   return {
     id:         raw.case_id ? String(raw.case_id) : String(raw.Id),
     companyUid: raw.company_uid ?? '',
-    sentAt:     dateRaw ? String(dateRaw).slice(0, 16).replace('T', ' ') : null,
+    sentAt:     fmtDateTime(raw.sent_at_jst),
+    updatedAt:  fmtDateTime(raw.update_at_jst),
     senderName: raw.account_name ? String(raw.account_name) : null,
     subject:    raw.display_title
                   ? String(raw.display_title)
-                  : (bodyRaw ? String(bodyRaw).slice(0, 40) : null),
-    body:       bodyRaw ? String(bodyRaw) : '',
+                  : (bodyRaw ? firstUtterance(bodyRaw).slice(0, 40) : null),
+    body:       bodyRaw,
   };
 }
 

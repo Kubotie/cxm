@@ -65,13 +65,22 @@ export async function nocoUpdate<T>(
   tableId: string,
   rowId: number,
   patch: object,
+  /**
+   * 主キーの列名。既定は NocoDB の自動生成カラム `Id`。
+   *
+   * ⚠️ **自分で作ったテーブルは `id`（小文字）のことがある。**
+   * 実測: `project_metrics` は `id` なのに `Id` を送っていて
+   * `RECORD_NOT_FOUND: Record 'unknown' not found` になった。
+   * 404 なのにレコードは存在する、という紛らわしい失敗をする。
+   */
+  pkColumn: 'Id' | 'id' = 'Id',
 ): Promise<T> {
   if (!API_TOKEN) throw new Error('NOCODB_API_TOKEN が未設定です');
 
   const res = await fetch(`${BASE_URL}/api/v2/tables/${tableId}/records`, {
     method: 'PATCH',
     headers: apiHeaders(),
-    body: JSON.stringify({ Id: rowId, ...patch }),
+    body: JSON.stringify({ [pkColumn]: rowId, ...patch }),
     cache: 'no-store',
   });
 

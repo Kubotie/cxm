@@ -1203,6 +1203,7 @@ export function OutboundPage() {
           sfAccountId:         null,
           tier:                null,
           isPaidWatched:       false,
+          companyDomain:       null,
         }));
         setCompanies(list);
 

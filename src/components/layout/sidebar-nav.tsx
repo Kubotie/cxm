@@ -6,7 +6,7 @@ import {
   Home, Building2, Headphones, BrainCircuit,
   Activity, Zap, ClipboardList, Database, Settings,
   ChevronLeft, ChevronRight, UserCircle, CheckSquare, Send,
-  BookOpen, FileText, Layers, TrendingDown,
+  BookOpen, FileText, Layers, TrendingDown, ArrowLeftRight,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -130,6 +130,27 @@ export function SidebarNav() {
           >
             {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
           </Button>
+        </div>
+
+        {/* 新 UI (v2) へ切替 */}
+        <div className={isCollapsed ? 'px-2 pt-2' : 'px-3 pt-3'}>
+          {isCollapsed ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link href="/v2/tier3" className="flex justify-center p-2 rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors">
+                  <ArrowLeftRight className="w-4 h-4" />
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={8} className="bg-slate-900 text-white border-slate-900 px-3 py-2 text-sm">
+                新 UI (v2) へ切替
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            <Link href="/v2/tier3" className="flex items-center gap-2 px-3 py-2 rounded-md border border-blue-200 bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100 transition-colors">
+              <ArrowLeftRight className="w-4 h-4 flex-shrink-0" />
+              <span>新 UI (v2) へ</span>
+            </Link>
+          )}
         </div>
 
         {/* ナビ */}

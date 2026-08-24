@@ -91,6 +91,13 @@ export const TABLE_IDS = {
   csm_assets:                  process.env.NOCODB_CSM_ASSETS_TABLE_ID                ?? '',
   // 生成済み資料の記録（テンプレート・参照アセット・Blob URL）
   csm_documents:               process.env.NOCODB_CSM_DOCUMENTS_TABLE_ID             ?? '',
+  /** 外部WHO情報（IR/組織/求人/競合）。未設定でも議事録由来の抽出だけで動作する */
+  external_intel:              process.env.NOCODB_EXTERNAL_INTEL_TABLE_ID            ?? '',
+  /** 手動登録の状況（AIREADY_* など自動検出できない語彙）。未設定でも空配列で動作する */
+  company_situations:          process.env.NOCODB_COMPANY_SITUATIONS_TABLE_ID        ?? '',
+  proposal_outlines:           process.env.NOCODB_PROPOSAL_OUTLINES_TABLE_ID         ?? '',
+  project_metrics:             process.env.NOCODB_PROJECT_METRICS_TABLE_ID           ?? '',
+  industry_intel_cache:        process.env.NOCODB_INDUSTRY_INTEL_TABLE_ID            ?? '',
 };
 
 export interface NocoDBResponse<T> {
@@ -125,16 +132,21 @@ function buildNocoQuery(params: Record<string, string>): string {
 export const NOCO_DEFAULT_TTL = 300;
 
 /**
- * NocoDB v2 REST API からテーブルレコードを取得する汎用関数。
- * @param tableId  対象テーブルID
- * @param params   クエリパラメータ (where/sort/limit/offset 等)
- * @param ttl      キャッシュ秒数（デフォルト 300s）。false で no-store
+ * NocoDB v2 が 1 リクエストで返す最大件数。
+ * limit にこれ以上の値を渡してもサーバー側で切り詰められる（実測: 2000）。
+ * 全件取得は必ず offset ページングで行う（nocoFetchAll / nocoFetchAllByUids）。
  */
-export async function nocoFetch<T>(
+export const NOCO_MAX_PAGE_SIZE = 1000;
+
+/**
+ * NocoDB v2 REST API から 1 ページ分を pageInfo 付きで取得する。
+ * 全件取得（nocoFetchAll）が totalRows / pageSize を必要とするため分離してある。
+ */
+async function nocoFetchPage<T>(
   tableId: string,
   params: Record<string, string> = {},
   ttl: number | false = NOCO_DEFAULT_TTL,
-): Promise<T[]> {
+): Promise<NocoDBResponse<T>> {
   if (!API_TOKEN) {
     throw new Error(
       'NOCODB_API_TOKEN が未設定です。.env.local を確認して dev server を再起動してください。',
@@ -159,8 +171,81 @@ export async function nocoFetch<T>(
     throw new Error(`NocoDB ${res.status}: ${res.statusText} [${tableId}] | ${tokenHint} | body=${body}`);
   }
 
-  const json: NocoDBResponse<T> = await res.json();
+  return res.json() as Promise<NocoDBResponse<T>>;
+}
+
+/**
+ * NocoDB v2 REST API からテーブルレコードを取得する汎用関数。
+ * @param tableId  対象テーブルID
+ * @param params   クエリパラメータ (where/sort/limit/offset 等)
+ * @param ttl      キャッシュ秒数（デフォルト 300s）。false で no-store
+ * @remarks 1 ページのみ返す。件数が limit を超える可能性がある集計用途では
+ *          nocoFetchAll / nocoFetchAllByUids を使うこと。
+ */
+export async function nocoFetch<T>(
+  tableId: string,
+  params: Record<string, string> = {},
+  ttl: number | false = NOCO_DEFAULT_TTL,
+): Promise<T[]> {
+  const json = await nocoFetchPage<T>(tableId, params, ttl);
   return json.list ?? [];
+}
+
+/**
+ * offset ページングで条件に合致する全レコードを取得する。
+ *
+ * NocoDB は limit を大きくしてもサーバー側上限（NOCO_MAX_PAGE_SIZE 超は切り詰め）で
+ * 打ち切るため、「limit を大きめに設定して 1 リクエスト」では黙って欠損する。
+ * 集計（件数カウント）用途では必ずこちらを使う。
+ *
+ * @param opts.pageSize    1 ページの件数（既定 1000 / NOCO_MAX_PAGE_SIZE で上限）
+ * @param opts.maxRows     取得上限。超過分は打ち切って警告ログを出す（既定 200,000）
+ * @param opts.concurrency 2ページ目以降の並列数（既定 6）
+ */
+export async function nocoFetchAll<T>(
+  tableId: string,
+  params: Record<string, string> = {},
+  ttl: number | false = false,
+  opts: { pageSize?: number; maxRows?: number; concurrency?: number } = {},
+): Promise<T[]> {
+  if (!tableId) return [];
+  const pageSize    = Math.min(opts.pageSize ?? NOCO_MAX_PAGE_SIZE, NOCO_MAX_PAGE_SIZE);
+  const maxRows     = opts.maxRows ?? 200_000;
+  const concurrency = Math.max(1, opts.concurrency ?? 6);
+
+  const first = await nocoFetchPage<T>(
+    tableId,
+    { ...params, limit: String(pageSize), offset: '0' },
+    ttl,
+  );
+  const rows: T[] = [...(first.list ?? [])];
+
+  // サーバーが limit を切り詰めた場合は実際に返ってきた件数を 1 ページ幅として使う
+  const step  = first.list?.length && first.list.length < pageSize ? first.list.length : pageSize;
+  const total = first.pageInfo?.totalRows ?? rows.length;
+
+  if (step > 0 && total > rows.length) {
+    const capped  = Math.min(total, maxRows);
+    if (total > maxRows) {
+      console.warn(
+        `[nocoFetchAll] ${tableId}: totalRows=${total} が maxRows=${maxRows} を超過 → 打ち切り（集計値が過小になります）`,
+      );
+    }
+    const offsets: number[] = [];
+    for (let off = step; off < capped; off += step) offsets.push(off);
+
+    for (let i = 0; i < offsets.length; i += concurrency) {
+      const chunk = offsets.slice(i, i + concurrency);
+      const pages = await Promise.all(
+        chunk.map(off =>
+          nocoFetchPage<T>(tableId, { ...params, limit: String(pageSize), offset: String(off) }, ttl),
+        ),
+      );
+      for (const page of pages) rows.push(...(page.list ?? []));
+    }
+  }
+
+  return rows;
 }
 
 /**
@@ -202,6 +287,57 @@ export async function nocoFetchByUids<T extends { company_uid?: string | null }>
     const arr = result.get(uid) ?? [];
     arr.push(row);
     result.set(uid, arr);
+  }
+  return result;
+}
+
+/**
+ * 複数の company_uid を指定して、条件に合致する全レコードを offset ページングで取得する。
+ * nocoFetchByUids の「1 リクエスト・limit 上限あり」版を置き換えるもので、
+ * 件数カウント（集計）に使う場合はこちらを使うこと。
+ *
+ * nocoFetchByUids は limit=min(uids×20, 500) の 1 リクエストしか投げないため、
+ * 対象行が limit を超えると sort 順の先頭だけが返り、
+ * 残りの企業は「0 件」として集計されてしまう（open_support_count=0 の原因）。
+ *
+ * @param opts.uidChunkSize where 句 1 本に含める uid 数（既定 100）。
+ *        URL 長の暴発を防ぐため分割し、チャンクは並列で取得する。
+ */
+export async function nocoFetchAllByUids<T extends { company_uid?: string | null }>(
+  tableId: string,
+  uids: string[],
+  extraParams: Omit<Record<string, string>, 'where' | 'limit' | 'offset'> = {},
+  ttl: number | false = false,
+  opts: { pageSize?: number; maxRows?: number; concurrency?: number; uidChunkSize?: number } = {},
+): Promise<Map<string, T[]>> {
+  const result = new Map<string, T[]>();
+  for (const uid of uids) result.set(uid, []);
+  if (!tableId || uids.length === 0) return result;
+
+  const chunkSize = Math.max(1, opts.uidChunkSize ?? 100);
+  const chunks: string[][] = [];
+  for (let i = 0; i < uids.length; i += chunkSize) chunks.push(uids.slice(i, i + chunkSize));
+
+  const pages = await Promise.all(
+    chunks.map(chunk =>
+      nocoFetchAll<T>(
+        tableId,
+        { ...extraParams, where: `(company_uid,in,${chunk.join(',')})` },
+        ttl,
+        opts,
+      ),
+    ),
+  );
+
+  for (const rows of pages) {
+    for (const row of rows) {
+      const uid = row.company_uid ?? '';
+      if (!uid) continue;
+      const arr = result.get(uid);
+      // where で指定していない uid が返るケース（想定外）は無視する
+      if (!arr) continue;
+      arr.push(row);
+    }
   }
   return result;
 }

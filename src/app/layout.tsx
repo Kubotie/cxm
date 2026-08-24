@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AiAssistantShell } from "@/components/ai";
 
 export const metadata: Metadata = {
   title: "CXM Platform",
@@ -13,7 +14,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ja">
-      <body>{children}</body>
+      <body>
+        {/* 全ページ共通の AI サイドパネル。各画面は useRegisterAiPageContext で
+            自分が表示しているデータを申告する（未申告でもパネル自体は動く） */}
+        <AiAssistantShell>{children}</AiAssistantShell>
+      </body>
     </html>
   );
 }

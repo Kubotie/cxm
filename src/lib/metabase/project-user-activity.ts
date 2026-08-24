@@ -16,10 +16,13 @@
 const PROJECT_USER_ACTIVITY_CSV_URL =
   'https://bi.ptmind.com/public/question/874cd125-986f-4f30-86a5-9b6a36730708.csv';
 
-// プロセスメモリキャッシュ（Next.js fetch cache の2MB上限回避）
+// プロセスメモリキャッシュ（4.3MB/11.8万行のため Next.js Data Cache の2MB上限を超える。
+// unstable_cache には載らないので、プロセスメモリで保持する）。
+// データは1日1回更新のため TTL を 12h に設定し、コールドスタート時の再DL頻度を抑える。
+// 各サーバーインスタンス起動時に instrumentation.ts が先読みしてウォームアップ済み。
 let _cache: Map<string, ProjectUserActivity> | null = null;
 let _cacheAt = 0;
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1時間
+const CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12時間
 
 export interface ProjectUserActivity {
   /** 総メンバー数 */
@@ -60,14 +63,22 @@ function extractDate(raw: string | undefined): string | null {
   return trimmed.slice(0, 10) || null;
 }
 
+// 進行中ロードの共有 Promise（コールドスタート時の重複DL防止）。
+let _inflight: Promise<Map<string, ProjectUserActivity>> | null = null;
+
 /**
  * Metabase CSV を取得し、Map<project_id, ProjectUserActivity> を返す。
  * 取得失敗時は空 Map（graceful degradation）。
+ * キャッシュが新鮮なら即返す。ロード中なら進行中の Promise を共有する。
  */
 export async function fetchProjectUserActivityMap(): Promise<Map<string, ProjectUserActivity>> {
-  // メモリキャッシュヒット
   if (_cache && Date.now() - _cacheAt < CACHE_TTL_MS) return _cache;
+  if (_inflight) return _inflight;
+  _inflight = loadActivityMap().finally(() => { _inflight = null; });
+  return _inflight;
+}
 
+async function loadActivityMap(): Promise<Map<string, ProjectUserActivity>> {
   const result = new Map<string, ProjectUserActivity>();
   try {
     const res = await fetch(PROJECT_USER_ACTIVITY_CSV_URL, {

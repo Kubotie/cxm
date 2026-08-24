@@ -59,8 +59,19 @@ export interface ProjectSignalData {
   lastActiveDate:                 string | null;
   /** 当月 PV 集計期間終了日（YYYY-MM-DD）。PV 上限残日数の計算に使う */
   monthPeriodEndTime:             string | null;
+  /**
+   * 当月 PV 集計期間の開始日。
+   * **PV枠は暦月ではなく契約更新日の応当日でリセットされる**（実測: 08-18〜09-17 など）。
+   * 経過日数を見ずに消化率だけで判定すると、期間が始まったばかりの顧客に
+   * 誤って「消化が低い」と出る。
+   */
+  monthPeriodStartTime:           string | null;
+  /** 当期の PV 着地予測（Month Period Pv Forecast）。期間で正規化済みの見込み値 */
+  monthPvForecast:                number | null;
   /** Salesforce Master Company SF ID（企業への逆引き用） */
   masterCompanySfId:              string | null;
+  /** 企業名（プロジェクト分析ダッシュボードの表示用） */
+  masterCompanyName:              string | null;
 }
 
 // ── キャッシュ ────────────────────────────────────────────────────────────────
@@ -102,13 +113,23 @@ function parseDate(v: string | undefined): string | null {
 
 // ── 公開関数 ──────────────────────────────────────────────────────────────────
 
+// 進行中ロードの共有 Promise。コールドスタート直後に複数リクエストが殺到しても
+// CSV ダウンロードを1回に集約する（重複DL防止）。
+let _inflight: Promise<Map<string, ProjectSignalData>> | null = null;
+
 /**
  * Metabase CSV を取得し、Map<project_id, ProjectSignalData> を返す。
  * 取得失敗時は空 Map（graceful degradation）。
+ * キャッシュが新鮮なら即返す。ロード中なら進行中の Promise を共有する。
  */
 export async function fetchProjectSignalMap(): Promise<Map<string, ProjectSignalData>> {
   if (_cache && Date.now() - _cacheAt < CACHE_TTL_MS) return _cache;
+  if (_inflight) return _inflight;
+  _inflight = loadSignalMap().finally(() => { _inflight = null; });
+  return _inflight;
+}
 
+async function loadSignalMap(): Promise<Map<string, ProjectSignalData>> {
   const result = new Map<string, ProjectSignalData>();
   try {
     const res = await fetch(PROJECT_SIGNALS_CSV_URL, { cache: 'no-store' });
@@ -131,10 +152,14 @@ export async function fetchProjectSignalMap(): Promise<Map<string, ProjectSignal
     const IDX_L7          = header.indexOf('L7 Event Count');
     const IDX_HEATMAP_DT  = header.indexOf('First History Heatmap Create Date');
     const IDX_PV_CEIL     = header.indexOf('Pv Ceiling');
-    const IDX_PV_FORECAST = header.indexOf('Month Period Pv Count');
+    // ⚠️ 変数名に反して IDX_PV_FORECAST が指すのは**実績**の列。名前を直す
+    const IDX_PV_COUNT    = header.indexOf('Month Period Pv Count');
+    const IDX_PV_FORECAST = header.indexOf('Month Period Pv Forecast');
     const IDX_PV_END      = header.indexOf('Month Period End Time');
+    const IDX_PV_START    = header.indexOf('Month Period Start Time');
     const IDX_LAST_ACT    = header.indexOf('Last Active Date');
     const IDX_SF_ID       = header.indexOf('Master Company Sf ID');
+    const IDX_SF_NAME     = header.indexOf('Master Company Name');
 
     if (IDX_ID < 0) {
       console.warn('[metabase/project-signals] "Project ID" カラムが見つかりません', header.slice(0, 5));
@@ -153,12 +178,15 @@ export async function fetchProjectSignalMap(): Promise<Map<string, ProjectSignal
         heatmapCount:                 parseNum(f[IDX_HEATMAP_CNT]),
         firstHeatmapDate:             parseDate(f[IDX_HEATMAP_DT]),
         pvCeiling:                    parseNum(f[IDX_PV_CEIL]) || null,
-        monthPvCount:                 parseNum(f[IDX_PV_FORECAST]) || null,
+        monthPvCount:                 parseNum(f[IDX_PV_COUNT]) || null,
+        monthPvForecast:              IDX_PV_FORECAST >= 0 ? (parseNum(f[IDX_PV_FORECAST]) || null) : null,
         monthPeriodEndTime:           parseDate(f[IDX_PV_END]),
+        monthPeriodStartTime:         IDX_PV_START >= 0 ? parseDate(f[IDX_PV_START]) : null,
         l30Active:                    parseNum(f[IDX_L30]),
         l7EventCount:                 parseNum(f[IDX_L7]),
         lastActiveDate:               parseDate(f[IDX_LAST_ACT]),
         masterCompanySfId:            f[IDX_SF_ID] || null,
+        masterCompanyName:            (IDX_SF_NAME >= 0 ? f[IDX_SF_NAME] : '') || null,
       });
     }
 

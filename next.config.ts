@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // unpdf（pdfjs ベース）はサーバー側でそのまま require させる。
+  // バンドルすると pdfjs のワーカー解決に失敗するため外部化する。
+  serverExternalPackages: ["unpdf"],
+
   async rewrites() {
     return [
       {

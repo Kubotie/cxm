@@ -23,7 +23,7 @@ import { fetchAllCompanies }              from '@/lib/nocodb/companies';
 import { fetchBothPhasesByUids }          from '@/lib/nocodb/phases';
 import { fetchProjectsByUids }            from '@/lib/nocodb/project-info';
 import { fetchLatestCommunicationDatesByUids } from '@/lib/nocodb/communication-logs';
-import { fetchSupportCountsByUids }       from '@/lib/nocodb/support-by-company';
+import { fetchSupportCountsByUids, SUPPORT_COUNTS_BATCH_BUDGET_MS } from '@/lib/nocodb/support-by-company';
 import { fetchPeopleSignalsByUids }       from '@/lib/nocodb/people';
 import { evaluatePolicy, toFieldValueRecord } from './evaluator';
 import type { AlertPolicy, AlertSeverity } from './types';
@@ -146,7 +146,7 @@ export async function runAlertPolicies(
     })),
     fetchProjectsByUids(allUids).catch(() => new Map<string, import('@/lib/nocodb/types').AppProjectInfo[]>()),
     fetchLatestCommunicationDatesByUids(allUids).catch(() => new Map()),
-    fetchSupportCountsByUids(allUids).catch(() => new Map()),
+    fetchSupportCountsByUids(allUids, { timeoutMs: SUPPORT_COUNTS_BATCH_BUDGET_MS }).catch(() => new Map()),
     fetchPeopleSignalsByUids(allUids).catch(() => new Map()),
   ]);
   const { csmMap } = bothPhases;

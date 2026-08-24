@@ -79,9 +79,14 @@ export async function fetchCsmPhasesByUids(
 ): Promise<Map<string, AppCsmPhase>> {
   const tableId = TABLE_IDS.csm_customer_phase;
   if (!tableId || companyUids.length === 0) return new Map();
-  // nocoFetchByUids は Map<uid, RawRow[]> を返す。phase は 1企業1レコード想定
+  // ⚠️ sort は `stat_date`。`phase_updated_at` は実テーブルに存在せず、
+  //   NocoDB は FIELD_NOT_FOUND で **リクエスト全体を404にする**（実測）。
+  //   これを踏むと全社フェーズ未取得になり、原因が「CSM未管理」と区別できない。
+  // このテーブルは1企業1日1行の履歴形式なので、日付降順の先頭が最新。
+  // 履歴が厚いため limit は既定（uids×20/上限500）では足りない。
   const rawMap = await nocoFetchByUids<RawCsmPhase>(tableId, companyUids, {
-    sort: '-phase_updated_at',
+    sort:  '-stat_date',
+    limit: String(Math.min(companyUids.length * 30, 2000)),
   });
   const result = new Map<string, AppCsmPhase>();
   for (const [uid, rows] of rawMap) {
@@ -99,8 +104,10 @@ export async function fetchCrmPhasesByUids(
 ): Promise<Map<string, AppCrmPhase>> {
   const tableId = TABLE_IDS.crm_customer_phase;
   if (!tableId || companyUids.length === 0) return new Map();
+  // ⚠️ CSM 側と同じ罠。実カラムは `stat_date`（`phase_updated_at` は存在しない）。
   const rawMap = await nocoFetchByUids<RawCrmPhase>(tableId, companyUids, {
-    sort: '-phase_updated_at',
+    sort:  '-stat_date',
+    limit: String(Math.min(companyUids.length * 30, 2000)),
   });
   const result = new Map<string, AppCrmPhase>();
   for (const [uid, rows] of rawMap) {
