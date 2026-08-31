@@ -26,6 +26,9 @@ export const maxDuration = 60;
 
 export type CommChannel = 'chatwork' | 'slack' | 'notion' | 'mail' | 'intercom' | 'cse';
 
+/** これ以外の severity は表示しない（medium / low は全行に並ぶだけで判断材料にならない） */
+const NOTABLE_SEVERITIES = new Set(['high', 'critical', 'urgent']);
+
 export interface CommItem {
   id:      string;
   channel: CommChannel;
@@ -41,6 +44,11 @@ export interface CommItem {
   updatedAt: string | null;
   /** 補足ラベル（チャンネル名 / ステータス等） */
   meta:    string | null;
+  /**
+   * Intercom の会話状態。open / snoozed が「まだ動いている」もの。
+   * Intercom 以外のチャネルは null。
+   */
+  state?:  'open' | 'snoozed' | 'closed' | null;
   /** 議事録の参加者（議事録のみ） */
   participants?: string[];
   /** 議事録のアクションアイテム（議事録のみ） */
@@ -146,7 +154,13 @@ export async function GET(
       body:    c.originalMessage ?? c.triageNote ?? '',
       date:    c.createdAt,
       updatedAt: c.updatedAt,
-      meta:    [c.routingStatus, c.severity].filter(Boolean).join(' / ') || null,
+      // **アサイン状態は出さない。** 未アサインでも回答担当がいるので運用上の意味が無く、
+      // 「unassigned」が滞留しているように見えるだけだった（2026-08-25）。
+      // 見るべきは Intercom の会話状態（open / snoozed / closed）。
+      state:   c.state,
+      // severity は大半が medium で、出すと全行に同じ語が並ぶだけ。
+      // 手が要る high / critical のときだけ添える
+      meta:    NOTABLE_SEVERITIES.has((c.severity ?? '').toLowerCase()) ? c.severity : null,
     });
   }
   for (const t of (support?.cseTickets ?? [])) {

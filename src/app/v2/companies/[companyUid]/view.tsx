@@ -13,10 +13,11 @@ import {
 } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ComposedChart, Bar,
 } from "recharts";
 import type { CompanyUsageResponse, ProjectUsageItem, Severity } from "@/app/api/company/[companyUid]/usage/route";
 import type { TimeseriesResponse, TimeseriesPoint } from "@/app/api/company/[companyUid]/timeseries/route";
-import type { CommunicationsResponse, CommChannel } from "@/app/api/company/[companyUid]/communications/route";
+import type { CommunicationsResponse, CommChannel, CommItem } from "@/app/api/company/[companyUid]/communications/route";
 import type { ReadinessResponse, ReadinessProjectItem } from "@/app/api/company/[companyUid]/readiness/route";
 import type { CompanyProfileResponse } from "@/app/api/company/[companyUid]/profile/route";
 import type { ReadinessFactorKey, ReadinessLevel, ProposalPlay, ReadinessFactor } from "@/lib/company/proposal-readiness";
@@ -25,6 +26,7 @@ import { VERDICT_META, type ModuleSignalVM } from "@/lib/company/module-signals"
 import { InfoTip } from "@/components/ui/info-tip";
 import { ProposalFlow } from "./proposal-flow";
 import { CampaignOrgSection } from "./campaign-org";
+import type { CampaignMonthPoint } from "@/lib/company/campaign-org-signals";
 import { useRegisterAiPageContext } from "@/components/ai";
 
 /** 無料版プロジェクト判定（paidType が FREE / 空 / PAID を含まない）。有償以外はすべて無料扱い。 */
@@ -55,6 +57,34 @@ const STATUS_META: Record<ProjectUsageItem["status"], { label: string; cls: stri
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <section className={`rounded-[10px] border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,.06)] ${className}`}>{children}</section>;
 }
+/**
+ * 折りたたみ。**毎回は見ないが、必要になったら開きたい**ものに使う。
+ * 初期表示に出す情報を絞るための道具であって、隠すためのものではないので、
+ * 何が入っているかは閉じたままでも分かる副題を必ず付ける。
+ */
+function Collapsible({
+  icon: Icon, title, note, defaultOpen = false, children,
+}: {
+  icon: React.ElementType; title: string; note?: string;
+  defaultOpen?: boolean; children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Card>
+      <button type="button" onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-slate-50/70 transition rounded-[10px]">
+        <Icon className="w-4 h-4 text-slate-400 flex-none" />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[13px] font-bold text-slate-800 leading-tight">{title}</h2>
+          {note && <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">{note}</p>}
+        </div>
+        <ChevronRight className={`w-4 h-4 text-slate-400 flex-none transition-transform ${open ? "rotate-90" : ""}`} />
+      </button>
+      {open && <div className="px-4 pb-4 pt-1 border-t border-slate-100">{children}</div>}
+    </Card>
+  );
+}
+
 function KpiTile({ label, value, sub, tone = "default" }: {
   label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: "default" | "red" | "amber" | "green";
 }) {
@@ -81,6 +111,12 @@ function PvBar({ rate }: { rate: number | null }) {
 const AXIS = { fontSize: 10, fill: "#94a3b8" } as const;
 
 /** "YYYY-MM-DD" → "M/D" */
+/** "2026-08" → "26/8"。軸が詰まらない長さにする */
+function fmtMonth(v: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(v);
+  return m ? `${m[1].slice(2)}/${Number(m[2])}` : v;
+}
+
 function fmtDate(v: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
   return m ? `${Number(m[2])}/${Number(m[3])}` : v;
@@ -100,8 +136,12 @@ function ChartCard({ title, note, tip, children }: { title: string; note?: strin
 function EmptyChart({ label }: { label: string }) {
   return <div className="grid place-items-center h-[200px] text-xs text-slate-400 text-center px-4">{label}</div>;
 }
-function CompanyUsageCharts({ series, hasScoreData }: { series: TimeseriesPoint[]; hasScoreData: boolean }) {
+function CompanyUsageCharts({ series, monthly }: {
+  series: TimeseriesPoint[];
+  monthly: CampaignMonthPoint[] | null;
+}) {
   const hasSeries = series.length > 0;
+  const hasMonthly = Boolean(monthly && monthly.length > 0);
   const tooltipStyle = {
     contentStyle: { fontSize: 11, borderRadius: 8, border: "1px solid #e2e8f0" },
     labelStyle: { color: "#64748b", fontWeight: 600 },
@@ -123,28 +163,37 @@ function CompanyUsageCharts({ series, hasScoreData }: { series: TimeseriesPoint[
           </ResponsiveContainer>
         )}
       </ChartCard>
-      <ChartCard title="利用スコア 推移（H / D / B）" note={hasScoreData ? "0–100" : "記録開始後に表示"}
+      {/* ── 施策の動き ──────────────────────────────────────────────
+          H/D/B（利用スコア）を置き換えた（2026-08-25）。
+          あちらは保存先の列も算出も無く、待っても表示されない枠だった。
+          こちらは施策明細（約2年）から日次バッチが月次で集計済み。
+
+          **作成と公開を分けて出す。** 作った本数だけでは「出せているか」が分からず、
+          作成月で公開を数えると翌月まで出せなかった詰まりが消える。 */}
+      <ChartCard title="施策の動き 推移" note={hasMonthly ? `${monthly!.length}ヶ月` : "未計算"}
         tip={
-          "プロジェクトの活用度スコアの日次推移（各0-100・値が高いほど良い）。\n" +
-          "H 健全性: PV・Campaign・操作履歴から算出（時間減衰つき＝最近使っているほど高い）\n" +
-          "D 機能深度: ABテスト/ゴール/ユーザーグループ/ファネル等の高度機能をどれだけ使えているか\n" +
-          "B 横断利用: ヒートマップ/ゴール/ユーザーグループ/セグメント等を幅広く使えているか\n" +
-          "※日次バッチの記録開始後（翌日以降）から線が描画されます"
+          "月ごとの施策の本数。左の「人の推移」と対になる「打ち手の推移」です。\n" +
+          "作成: その月に作られた施策の本数\n" +
+          "公開: その月に初めて配信された本数（作成月ではなく初公開月で数えます）\n" +
+          "配信中: その月に作られたもののうち、今も配信中のもの\n" +
+          "※作成の棒に対して公開の棒が低い月は、作ってから出すまでで止まっています\n" +
+          "※無題の施策は名前から意図を追えないため除いています"
         }>
-        {!hasScoreData ? (
-          <EmptyChart label="スコアの時系列は記録開始後（翌日以降のバッチ）から表示されます" />
+        {!hasMonthly ? (
+          <EmptyChart label="施策の明細がまだ集計されていません（毎朝のバッチで作られます）" />
         ) : (
           <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={series} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
+            <ComposedChart data={monthly!} margin={{ top: 6, right: 12, left: -8, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-              <XAxis dataKey="date" tickFormatter={fmtDate} tick={AXIS} tickLine={false} axisLine={{ stroke: "#e2e8f0" }} minTickGap={24} />
-              <YAxis tick={AXIS} tickLine={false} axisLine={false} width={32} domain={[0, 100]} />
-              <Tooltip {...tooltipStyle} labelFormatter={fmtDate} />
+              <XAxis dataKey="month" tickFormatter={fmtMonth} tick={AXIS} tickLine={false}
+                     axisLine={{ stroke: "#e2e8f0" }} minTickGap={16} />
+              <YAxis tick={AXIS} tickLine={false} axisLine={false} width={32} allowDecimals={false} />
+              <Tooltip {...tooltipStyle} labelFormatter={fmtMonth} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Line type="monotone" dataKey="healthyAvg" name="健全性(H)" stroke="#10b981" strokeWidth={2} dot={false} connectNulls />
-              <Line type="monotone" dataKey="depthAvg"   name="深度(D)"   stroke="#f59e0b" strokeWidth={2} dot={false} connectNulls />
-              <Line type="monotone" dataKey="breadthAvg" name="横断(B)"   stroke="#8b5cf6" strokeWidth={2} dot={false} connectNulls />
-            </LineChart>
+              <Bar dataKey="created"  name="作成" fill="#cbd5e1" radius={[3, 3, 0, 0]} maxBarSize={22} />
+              <Bar dataKey="launched" name="公開" fill="#2563eb" radius={[3, 3, 0, 0]} maxBarSize={22} />
+              <Line type="monotone" dataKey="running" name="今も配信中" stroke="#10b981" strokeWidth={2} dot={false} />
+            </ComposedChart>
           </ResponsiveContainer>
         )}
       </ChartCard>
@@ -152,7 +201,9 @@ function CompanyUsageCharts({ series, hasScoreData }: { series: TimeseriesPoint[
   );
 }
 
-type Tab = "profile" | "dashboard" | "readiness" | "log" | "comm";
+// 時系列データログは独立タブをやめ、ダッシュボードタブの折りたたみに入れた（2026-08-24）。
+// 生ログは毎回見るものではなく、タブを1つ占有すると上位4タブの選択を鈍らせる。
+type Tab = "profile" | "dashboard" | "readiness" | "comm";
 
 // ── 提案準備度の表示メタ ──────────────────────────────────────────────────────
 
@@ -184,14 +235,33 @@ const FACTOR_LABEL: Record<string, { label: string; hint: string }> =
     }),
   );
 
+/**
+ * 戻り先。**個社ページは複数の一覧から開かれる。**
+ * 提案準備ボードから入ったのに「Tier 3 一覧」へ戻るのは感覚と合わない（実測で指摘あり）。
+ * 既定は提案準備ボード（主動線。サイドバーでも個社ページはボードの子として扱っている）。
+ */
+const BACK_TO: Record<string, { href: string; label: string }> = {
+  readiness: { href: "/v2/readiness", label: "提案準備ボード" },
+  tier3:     { href: "/v2/tier3",     label: "Tier 3 一覧" },
+  projects:  { href: "/v2/projects",  label: "プロジェクト分析" },
+  home:      { href: "/v2",           label: "ホーム" },
+};
+const BACK_DEFAULT = BACK_TO.readiness;
+
 export function CompanyDetailView({
   companyUid,
   initialUsage,
   initialTs,
+  monthlyCampaigns,
+  from,
 }: {
   companyUid: string;
   initialUsage: CompanyUsageResponse | null;
   initialTs: TimeseriesResponse | null;
+  /** 月ごとの施策の動き（日次バッチが保存済み）。null = 未計算 */
+  monthlyCampaigns: CampaignMonthPoint[] | null;
+  /** どの一覧から来たか（`?from=`）。戻り先の出し分けに使う */
+  from?: string | null;
 }) {
   // 初期データはサーバーコンポーネントから props で受け取る（クライアント fetch のウォーターフォールを排除）
   const usage = initialUsage;
@@ -212,7 +282,9 @@ export function CompanyDetailView({
     if (tab !== "profile") return;
     if (profile && profileKey === 0) return;
     setProfileLoading(true); setProfileError(null);
-    const qs = industryRefresh ? "?industry=refresh" : "";
+    // profileKey > 0 = 担当者が「更新」を押したとき。**保存済みではなく作り直す**。
+    // 初回表示（profileKey === 0）は保存済みを読むので待たされない。
+    const qs = industryRefresh ? "?industry=refresh" : profileKey > 0 ? "?refresh=1" : "";
     fetch(`/api/company/${companyUid}/profile${qs}`)
       .then(async r => {
         const j = await r.json();
@@ -231,8 +303,11 @@ export function CompanyDetailView({
   const [oppOverride, setOppOverride] = useState<boolean | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
+  // **表示は「顧客情報」タブにある。**（2026-08-21 に移設したとき、この取得条件だけ
+  // "readiness" のまま残っていて、顧客情報タブでは永久に取得されず
+  // 「提案準備度を取得できませんでした」と出ていた。2026-08-24 修正）
   useEffect(() => {
-    if (tab !== "readiness") return;
+    if (tab !== "profile") return;
     setReadinessLoading(true);
     const qs = oppOverride === null ? "" : `?opportunity=${oppOverride}`;
     fetch(`/api/company/${companyUid}/readiness${qs}`)
@@ -332,15 +407,17 @@ export function CompanyDetailView({
     ],
   });
 
+  const back = (from && BACK_TO[from]) || BACK_DEFAULT;
+
   if (!usage) {
-    return (<><TopBar /><div className="p-5"><div className="flex items-center gap-2 text-red-600 py-4 px-4 bg-red-50 rounded"><AlertCircle className="w-4 h-4" /><span className="text-sm">読み込みに失敗しました: データなし</span></div></div></>);
+    return (<><TopBar back={back} /><div className="p-5"><div className="flex items-center gap-2 text-red-600 py-4 px-4 bg-red-50 rounded"><AlertCircle className="w-4 h-4" /><span className="text-sm">読み込みに失敗しました: データなし</span></div></div></>);
   }
 
   const sev = SEV[usage.severity];
 
   return (
     <>
-      <TopBar name={usage.name} />
+      <TopBar name={usage.name} back={back} />
       <div className="p-4 md:p-5 space-y-4">
         <HeaderCard data={usage} sev={sev} />
 
@@ -349,7 +426,6 @@ export function CompanyDetailView({
             { key: "profile"   as Tab, label: "顧客情報", icon: BookOpen },
             { key: "dashboard" as Tab, label: "ダッシュボード", icon: LayoutDashboard },
             { key: "readiness" as Tab, label: "提案準備", icon: Target },
-            { key: "log"       as Tab, label: "時系列データログ", icon: Activity },
             { key: "comm"      as Tab, label: "コミュニケーション", icon: MessagesSquare },
           ]).map(t => {
             const Icon = t.icon;
@@ -380,11 +456,10 @@ export function CompanyDetailView({
             onReloadReadiness={() => setReloadKey(k => k + 1)}
           />
         )}
-        {tab === "dashboard" && <DashboardTab data={usage} ts={ts} />}
+        {tab === "dashboard" && <DashboardTab data={usage} ts={ts} monthly={monthlyCampaigns} />}
         {tab === "readiness" && (
           <ReadinessTab companyUid={companyUid} profile={profile} />
         )}
-        {tab === "log" && <LogTab ts={ts} />}
         {tab === "comm" && <CommTab comm={comm} loading={commLoading} />}
       </div>
     </>
@@ -489,7 +564,10 @@ function ProjectRow({ p, companyUid, muted = false }: {
   );
 }
 
-function DashboardTab({ data, ts }: { data: CompanyUsageResponse; ts: TimeseriesResponse | null }) {
+function DashboardTab({ data, ts, monthly }: {
+  data: CompanyUsageResponse; ts: TimeseriesResponse | null;
+  monthly: CampaignMonthPoint[] | null;
+}) {
   const wow = data.wowPct;
   const [showFree, setShowFree] = useState(false);
 
@@ -515,7 +593,7 @@ function DashboardTab({ data, ts }: { data: CompanyUsageResponse; ts: Timeseries
         <KpiTile label="最終活動" value={data.daysSinceActive != null ? `${data.daysSinceActive}日前` : "—"} tone={data.daysSinceActive != null && data.daysSinceActive >= 30 ? "amber" : "green"} sub={data.lastActive ?? "—"} />
       </div>
 
-      <CompanyUsageCharts series={ts?.series ?? []} hasScoreData={ts?.hasScoreData ?? false} />
+      <CompanyUsageCharts series={ts?.series ?? []} monthly={monthly} />
 
       {(data.riskSignals.length > 0 || data.opportunitySignals.length > 0) && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -601,6 +679,12 @@ function DashboardTab({ data, ts }: { data: CompanyUsageResponse; ts: Timeseries
         </div>
       </Card>
 
+      {/* 生ログ。独立タブをやめてここに畳んだ（2026-08-24） */}
+      <Collapsible icon={Activity} title="時系列データログ（日次スナップショット）"
+        note={`日次バッチが記録した生の数値。増減の根拠を1日単位で確かめたいときに開く${ts?.series.length ? `（${ts.series.length}日分）` : ""}`}>
+        <LogTab ts={ts} />
+      </Collapsible>
+
       <div className="flex justify-end">
         <Link href={`/companies/${data.companyUid}`} className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-slate-500 hover:text-blue-600">現行 UI の詳細（AI要約・組織図など）を開く <ArrowUpRight className="w-3.5 h-3.5" /></Link>
       </div>
@@ -608,14 +692,14 @@ function DashboardTab({ data, ts }: { data: CompanyUsageResponse; ts: Timeseries
   );
 }
 
+/** 折りたたみの中身。外枠（Card / 見出し）は呼び出し側が持つ */
 function LogTab({ ts }: { ts: TimeseriesResponse | null }) {
   const rows = ts ? [...ts.series].reverse() : [];
   return (
-    <Card>
-      <div className="flex items-center gap-2 px-3.5 py-3 border-b border-slate-100">
-        <h2 className="text-[12.5px] font-bold tracking-wide text-slate-800">時系列データログ（日次スナップショット）</h2>
-        <span className="ml-auto text-[10.5px] text-slate-400">{rows.length} 日分{ts && !ts.hasScoreData ? " · スコアは記録開始後" : ""}</span>
-      </div>
+    <div>
+      {ts && !ts.hasScoreData && (
+        <p className="text-[10.5px] text-slate-400 pt-2 pb-1">スコア（H/D/B）は未算出のため常に空欄です</p>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-xs border-collapse">
           <thead>
@@ -655,10 +739,10 @@ function LogTab({ ts }: { ts: TimeseriesResponse | null }) {
           </tbody>
         </table>
       </div>
-      <div className="px-3.5 py-2 border-t border-slate-100 text-[10px] text-slate-400">
+      <div className="pt-2 text-[10px] text-slate-400">
         企業日次: PV超過PJ / 稼働・停滞PJ / MRR / Health（company_daily_snapshot）。プロジェクト集計: L7・L30・Campaign・H/D/B（project_user_snapshots）。
       </div>
-    </Card>
+    </div>
   );
 }
 
@@ -671,12 +755,25 @@ const CHANNEL_META: Record<CommChannel, { label: string; icon: React.ElementType
   cse:      { label: "CSE",      icon: Ticket,        cls: "bg-amber-50 text-amber-700" },
 };
 
+/**
+ * Intercom の会話状態。**closed はバッジを出さない。**
+ * 大半が closed なので、出すと画面が「Closed」で埋まって
+ * 手を入れるべき Open / Snooze が沈む。
+ */
+const STATE_META: Record<'open' | 'snoozed' | 'closed', { label: string; cls: string; hint: string }> = {
+  open:    { label: "Open",   cls: "bg-emerald-50 text-emerald-700", hint: "Intercom で未クローズ。まだやり取りが続いています" },
+  snoozed: { label: "Snooze", cls: "bg-amber-50 text-amber-700",     hint: "Intercom でスヌーズ中。時間を置いて戻ってきます" },
+  closed:  { label: "Closed", cls: "bg-slate-100 text-slate-400",    hint: "Intercom でクローズ済み" },
+};
+
 /** この文字数を超える本文は折りたたみ、「全文を表示」で開く */
 const BODY_PREVIEW_LIMIT = 220;
 
 function CommTab({ comm, loading }: { comm: CommunicationsResponse | null; loading: boolean }) {
   const [ch, setCh]   = useState<CommChannel | "all">("all");
   const [q, setQ]     = useState("");
+  /** **Open / Snooze だけに絞る。** 見るべきはこの2つ、というのが運用上の合意 */
+  const [liveOnly, setLiveOnly] = useState(false);
   const [open, setOpen] = useState<Set<string>>(new Set());
 
   const toggle = (id: string) =>
@@ -692,8 +789,11 @@ function CommTab({ comm, loading }: { comm: CommunicationsResponse | null; loadi
   if (!comm) return null;
 
   const kw = q.trim().toLowerCase();
+  const isLive = (i: CommItem) => i.state === "open" || i.state === "snoozed";
+  const liveCount = comm.items.filter(isLive).length;
   const items = comm.items.filter(i =>
     (ch === "all" || i.channel === ch)
+    && (!liveOnly || isLive(i))
     && (kw === "" || i.title.toLowerCase().includes(kw) || i.body.toLowerCase().includes(kw))
   );
   const filters: { key: CommChannel | "all"; label: string; n: number }[] = [
@@ -715,6 +815,18 @@ function CommTab({ comm, loading }: { comm: CommunicationsResponse | null; loadi
             </button>
           ))}
         </div>
+
+        {liveCount > 0 && (
+          <button onClick={() => setLiveOnly(v => !v)}
+            title="Intercom でまだ閉じていない会話（Open / Snooze）だけを表示します"
+            className={`h-[30px] px-2.5 rounded-[8px] border text-[11.5px] font-semibold flex items-center gap-1.5 transition
+              ${liveOnly
+                ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                : "border-slate-300 text-slate-600 hover:bg-slate-50"}`}>
+            未クローズのみ
+            <span className={`text-[10px] font-extrabold ${liveOnly ? "text-emerald-600" : "text-slate-400"}`}>{liveCount}</span>
+          </button>
+        )}
 
         {/* 本文まで含めた全文検索 */}
         <div className="relative ml-auto">
@@ -747,6 +859,13 @@ function CommTab({ comm, loading }: { comm: CommunicationsResponse | null; loadi
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded ${m.cls}`}>{m.label}</span>
+                  {/* **見るべきは Open / Snooze だけ。** アサインの有無は運用上の意味が無い */}
+                  {it.state && it.state !== "closed" && (
+                    <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded flex-none ${STATE_META[it.state].cls}`}
+                          title={STATE_META[it.state].hint}>
+                      {STATE_META[it.state].label}
+                    </span>
+                  )}
                   <span className="text-[12px] font-bold text-slate-800 truncate">{it.title}</span>
                   {it.meta && <span className="text-[10px] text-slate-400 flex-none">· {it.meta}</span>}
                   <span className="ml-auto flex-none text-right leading-tight">
@@ -817,10 +936,10 @@ function HeaderStat({ label, value }: { label: string; value: React.ReactNode })
   return (<div className="flex flex-col"><span className="text-[10px] font-bold tracking-wide text-slate-400 uppercase">{label}</span><span className="mt-0.5">{value}</span></div>);
 }
 
-function TopBar({ name }: { name?: string }) {
+function TopBar({ name, back }: { name?: string; back: { href: string; label: string } }) {
   return (
     <div className="flex items-center gap-3 px-5 py-3.5 bg-white border-b border-slate-200">
-      <Link href="/v2/tier3" className="inline-flex items-center gap-1 text-[12px] font-semibold text-slate-500 hover:text-blue-600"><ArrowLeft className="w-4 h-4" /> Tier 3 一覧</Link>
+      <Link href={back.href} className="inline-flex items-center gap-1 text-[12px] font-semibold text-slate-500 hover:text-blue-600"><ArrowLeft className="w-4 h-4" /> {back.label}</Link>
       <span className="text-slate-300">/</span>
       <span className="text-[13px] font-bold text-slate-800 truncate">{name ?? "会社詳細"}</span>
       <span className="ml-auto text-[11px] text-slate-400">利用状況ビュー</span>
@@ -848,38 +967,27 @@ function ReadinessTab({ companyUid, profile }: {
 }
 
 /**
- * 提案準備度の内訳（顧客情報タブに置く）。
- * 「今この顧客はどういう状態か」を読むための材料で、作業ではない。
+ * 提案準備度の詳細（顧客情報タブの折りたたみに置く）。
+ *
+ * **結論（スコア・提案の型）は StatusStrip が先頭で出す。**
+ * ここは根拠であって、毎回開くものではない。
+ * 外部機会は提案の型を切り替える最上位の要因なので、ここではなく上に出している。
  */
-function CompanyReadinessDetail({ companyUid, data, loading, oppOverride, onSetOverride, onReload }: {
-  companyUid: string;
+function ReadinessDetailBody({ data, loading }: {
   data: ReadinessResponse | null;
   loading: boolean;
-  oppOverride: boolean | null;
-  onSetOverride: (v: boolean | null) => void;
-  onReload: () => void;
 }) {
   if (loading && !data) {
     return <div className="flex items-center gap-2 text-slate-400 py-10 justify-center"><Loader2 className="w-4 h-4 animate-spin" /><span className="text-sm">提案準備度を算出中…</span></div>;
   }
   if (!data) {
-    return <Card className="px-5 py-4"><div className="flex items-center gap-2 text-red-600 text-sm"><AlertCircle className="w-4 h-4" />提案準備度を取得できませんでした</div></Card>;
+    return <div className="flex items-center gap-2 text-red-600 text-sm py-4"><AlertCircle className="w-4 h-4" />提案準備度を取得できませんでした</div>;
   }
 
   const rep = data.inputs.replaceability;
 
   return (
-    <div className="space-y-4">
-      {/* ── 外部機会（自動判定 / §11）── */}
-      <ExternalOpportunityCard
-        companyUid={companyUid}
-        data={data}
-        loading={loading}
-        oppOverride={oppOverride}
-        onSetOverride={onSetOverride}
-        onReload={onReload}
-      />
-
+    <div className="space-y-4 pt-3">
       {/* ── プロジェクト（部門）別 ── 判断の主対象 */}
       <div>
         <div className="flex items-center gap-1.5 mb-2 px-0.5">
@@ -899,26 +1007,8 @@ function CompanyReadinessDetail({ companyUid, data, loading, oppOverride, onSetO
         )}
       </div>
 
-      {/* ── 会社全体（参考） ── */}
-      <div>
-        <div className="flex items-center gap-1.5 mb-2 px-0.5">
-          <h2 className="text-[13px] font-bold text-slate-800">会社全体（参考値）</h2>
-          <InfoTip text={data.company.note} />
-        </div>
-        <Card className={`border-l-4 ${PLAY_META[data.company.play.play].ring}`}>
-          <div className="px-5 py-4 flex flex-wrap items-center gap-x-6 gap-y-2">
-            <ReadinessScore level={data.company.readiness.overall} score={data.company.readiness.overallScore} />
-            <span className={`text-[11.5px] font-bold px-2.5 py-1 rounded-full ${PLAY_META[data.company.play.play].chip}`}>
-              {data.company.play.label}
-            </span>
-            {data.renewalBucket && (
-              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${data.renewalBucket === "0-30" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
-                更新 {data.renewalBucket}{data.renewalDate ? `（${data.renewalDate}）` : ""}
-              </span>
-            )}
-          </div>
-        </Card>
-      </div>
+      {/* 会社全体のスコア・提案の型・更新時期は StatusStrip（先頭）が出す。
+          同じものを二度置くと、どちらが判断材料なのか分からなくなるためここには持たない。 */}
 
       {/* ── 摩擦の根拠（代替可能性の認知） ── */}
       {rep.detected && (
@@ -1141,6 +1231,7 @@ function ExternalOpportunityCard({ companyUid, data, loading, oppOverride, onSet
 }) {
   const ext = data.externalOpportunity;
   const decided = data.hasExternalOpportunity;
+  const [showCandidates, setShowCandidates] = useState(false);
 
   return (
     <Card className={`border-l-4 ${decided ? "border-l-blue-500" : "border-l-slate-300"}`}>
@@ -1183,18 +1274,24 @@ function ExternalOpportunityCard({ companyUid, data, loading, oppOverride, onSet
           </div>
         )}
 
-        {/* ── 候補（議事録由来）── */}
+        {/* ── 候補（議事録由来）──
+            **既定は畳む。** 候補は「判定に使っていないもの」なので、
+            全件展開すると確定シグナルより目立ち、その下の顧客理解を押し下げていた（2026-08-24）。 */}
         {ext.candidateSignals.length > 0 && (
           <div className="mt-3 pt-3 border-t border-slate-100">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10.5px] font-bold tracking-wide text-slate-400 uppercase">
-                候補 {ext.candidateSignals.length}件
+            <button type="button" onClick={() => setShowCandidates(v => !v)}
+              className="flex items-center gap-1.5 text-left group">
+              <ChevronRight className={`w-3.5 h-3.5 text-slate-400 transition-transform ${showCandidates ? "rotate-90" : ""}`} />
+              <span className="text-[10.5px] font-bold tracking-wide text-slate-400 uppercase group-hover:text-slate-600">
+                候補 {ext.candidateSignals.length}件（判定には使っていません）
               </span>
               <InfoTip text="議事録のキーワード一致で見つかった候補です。「交代」「新体制」などの語は機会でない文脈でも一致するため、そのままでは判定に使いません。内容を確認して、本当に機会であれば外部情報として登録してください。" />
-            </div>
-            <div className="mt-1.5 space-y-2">
-              {ext.candidateSignals.slice(0, 6).map((s, i) => <SignalRow key={i} signal={s} tone="candidate" />)}
-            </div>
+            </button>
+            {showCandidates && (
+              <div className="mt-1.5 space-y-2">
+                {ext.candidateSignals.slice(0, 6).map((s, i) => <SignalRow key={i} signal={s} tone="candidate" />)}
+              </div>
+            )}
           </div>
         )}
 
@@ -1828,22 +1925,16 @@ function ProfileTab({
   onReloadReadiness: () => void;
 }) {
   return (
-    <div className="space-y-5">
-      <ProfileUnderstanding
-        data={data} loading={loading} error={error}
-        onRegenerate={onRegenerate} onFetchIndustry={onFetchIndustry}
-      />
+    <div className="space-y-4">
+      {/* ── 1. 判断の要約 ──
+          顧客理解の生成は30秒かかる。その間ページの上半分が空白になっていたので、
+          **待たずに出せる準備度・提案の型・更新時期を先頭に置く**（2026-08-24）。 */}
+      <StatusStrip data={readiness} loading={readinessLoading} />
 
-      {/* 施策から読む組織の動き（明細は押したときだけ取得する） */}
-      <CampaignOrgSection companyUid={companyUid} />
-
-      <div>
-        <div className="flex items-center gap-1.5 mb-2 px-0.5">
-          <Gauge className="w-4 h-4 text-slate-400" />
-          <h2 className="text-[13px] font-bold text-slate-800">提案準備度の内訳</h2>
-          <InfoTip text="「今この顧客に提案を持ち込んでよいか」の判断材料です。提案骨子を作る作業は「提案準備」タブにあります。" />
-        </div>
-        <CompanyReadinessDetail
+      {/* ── 2. 外部機会（今提案する理由）──
+          提案の型を切り替える最上位の要因なので、詳細の折りたたみには入れない。 */}
+      {readiness && (
+        <ExternalOpportunityCard
           companyUid={companyUid}
           data={readiness}
           loading={readinessLoading}
@@ -1851,8 +1942,85 @@ function ProfileTab({
           onSetOverride={onSetOverride}
           onReload={onReloadReadiness}
         />
-      </div>
+      )}
+
+      {/* ── 3. 顧客理解（LLM生成）── */}
+      <ProfileUnderstanding
+        data={data} loading={loading} error={error}
+        onRegenerate={onRegenerate} onFetchIndustry={onFetchIndustry}
+      />
+
+      {/* ── 4. 判断の根拠（毎回は見ない）── */}
+      <Collapsible icon={Gauge} title="提案準備度の詳細"
+        note="部門（プロジェクト）別のスコア・会社全体の参考値・摩擦の根拠・算出に使ったデータ">
+        <ReadinessDetailBody data={readiness} loading={readinessLoading} />
+      </Collapsible>
+
+      {/* ── 5. 施策から読む組織の動き（明細は押したときだけ取得する）── */}
+      <CampaignOrgSection companyUid={companyUid} />
     </div>
+  );
+}
+
+/**
+ * 判断の要約。**顧客理解の生成（30秒）を待たずに出す。**
+ * ここだけ読めば「今この顧客に提案を持ち込んでよいか」の結論が分かる。
+ */
+function StatusStrip({ data, loading }: { data: ReadinessResponse | null; loading: boolean }) {
+  if (!data) {
+    return (
+      <Card className="px-5 py-3.5">
+        <div className="flex items-center gap-2 text-[12.5px]">
+          {loading ? (
+            <><Loader2 className="w-4 h-4 animate-spin text-slate-400" /><span className="text-slate-400">提案準備度を算出中…</span></>
+          ) : (
+            <><AlertCircle className="w-4 h-4 text-red-500" /><span className="text-red-600">提案準備度を取得できませんでした</span></>
+          )}
+        </div>
+      </Card>
+    );
+  }
+
+  const play = data.company.play;
+  const meta = PLAY_META[play.play];
+
+  return (
+    <Card className={`border-l-4 ${meta.ring}`}>
+      <div className="px-5 py-4">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <ReadinessScore level={data.company.readiness.overall} score={data.company.readiness.overallScore} />
+          <span className={`text-[11.5px] font-bold px-2.5 py-1 rounded-full ${meta.chip}`}>{play.label}</span>
+          {data.renewalBucket && (
+            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full
+              ${data.renewalBucket === "31-90" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
+              更新 {data.renewalBucket}{data.renewalDate ? `（${data.renewalDate}）` : ""}
+            </span>
+          )}
+          <span className="text-[11px] text-slate-400 ml-auto">
+            有料 {data.inputs.paidProjectCount}プロジェクト
+            {data.inputs.excludedFreeCount > 0 && `（FREE ${data.inputs.excludedFreeCount}件を除外）`}
+          </span>
+        </div>
+
+        {/* 判断の指針。スコアだけでは何をすべきか分からない */}
+        <p className="text-[12.5px] text-slate-700 leading-relaxed mt-2.5">{play.guidance}</p>
+
+        {play.reasons.length > 0 && (
+          <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+            {play.reasons.map((r, i) => (
+              <li key={i} className="text-[11px] text-slate-400">・{r}</li>
+            ))}
+          </ul>
+        )}
+
+        {/* 4要素。会社全体は参考値だが、どこが欠けているかは先頭で見せる */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-2 mt-3 pt-3 border-t border-slate-100">
+          {(Object.keys(FACTOR_META) as ReadinessFactorKey[]).map(k => (
+            <FactorBar key={k} factorKey={k} factor={data.company.readiness.factors[k]} />
+          ))}
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -1902,7 +2070,7 @@ function ProfileUnderstanding({ data, loading, error, onRegenerate, onFetchIndus
               </div>
               <p className="text-[13.5px] text-slate-800 leading-relaxed mt-1.5">{data.headline}</p>
             </div>
-            <button onClick={onRegenerate} disabled={loading} title="材料を読み直して再生成"
+            <button onClick={onRegenerate} disabled={loading} title="材料を読み直して作り直す（30秒ほど）"
               className="shrink-0 p-2 rounded-[8px] border border-slate-200 text-slate-400 hover:text-slate-700 hover:border-slate-300 transition disabled:opacity-40">
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             </button>
@@ -2042,7 +2210,13 @@ function ProfileUnderstanding({ data, loading, error, onRegenerate, onFetchIndus
 
       <p className="text-[11px] text-slate-400 px-1">
         生成 {new Date(data.generatedAt).toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
+        {data.fromCache && (
+          <span className={data.ageDays != null && data.ageDays >= 14 ? "text-amber-600 font-semibold" : ""}>
+            {" "}（保存済み{data.ageDays != null ? ` / ${data.ageDays}日前` : ""}）
+          </span>
+        )}
         ・ 記述は材料からの要約であり、判断は出典を確認のうえ行ってください。
+        {data.fromCache && "材料が変わっている可能性があるときは右上の更新ボタンで作り直してください。"}
       </p>
     </div>
   );

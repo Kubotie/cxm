@@ -769,6 +769,11 @@ export interface AppSupportCase {
   owner: string | null;
   assignedTeam: string | null;
   routingStatus: string;
+  /**
+   * Intercom の会話状態（open / snoozed / closed）。**表示はこちらを使う。**
+   * routing_status の "unassigned" は運用上の意味が無い（未アサインでも回答担当がいる）。
+   */
+  state: 'open' | 'snoozed' | 'closed' | null;
   sourceStatus: string | null;
   severity: string;
   createdAt: string;
@@ -789,6 +794,22 @@ const CASE_TYPE_MAP: Record<string, string> = {
   support:    'Support',
   cse_linked: 'CSE Ticket Linked',
 };
+
+/**
+ * Intercom の会話状態を決める。**source_status が正本。**
+ * support-by-company.ts の intercomState と同じ規則（あちらは集計用、ここは表示用）。
+ * 旧同期分は source_status が空なので routing_status に落ちる。
+ */
+function intercomStateOf(
+  sourceStatus: unknown, routingStatus: unknown,
+): 'open' | 'snoozed' | 'closed' {
+  const src = String(sourceStatus ?? '').trim().toLowerCase();
+  if (src === 'open')    return 'open';
+  if (src === 'snoozed') return 'snoozed';
+  if (src === 'closed')  return 'closed';
+  const rt = String(routingStatus ?? '').trim().toLowerCase();
+  return ['closed', 'resolved', 'ignored'].includes(rt) ? 'closed' : 'open';
+}
 
 const ROUTING_STATUS_MAP: Record<string, string> = {
   unassigned:          'unassigned',
@@ -887,6 +908,8 @@ export function cseTicketToAppSupportCase(raw: RawCseTicket): AppSupportCase {
     owner: null,
     assignedTeam: 'CSE',
     routingStatus: CSE_STATUS_TO_ROUTING[statusKey] ?? 'waiting on CSE',
+    // Intercom の会話状態は CSE チケットには無い（別の status 語彙）
+    state: null,
     sourceStatus: s(raw.status, 'open'),
     severity: s(raw.priority ?? raw.severity, 'medium'),
     createdAt: fmtDateTime(raw.created_at) ?? '—',
@@ -928,6 +951,7 @@ export function toAppSupportCase(raw: RawSupportCase): AppSupportCase {
     assignedTeam: raw.assigned_team ? s(raw.assigned_team) : null,
     routingStatus: ROUTING_STATUS_MAP[rawStatus] ?? s(raw.routing_status, 'unassigned'),
     sourceStatus: raw.source_status ? s(raw.source_status) : null,
+    state: intercomStateOf(raw.source_status, raw.routing_status),
     severity: s(raw.severity, 'medium'),
     // createdAt: log_intercom は sent_at_jst を使用（created_at は存在しない）
     createdAt: fmtDateTime(raw.sent_at_jst ?? raw.created_at) ?? '—',

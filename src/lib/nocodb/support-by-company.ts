@@ -69,8 +69,40 @@ const CSE_CLOSED_STATUSES = new Set(['closed', 'resolved', 'done']);
 /** cse_tickets の「顧客確認待ち」status（open の内訳として別集計する） */
 const CSE_WAITING_STATUSES = new Set(['waiting confirm', 'waiting customer', 'waiting reply']);
 
-/** log_intercom がクローズとみなされる routing_status 値 */
-const INTERCOM_CLOSED_STATUSES = new Set(['closed', 'resolved']);
+/**
+ * Intercom の会話状態。**`source_status` が正本。**
+ *
+ * `routing_status` は CXM 側の振り分け語彙（unassigned / triaged / assigned …）で、
+ * **Intercom の実態を表していない。** 実測（2026-08-25 / 全17,280件）:
+ *   routing_status=unassigned 1,185件 → 実際は open 1,015 / snoozed 168 / closed 2
+ *   routing_status=closed だが source_status=open の取りこぼしが 50件
+ *
+ * さらに運用上、**アサインの有無でフローは止まらない**（未アサインでも回答担当がいる）。
+ * 見るべきは open か snoozed か closed かだけ。
+ */
+export type IntercomState = 'open' | 'snoozed' | 'closed';
+
+const INTERCOM_OPEN_STATES = new Set(['open', 'snoozed']);
+
+/** 旧同期分（source_status が空）のためのフォールバック語彙 */
+const INTERCOM_CLOSED_STATUSES = new Set(['closed', 'resolved', 'ignored']);
+
+/**
+ * 会話の状態を決める。source_status を優先し、無ければ routing_status に落ちる。
+ * 旧同期分 12,526件は source_status が空で routing_status=closed のため、
+ * フォールバックで正しく closed になる。
+ */
+export function intercomState(
+  sourceStatus: string | null | undefined,
+  routingStatus: string | null | undefined,
+): IntercomState {
+  const src = normStatus(sourceStatus);
+  if (src === 'open')    return 'open';
+  if (src === 'snoozed') return 'snoozed';
+  if (src === 'closed')  return 'closed';
+  // source_status が無い行だけ routing_status を見る
+  return INTERCOM_CLOSED_STATUSES.has(normStatus(routingStatus)) ? 'closed' : 'open';
+}
 
 /** 直近 N 日以内 = 「recent」の定義（activity 表示用） */
 const RECENT_DAYS = 7;
@@ -83,8 +115,11 @@ const RECENT_DAYS = 7;
  */
 export const SUPPORT_RISK_WINDOW_DAYS = 90;
 
-function isIntercomOpen(routingStatus: string | null | undefined): boolean {
-  return !INTERCOM_CLOSED_STATUSES.has(normStatus(routingStatus));
+function isIntercomOpen(
+  sourceStatus: string | null | undefined,
+  routingStatus: string | null | undefined,
+): boolean {
+  return INTERCOM_OPEN_STATES.has(intercomState(sourceStatus, routingStatus));
 }
 
 function isCseOpen(status: string | null | undefined): boolean {
@@ -257,7 +292,7 @@ const CSE_DISPLAY_FIELDS =
 
 /** 集計に必要な列だけを投影した log_intercom の全行取得（ページング）用 */
 const INTERCOM_COUNT_FIELDS =
-  'Id,source_record_id,company_uid,routing_status,severity,created_at,CreatedAt';
+  'Id,source_record_id,company_uid,routing_status,source_status,severity,created_at,CreatedAt';
 
 /**
  * 一括カウント専用の投影（表示用の列を含まない最小セット）。
@@ -293,22 +328,48 @@ async function fetchIntercomRollupsForCompany(companyUid: string): Promise<Ticke
 }
 
 /**
- * 1企業の support cases を log_intercom から取得する（表示用）。
- * @remarks 件数カウントには使わない（limit で切れる）。カウントは
- *          fetchIntercomRollupsForCompany を使うこと。
+ * 畳み込み済み rollup から表示用の行を作る（log_intercom）。
+ *
+ * log_intercom は **1会話 = 複数行（メッセージ単位）** なので、
+ * 生の行を新しい順に 5 件取ると同じ会話がリストを埋めてしまう。
+ * source_record_id で畳み込んだ代表行の Id だけを取り直す。
+ *
+ * 選び方は「新着順に recent 件」＋「open / snoozed は別枠で live 件」。
+ * 直近がすべて closed の会社で、未クローズが 1 件もリストに載らない
+ * ——という状態を避けるため（画面で見たいのは Open と Snooze）。
  */
-export async function fetchSupportCasesForCompany(
-  companyUid: string,
-  limit = 20,
+async function hydrateIntercomDisplayRows(
+  rollups: TicketRollup<RawSupportCase>[],
+  recent = 5,
+  live   = 10,
 ): Promise<AppSupportCase[]> {
+  const byNewest = [...rollups].sort(
+    (a, b) => String(b.latest.CreatedAt ?? '').localeCompare(String(a.latest.CreatedAt ?? '')));
+
+  // 同じ rollup オブジェクトを両方の枠で拾うため、参照の Set で重複排除する
+  const picked = new Set<TicketRollup<RawSupportCase>>();
+  const take = (list: TicketRollup<RawSupportCase>[], n: number) => {
+    for (const r of list.slice(0, n)) picked.add(r);
+  };
+  take(byNewest.filter(r =>
+    isIntercomOpen(r.latest.source_status as string | null, r.latest.routing_status as string | null)), live);
+  take(byNewest, recent);
+
+  const latest = [...picked].sort(
+    (a, b) => String(b.latest.CreatedAt ?? '').localeCompare(String(a.latest.CreatedAt ?? '')));
+  if (latest.length === 0) return [];
+
   const tableId = TABLE_IDS.log_intercom;
-  if (!tableId) return [];
+  const ids = latest.map(r => r.latest.Id).filter((id): id is number => id != null);
+  if (!tableId || ids.length === 0) return latest.map(r => toAppSupportCase(r.latest));
+
+  // 本文列は rollup の投影（INTERCOM_COUNT_FIELDS）に無いので Id 指定で取り直す
   const rows = await nocoFetch<RawSupportCase>(tableId, {
-    where: `(company_uid,eq,${companyUid})`,
-    sort:  '-CreatedAt',
-    limit: String(limit),
-  });
-  return rows.map(toAppSupportCase);
+    where: `(Id,in,${ids.join(',')})`,
+    limit: String(ids.length),
+  }).catch(() => [] as RawSupportCase[]);
+  const byId = new Map(rows.map(r => [r.Id, r]));
+  return latest.map(r => toAppSupportCase(byId.get(r.latest.Id as number) ?? r.latest));
 }
 
 /**
@@ -400,14 +461,14 @@ export async function fetchSupportAIStatesForCompany(
 export async function fetchSupportAggregateForCompany(
   companyUid: string,
 ): Promise<SupportAggregateVM> {
-  const [displayCases, intercomRollups, cseRollups, aiStates] = await Promise.all([
-    fetchSupportCasesForCompany(companyUid),
+  const [intercomRollups, cseRollups, aiStates] = await Promise.all([
     fetchIntercomRollupsForCompany(companyUid),
     fetchCseRollupsForCompany(companyUid),
     fetchSupportAIStatesForCompany(companyUid),
   ]);
 
-  const openIntercom = intercomRollups.filter(r => isIntercomOpen(r.latest.routing_status as string | null));
+  const openIntercom = intercomRollups.filter(r =>
+    isIntercomOpen(r.latest.source_status as string | null, r.latest.routing_status as string | null));
   const openCse      = cseRollups.filter(r => isCseOpen(r.latest.status));
 
   const sev = (r: TicketRollup<RawSupportCase>) => String(r.latest.severity ?? '').toLowerCase();
@@ -425,8 +486,11 @@ export async function fetchSupportAggregateForCompany(
   const recentCriticalCount = riskIntercom.filter(r => sev(r) === 'critical').length;
   const staleOpenCount      = (openIntercom.length + openCse.length) - recentOpenCount;
 
-  // 本文列は rollup の投影に含まれないため、表示する 5 件だけ取り直す
-  const cseDisplay = await hydrateCseDisplayRows(cseRollups, 5);
+  // 本文列は rollup の投影に含まれないため、表示する分だけ取り直す
+  const [cseDisplay, intercomDisplay] = await Promise.all([
+    hydrateCseDisplayRows(cseRollups, 5),
+    hydrateIntercomDisplayRows(intercomRollups),
+  ]);
 
   return {
     openIntercomCount:   openIntercom.length,
@@ -438,7 +502,7 @@ export async function fetchSupportAggregateForCompany(
     recentCriticalCount,
     staleOpenCount,
     recentSupportCount,
-    recentCases:  displayCases.slice(0, 5),
+    recentCases:  intercomDisplay,
     cseTickets:   cseDisplay,
     aiStates:     aiStates.slice(0, 5),
   };
@@ -555,7 +619,8 @@ async function runSupportCounts(
   for (const [uid, cases] of intercomMap) {
     const existing = result.get(uid) ?? emptySummary();
     const open     = rollupBySourceRecord(cases)
-      .filter(r => isIntercomOpen(r.latest.routing_status as string | null));
+      .filter(r =>
+        isIntercomOpen(r.latest.source_status as string | null, r.latest.routing_status as string | null));
     // criticalCount: リスク判定ウィンドウ内（90日以内）の critical のみカウント
     // 古いオープンチケットはクローズし忘れとみなしシグナル対象から除外
     const critical = open.filter(r =>
