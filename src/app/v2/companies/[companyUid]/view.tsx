@@ -765,14 +765,26 @@ const LINK_TARGET: Partial<Record<CommChannel, string>> = {
 };
 
 /**
- * Intercom の会話状態。**closed はバッジを出さない。**
+ * 会話・チケットの状態。**closed はバッジを出さない。**
  * 大半が closed なので、出すと画面が「Closed」で埋まって
  * 手を入れるべき Open / Snooze が沈む。
  */
 const STATE_META: Record<'open' | 'snoozed' | 'closed', { label: string; cls: string; hint: string }> = {
-  open:    { label: "Open",   cls: "bg-emerald-50 text-emerald-700", hint: "Intercom で未クローズ。まだやり取りが続いています" },
+  open:    { label: "Open",   cls: "bg-emerald-50 text-emerald-700", hint: "未クローズ。まだやり取りが続いています" },
   snoozed: { label: "Snooze", cls: "bg-amber-50 text-amber-700",     hint: "Intercom でスヌーズ中。時間を置いて戻ってきます" },
-  closed:  { label: "Closed", cls: "bg-slate-100 text-slate-400",    hint: "Intercom でクローズ済み" },
+  closed:  { label: "Closed", cls: "bg-slate-100 text-slate-400",    hint: "クローズ済み" },
+};
+
+/**
+ * 未クローズだが90日以上動きが無いもの。**準備度の摩擦には数えていない。**
+ * 実測で未クローズのCSEチケット705件のうち直近90日に動いたものは0件で、
+ * ステータスが運用されていないだけのものが大半だった。
+ * リストには出すが「今の摩擦」と混ぜないよう見た目を分ける。
+ */
+const STALE_META = {
+  label: "長期滞留",
+  cls:   "bg-slate-100 text-slate-500",
+  hint:  "未クローズのまま90日以上動きがありません。提案準備度の摩擦には数えていません",
 };
 
 /** この文字数を超える本文は折りたたみ、「全文を表示」で開く */
@@ -827,7 +839,7 @@ function CommTab({ comm, loading }: { comm: CommunicationsResponse | null; loadi
 
         {liveCount > 0 && (
           <button onClick={() => setLiveOnly(v => !v)}
-            title="Intercom でまだ閉じていない会話（Open / Snooze）だけを表示します"
+            title="まだ閉じていない会話・チケット（Open / Snooze / 長期滞留）だけを表示します。長期滞留は90日以上動きが無く、提案準備度の摩擦には数えていません"
             className={`h-[30px] px-2.5 rounded-[8px] border text-[11.5px] font-semibold flex items-center gap-1.5 transition
               ${liveOnly
                 ? "border-emerald-300 bg-emerald-50 text-emerald-700"
@@ -868,12 +880,20 @@ function CommTab({ comm, loading }: { comm: CommunicationsResponse | null; loadi
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded ${m.cls}`}>{m.label}</span>
-                  {/* **見るべきは Open / Snooze だけ。** アサインの有無は運用上の意味が無い */}
+                  {/* **見るべきは Open / Snooze だけ。** アサインの有無は運用上の意味が無い。
+                      ただし90日以上動きの無いものは「長期滞留」として色を落とす */}
                   {it.state && it.state !== "closed" && (
-                    <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded flex-none ${STATE_META[it.state].cls}`}
-                          title={STATE_META[it.state].hint}>
-                      {STATE_META[it.state].label}
-                    </span>
+                    it.staleOpen ? (
+                      <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded flex-none ${STALE_META.cls}`}
+                            title={STALE_META.hint}>
+                        {STALE_META.label}
+                      </span>
+                    ) : (
+                      <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded flex-none ${STATE_META[it.state].cls}`}
+                            title={STATE_META[it.state].hint}>
+                        {STATE_META[it.state].label}
+                      </span>
+                    )
                   )}
                   {/* 元コンテンツへ飛ばす。Intercom は管理画面、CSE/議事録は Notion */}
                   {it.url ? (

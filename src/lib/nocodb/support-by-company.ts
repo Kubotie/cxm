@@ -122,7 +122,8 @@ function isIntercomOpen(
   return INTERCOM_OPEN_STATES.has(intercomState(sourceStatus, routingStatus));
 }
 
-function isCseOpen(status: string | null | undefined): boolean {
+/** cse_tickets が未クローズか。closed/resolved 系以外はすべて未クローズ扱い */
+export function isCseOpen(status: string | null | undefined): boolean {
   return !CSE_CLOSED_STATUSES.has(normStatus(status));
 }
 
@@ -391,12 +392,27 @@ async function hydrateIntercomDisplayRows(
  */
 async function hydrateCseDisplayRows(
   rollups: TicketRollup<RawCseTicket>[],
-  limit: number,
+  recent = 5,
+  live   = 10,
 ): Promise<AppCseTicket[]> {
   const tableId = TABLE_IDS.cse_tickets;
-  const latest = [...rollups]
-    .sort((a, b) => String(b.latest.CreatedAt ?? '').localeCompare(String(a.latest.CreatedAt ?? '')))
-    .slice(0, limit);
+
+  // **未クローズ枠を別に確保する。** 新着順に5件だけ取ると、古い未クローズが
+  // リストに一度も現れない。実測（DeltaX / 2026-09-01）では22チケット中
+  // 未クローズ3件が 10位・15位・20位で、件数だけ出て実物が見えなかった。
+  // Intercom 側（hydrateIntercomDisplayRows）と同じ作りに揃えている。
+  const byNewest = [...rollups]
+    .sort((a, b) => String(b.latest.CreatedAt ?? '').localeCompare(String(a.latest.CreatedAt ?? '')));
+
+  const picked = new Set<TicketRollup<RawCseTicket>>();
+  const take = (list: TicketRollup<RawCseTicket>[], n: number) => {
+    for (const r of list.slice(0, n)) picked.add(r);
+  };
+  take(byNewest.filter(r => isCseOpen(r.latest.status)), live);
+  take(byNewest, recent);
+
+  const latest = [...picked]
+    .sort((a, b) => String(b.latest.CreatedAt ?? '').localeCompare(String(a.latest.CreatedAt ?? '')));
   if (latest.length === 0) return [];
   if (!tableId) return latest.map(r => toAppCseTicket(r.latest));
 
@@ -498,7 +514,7 @@ export async function fetchSupportAggregateForCompany(
 
   // 本文列は rollup の投影に含まれないため、表示する分だけ取り直す
   const [cseDisplay, intercomDisplay] = await Promise.all([
-    hydrateCseDisplayRows(cseRollups, 5),
+    hydrateCseDisplayRows(cseRollups),
     hydrateIntercomDisplayRows(intercomRollups),
   ]);
 

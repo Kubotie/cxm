@@ -20,7 +20,9 @@
 
 import { NextResponse } from 'next/server';
 import { fetchAllCommunicationLogs, type AllCommunicationLogs } from '@/lib/nocodb/communication-logs';
-import { fetchSupportAggregateForCompany } from '@/lib/nocodb/support-by-company';
+import {
+  fetchSupportAggregateForCompany, isCseOpen, SUPPORT_RISK_WINDOW_DAYS,
+} from '@/lib/nocodb/support-by-company';
 
 export const maxDuration = 60;
 
@@ -53,6 +55,19 @@ function notionUrl(pageId: string | null | undefined): string | null {
   return /^[0-9a-f]{32}$/.test(id) ? `https://www.notion.so/${id}` : null;
 }
 
+/**
+ * 未クローズのまま 90 日以上動いていないか。
+ * 日付が読めないものは「古い」とみなす — cse_tickets は created_at が空の行が
+ * 多く（実測で未クローズ705件中185件）、日付不明を「新しい」に倒すと
+ * 摩擦が過大に出る。
+ */
+function isStaleOpen(date: string | null): boolean {
+  if (!date) return true;
+  const ms = new Date(String(date).trim().replace(' ', 'T')).getTime();
+  if (isNaN(ms)) return true;
+  return (Date.now() - ms) / (1000 * 60 * 60 * 24) > SUPPORT_RISK_WINDOW_DAYS;
+}
+
 /** これ以外の severity は表示しない（medium / low は全行に並ぶだけで判断材料にならない） */
 const NOTABLE_SEVERITIES = new Set(['high', 'critical', 'urgent']);
 
@@ -81,6 +96,12 @@ export interface CommItem {
    * 識別子が無い / 形式が想定外なら null（リンクを出さない）。
    */
   url?:    string | null;
+  /**
+   * 未クローズだが SUPPORT_RISK_WINDOW_DAYS（90日）以上動きが無いもの。
+   * 提案準備度の「摩擦」には数えていない（閉じ忘れが恒久的な減点になるため）。
+   * リストには出すが、現在の摩擦と区別できるようにする。
+   */
+  staleOpen?: boolean;
   /** 議事録の参加者（議事録のみ） */
   participants?: string[];
   /** 議事録のアクションアイテム（議事録のみ） */
@@ -116,13 +137,19 @@ export async function GET(
   const items: CommItem[] = [];
   // '—'（マッパーの未設定プレースホルダ）は日付なしとして扱う
   const norm = (v: string | null | undefined) => (v && v !== '—' ? v : null);
-  const push = (it: Omit<CommItem, 'bodyLength'>) =>
+  const push = (it: Omit<CommItem, 'bodyLength'>) => {
+    const date = norm(it.date);
     items.push({
       ...it,
-      date:       norm(it.date),
+      date,
       updatedAt:  norm(it.updatedAt),
+      // 未クローズのものだけ滞留判定する（closed に付けても意味がない）
+      staleOpen:  (it.state === 'open' || it.state === 'snoozed')
+                    ? isStaleOpen(norm(it.updatedAt) ?? date)
+                    : undefined,
       bodyLength: it.body.length,
     });
+  };
 
   // ── 議事録（最も本文価値が高い）─────────────────────────────────────────
   for (const n of logs.notionMinutes) {
@@ -208,6 +235,8 @@ export async function GET(
       body:    t.description ?? '',
       date:    t.createdAt,
       updatedAt: t.updatedAt,
+      // CSE も未クローズが分かるようにする。Intercom と同じ state 語彙に寄せる
+      state:   isCseOpen(t.status) ? 'open' : 'closed',
       meta:    [t.status, t.priority].filter(Boolean).join(' / ') || null,
       url:     notionUrl(t.sourceId),
     });
