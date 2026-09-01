@@ -434,6 +434,8 @@ export interface RawCseTicket {
 }
 
 export interface AppCseTicket {
+  /** 元データの ID（source_record_id）。CSE は Notion の page id。リンク生成に使う */
+  sourceId: string | null;
   id: string;
   title: string;
   status: string;
@@ -450,6 +452,8 @@ export interface AppCseTicket {
 export function toAppCseTicket(raw: RawCseTicket): AppCseTicket {
   return {
     id: raw.ticket_id ? s(raw.ticket_id) : String(raw.Id),
+    // CSE チケットの実体は Notion ページ。source_record_id が Notion の page id
+    sourceId: raw.source_record_id ? String(raw.source_record_id) : null,
     // display_title = AI生成タイトル（存在すれば優先）
     title: s(raw.display_title, '') || s(raw.title, '') || '(タイトルなし)',
     status: s(raw.status, 'open'),
@@ -758,6 +762,8 @@ export interface RawSupportCase {
 }
 
 export interface AppSupportCase {
+  /** 元データの ID（source_record_id）。Intercom の会話ID。リンク生成に使う */
+  sourceId: string | null;
   id: string;
   title: string;
   caseType: string;
@@ -898,6 +904,8 @@ export function cseTicketToAppSupportCase(raw: RawCseTicket): AppSupportCase {
   const cseBody = firstText(raw.display_message, raw.describe, raw.description, raw.raw_body);
   return {
     id: raw.ticket_id ? s(raw.ticket_id) : String(raw.Id),
+    // CSE チケットの実体は Notion ページ
+    sourceId: raw.source_record_id ? String(raw.source_record_id) : null,
     title: deriveTitle(raw.display_title ?? raw.title, cseBody),
     caseType: raw.linked_case_id ? 'CSE Ticket Linked' : 'CSE Ticket',
     source: 'CSE Ticket',
@@ -937,6 +945,8 @@ export function toAppSupportCase(raw: RawSupportCase): AppSupportCase {
     || s(raw.company_uid, '—');
   return {
     id: raw.case_id ? s(raw.case_id) : String(raw.Id),
+    // Intercom の会話ID。管理画面へのリンクに使う（id は case_id なので別物）
+    sourceId: raw.source_record_id ? String(raw.source_record_id) : null,
     // display_title = AI生成タイトル（存在すれば優先）, title は log_intercom に存在しない。
     // case_title（同期が付ける件名）→ 本文冒頭からの導出、の順でフォールバックする。
     title: deriveTitle(raw.display_title ?? raw.case_title ?? raw.title, firstUtterance(bodyText)),
@@ -1536,6 +1546,8 @@ function parseStringJsonArray(v: unknown): string[] {
 export interface AppLogIntercomMail {
   id:          string;
   companyUid:  string;
+  /** Intercom の会話ID（source_record_id）。管理画面へのリンクに使う */
+  sourceId:    string | null;
   sentAt:      string | null;   // sent_at_jst（"YYYY-MM-DD HH:mm" 形式）
   updatedAt:   string | null;   // update_at_jst（最終更新日時）
   senderName:  string | null;   // account_name
@@ -1549,6 +1561,7 @@ export function toAppLogIntercomMail(raw: RawSupportCase): AppLogIntercomMail {
   return {
     id:         raw.case_id ? String(raw.case_id) : String(raw.Id),
     companyUid: raw.company_uid ?? '',
+    sourceId:   raw.source_record_id ? String(raw.source_record_id) : null,
     sentAt:     fmtDateTime(raw.sent_at_jst),
     updatedAt:  fmtDateTime(raw.update_at_jst),
     senderName: raw.account_name ? String(raw.account_name) : null,

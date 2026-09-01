@@ -26,6 +26,33 @@ export const maxDuration = 60;
 
 export type CommChannel = 'chatwork' | 'slack' | 'notion' | 'mail' | 'intercom' | 'cse';
 
+/**
+ * Intercom ワークスペースの id_code。
+ * GET https://api.intercom.io/me の app.id_code（Ptengine / US リージョン）。
+ * ワークスペース固定値で秘密情報ではない。
+ */
+const INTERCOM_APP_ID = 'cfiqb37k';
+
+/**
+ * Intercom 管理画面の会話URL。
+ * 旧形式 /a/apps/{app}/conversations/{id} は現形式へ301するので、
+ * リダイレクトを踏まない現形式を直接組む。
+ */
+function intercomUrl(conversationId: string | null | undefined): string | null {
+  const id = String(conversationId ?? '').trim();
+  if (!/^\d+$/.test(id)) return null;
+  return `https://app.intercom.com/a/inbox/${INTERCOM_APP_ID}/inbox/conversation/${id}`;
+}
+
+/**
+ * Notion ページURL。CSE チケットも議事録も実体は Notion ページで、
+ * どちらもハイフン付き UUID が入っている。ハイフンを抜いた32桁形式で開ける。
+ */
+function notionUrl(pageId: string | null | undefined): string | null {
+  const id = String(pageId ?? '').replace(/-/g, '').toLowerCase();
+  return /^[0-9a-f]{32}$/.test(id) ? `https://www.notion.so/${id}` : null;
+}
+
 /** これ以外の severity は表示しない（medium / low は全行に並ぶだけで判断材料にならない） */
 const NOTABLE_SEVERITIES = new Set(['high', 'critical', 'urgent']);
 
@@ -49,6 +76,11 @@ export interface CommItem {
    * Intercom 以外のチャネルは null。
    */
   state?:  'open' | 'snoozed' | 'closed' | null;
+  /**
+   * 元コンテンツへのリンク。Intercom は管理画面、CSE と議事録は Notion。
+   * 識別子が無い / 形式が想定外なら null（リンクを出さない）。
+   */
+  url?:    string | null;
   /** 議事録の参加者（議事録のみ） */
   participants?: string[];
   /** 議事録のアクションアイテム（議事録のみ） */
@@ -102,6 +134,8 @@ export async function GET(
       date:    n.meetingDate ?? n.createdAt,
       updatedAt: n.updatedAt,
       meta:    n.participants.length > 0 ? `参加者 ${n.participants.length}名` : '議事録',
+      // AppLogNotionMinutes.id は page_id（Notion ページUUID）。無い行は Id が入るので notionUrl 側で弾かれる
+      url:     notionUrl(n.id),
       participants: n.participants,
       actionItems:  n.actionItems,
     });
@@ -141,6 +175,7 @@ export async function GET(
       date:    m.sentAt,
       updatedAt: m.updatedAt,
       meta:    m.senderName,
+      url:     intercomUrl(m.sourceId),
     });
   }
 
@@ -161,6 +196,7 @@ export async function GET(
       // severity は大半が medium で、出すと全行に同じ語が並ぶだけ。
       // 手が要る high / critical のときだけ添える
       meta:    NOTABLE_SEVERITIES.has((c.severity ?? '').toLowerCase()) ? c.severity : null,
+      url:     intercomUrl(c.sourceId),
     });
   }
   for (const t of (support?.cseTickets ?? [])) {
@@ -173,6 +209,7 @@ export async function GET(
       date:    t.createdAt,
       updatedAt: t.updatedAt,
       meta:    [t.status, t.priority].filter(Boolean).join(' / ') || null,
+      url:     notionUrl(t.sourceId),
     });
   }
 

@@ -10,6 +10,7 @@ import {
   AlertTriangle, Sparkles, LayoutDashboard, Activity, MessagesSquare,
   MessageCircle, Hash, Mail, FileText, Ticket, ChevronRight,
   Target, Gauge, ShieldAlert, Check, Square, Search, BookOpen, HelpCircle, RefreshCw,
+  ExternalLink,
 } from "lucide-react";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -755,6 +756,14 @@ const CHANNEL_META: Record<CommChannel, { label: string; icon: React.ElementType
   cse:      { label: "CSE",      icon: Ticket,        cls: "bg-amber-50 text-amber-700" },
 };
 
+/** リンク先の呼び名（ツールチップ用）。リンクが無いチャネルは載せない */
+const LINK_TARGET: Partial<Record<CommChannel, string>> = {
+  intercom: "Intercom",
+  mail:     "Intercom",
+  cse:      "Notion",
+  notion:   "Notion",
+};
+
 /**
  * Intercom の会話状態。**closed はバッジを出さない。**
  * 大半が closed なので、出すと画面が「Closed」で埋まって
@@ -866,7 +875,18 @@ function CommTab({ comm, loading }: { comm: CommunicationsResponse | null; loadi
                       {STATE_META[it.state].label}
                     </span>
                   )}
-                  <span className="text-[12px] font-bold text-slate-800 truncate">{it.title}</span>
+                  {/* 元コンテンツへ飛ばす。Intercom は管理画面、CSE/議事録は Notion */}
+                  {it.url ? (
+                    <a href={it.url} target="_blank" rel="noopener noreferrer"
+                       title={`${LINK_TARGET[it.channel] ?? "元データ"}で開く`}
+                       className="group/link min-w-0 flex items-center gap-1 text-[12px] font-bold text-slate-800
+                                  hover:text-blue-700 hover:underline decoration-blue-300 underline-offset-2">
+                      <span className="truncate">{it.title}</span>
+                      <ExternalLink className="w-3 h-3 flex-none text-slate-300 group-hover/link:text-blue-500" />
+                    </a>
+                  ) : (
+                    <span className="text-[12px] font-bold text-slate-800 truncate">{it.title}</span>
+                  )}
                   {it.meta && <span className="text-[10px] text-slate-400 flex-none">· {it.meta}</span>}
                   <span className="ml-auto flex-none text-right leading-tight">
                     <span className="block text-[10.5px] text-slate-500 tabular-nums" title="発生日時">
