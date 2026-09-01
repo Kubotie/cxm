@@ -157,9 +157,8 @@ export async function POST(
     alert_count:         alerts.length,
     people_count:        people.length,
     project_count:       projectsVM.total,
-    open_support_count:  supportAgg
-      ? supportAgg.openIntercomCount + supportAgg.openCseCount
-      : undefined,
+    // 全期間の合計ではなく直近90日の未解決。閉じ忘れを摩擦に数えないため
+    open_support_count:  supportAgg ? supportAgg.recentOpenCount : undefined,
     comm_log_count:      commLogCount,
     // Summary Policy が適用された場合はメタを追加（UI tooltip 用に summary_focus も含める）
     ...(summaryPolicy ? {

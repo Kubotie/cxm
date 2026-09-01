@@ -122,7 +122,10 @@ async function runLightSnapshotJob(
     const support = supportMap.get(uid);
     // 未取得（NocoDB 失敗・予算超過）は null。0 を書くと「摩擦なし」と誤判定され
     // priority-score / 提案準備度 / 解約遡及分析が誤った根拠を持つ。
-    const openSupportCount = support?.openCount ?? null;
+    // **摩擦は「今の未解決」で測る。** openCount（全期間）は閉じ忘れを恒久的な
+    // 減点にしてしまう。実測で未クローズ705件中、直近90日に動いたものは0件だった。
+    // 滞留分は staleOpenCount として別に持っている（2026-09-01）。
+    const openSupportCount = support?.recentOpenCount ?? null;
 
     const projectVM = projList.length > 0
       ? buildProjectAggregateVM(projList, activityMap, signalDataMap)

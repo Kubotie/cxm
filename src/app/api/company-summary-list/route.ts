@@ -259,9 +259,13 @@ export async function GET(req: NextRequest) {
     const liveSupport   = supportMap.get(uid);
     const supportCounts = liveSupport ?? {
       openCount:          prevSnapshotMap.get(uid)?.open_support_count ?? 0,
+      // スナップショットの open_support_count は既に「直近90日の未解決」なので、
+      // フォールバック時は recentOpenCount にも同じ値を入れる
+      recentOpenCount:    prevSnapshotMap.get(uid)?.open_support_count ?? 0,
       waitingCseCount:    0,
       criticalCount:      0,
       recentSupportCount: 0,
+      staleOpenCount:     0,
     };
 
     // Health（List 向けに support_case_ai_state なしの簡易版）
@@ -321,7 +325,8 @@ export async function GET(req: NextRequest) {
       // live 取得が未取得の場合、supportCounts はスナップショット由来なので差分は常に0になる。
       // 「変動なし」と「未取得」を混ぜないため、live が無い場合は差分を出さない。
       const snapshotSupport = prevSnap?.open_support_count ?? 0;
-      const supportDelta    = (prevSnap && liveSupport ? liveSupport.openCount - snapshotSupport : 0);
+      // スナップショット側は直近90日の未解決なので、live も同じ尺度で引く
+      const supportDelta    = (prevSnap && liveSupport ? liveSupport.recentOpenCount - snapshotSupport : 0);
       const snapshotMrr     = prevSnap?.mrr ?? null;
       const mrrDelta        = currentMrr_ !== null && snapshotMrr !== null
         ? currentMrr_ - snapshotMrr : null;
@@ -399,7 +404,7 @@ export async function GET(req: NextRequest) {
       healthVM,
       freshnessStatus:        listVM.freshnessStatus,
       humanReviewStatus:      listVM.humanReviewStatus,
-      openSupportCount:       supportCounts.openCount,
+      openSupportCount:       supportCounts.recentOpenCount,
       communicationBlankDays: blankDays,
       peopleActionSignal,
       renewalBucket,
@@ -428,7 +433,7 @@ export async function GET(req: NextRequest) {
       communicationRiskLevel: commRisk,
 
       // ── Support ───────────────────────────────────────────────────────────
-      openSupportCount:     supportCounts.openCount,
+      openSupportCount:     supportCounts.recentOpenCount,
       criticalSupportCount: supportCounts.criticalCount,
 
       // ── Projects ──────────────────────────────────────────────────────────

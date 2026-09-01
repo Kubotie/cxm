@@ -179,7 +179,8 @@ export async function runAlertPolicies(
         comm_blank_days:             commDate.blankDays,
         active_project_count:        activeProjects,
         open_critical_support_count: supportCounts.criticalCount,
-        open_support_count:          supportCounts.openCount,
+        // 直近90日の未解決。全期間だと閉じ忘れで常にアラート条件を満たしてしまう
+        open_support_count:          supportCounts.recentOpenCount,
         decision_maker_count:        peopleSignal?.dmCount ?? 0,
         overall_health:              null,
         phase_stagnation_days:       null, // PhaseComparisonVM が必要 — bulk run では未計算

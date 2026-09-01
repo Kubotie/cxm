@@ -190,6 +190,16 @@ export interface SupportCountSummary {
   /** 直近 RECENT_DAYS 日以内に作成されたオープンケース数 */
   recentSupportCount:  number;
   /**
+   * リスク判定ウィンドウ（SUPPORT_RISK_WINDOW_DAYS = 90日）内に起票され、
+   * 今も開いている件数。**「現在の摩擦」はこちらで測る。**
+   *
+   * openCount（全期間）を摩擦に使うと、閉じ忘れが恒久的な減点になる。
+   * 実測（2026-08-31）: cse_tickets の未クローズ705件のうち、
+   * 直近90日に動いたものは **0件**。Waiting Confirm / To Do が
+   * 事実上の駐車場になっていて、ステータスが運用されていなかった。
+   */
+  recentOpenCount:     number;
+  /**
    * リスク判定ウィンドウ（SUPPORT_RISK_WINDOW_DAYS = 90日）を超えて開いている件数。
    * R3_Risk_UnresolvedTicket_Aging（未解決チケットの滞留）の判定に使う。
    */
@@ -532,7 +542,8 @@ export const SUPPORT_COUNTS_UI_BUDGET_MS    = 2_500;
 export const SUPPORT_COUNTS_BATCH_BUDGET_MS = 120_000;
 
 const emptySummary = (): SupportCountSummary =>
-  ({ openCount: 0, waitingCseCount: 0, criticalCount: 0, recentSupportCount: 0, staleOpenCount: 0 });
+  ({ openCount: 0, waitingCseCount: 0, criticalCount: 0, recentSupportCount: 0,
+     recentOpenCount: 0, staleOpenCount: 0 });
 
 /**
  * 複数企業の support case counts を一括取得する（List API / バッチ用）。
@@ -632,6 +643,7 @@ async function runSupportCounts(
       waitingCseCount:    existing.waitingCseCount,
       criticalCount:      existing.criticalCount + critical,
       recentSupportCount: existing.recentSupportCount + open.filter(r => isRecent(occurredAt(r))).length,
+      recentOpenCount:    existing.recentOpenCount + open.filter(r => isWithinRiskWindow(occurredAt(r))).length,
       staleOpenCount:     existing.staleOpenCount + open.filter(r => !isWithinRiskWindow(occurredAt(r))).length,
     });
   }
@@ -646,6 +658,7 @@ async function runSupportCounts(
       openCount:          existing.openCount + open.length,
       waitingCseCount:    existing.waitingCseCount + waiting.length,
       recentSupportCount: existing.recentSupportCount + open.filter(r => isRecent(occurredAt(r))).length,
+      recentOpenCount:    existing.recentOpenCount + open.filter(r => isWithinRiskWindow(occurredAt(r))).length,
       staleOpenCount:     existing.staleOpenCount + open.filter(r => !isWithinRiskWindow(occurredAt(r))).length,
     });
   }
