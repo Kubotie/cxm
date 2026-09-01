@@ -123,11 +123,16 @@ export async function upsertCompanySnapshot(
   const tableId = TABLE_IDS.company_daily_snapshot;
   if (!tableId) return null;
 
-  // 既存レコードを探す
+  // 既存レコードを探す。
+  // ⚠️ **ttl=false 必須。** nocoFetch の既定は5分キャッシュで、しかも
+  //    next.revalidate は stale-while-revalidate なので、行を作る前に引いた
+  //    「空」の結果をあとから掴むことがある。すると存在するのに create して
+  //    同じ (company_uid, snapshot_date) の行が二重にできる。
+  //    実際 2026-09-01 に同日再実行で重複が発生した。
   const existing = await nocoFetch<CompanyDailySnapshot>(tableId, {
     where: `(company_uid,eq,${snapshot.company_uid})~and(snapshot_date,eq,${snapshot.snapshot_date})`,
     limit: '1',
-  }).catch(() => [] as CompanyDailySnapshot[]);
+  }, false).catch(() => [] as CompanyDailySnapshot[]);
 
   const payload: Omit<CompanyDailySnapshot, 'Id'> = {
     company_uid:             snapshot.company_uid,
@@ -167,7 +172,7 @@ export async function fetchLatestSnapshot(
   if (!tableId) return null;
   const list = await nocoFetch<CompanyDailySnapshot>(tableId, {
     where: `(company_uid,eq,${companyUid})`,
-    sort:  '-snapshot_date',
+    sort:  '-snapshot_date,-Id',   // 同日重複時は後から書いた方を採用する
     limit: '1',
   }).catch(() => []);
   return list[0] ?? null;
@@ -186,8 +191,10 @@ export async function fetchLatestSnapshotsByUids(
   if (!tableId || companyUids.length === 0) return new Map();
 
   // 全社分を一括取得し、company_uid ごとに最新日を選ぶ
+  // 同じ snapshot_date の行が複数あった場合に備えて Id 降順を第二キーにする。
+  // これが無いと「どちらが返るか」が不定で、古い方を掴むことがある。
   const rawMap = await nocoFetchByUids<CompanyDailySnapshot>(tableId, companyUids, {
-    sort:  '-snapshot_date',
+    sort:  '-snapshot_date,-Id',
     limit: String(Math.min(companyUids.length * 3, 1000)), // 最大3世代分
   }).catch(() => new Map<string, CompanyDailySnapshot[]>());
 
@@ -297,7 +304,7 @@ async function fetchSnapshotsUpTo(
 
       const rows = await nocoFetch<CompanyDailySnapshot>(tableId, {
         where,
-        sort:  '-snapshot_date',
+        sort:  '-snapshot_date,-Id',   // 同日重複時は後から書いた方を採用する
         limit: String(SNAPSHOT_CHUNK_LIMIT),
       }).catch(() => [] as CompanyDailySnapshot[]);
 
