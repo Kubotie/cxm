@@ -92,6 +92,49 @@ export async function nocoUpdate<T>(
 }
 
 /**
+ * 複数行をまとめて部分更新する。
+ * NocoDB v2 の PATCH は body に配列を渡すと一括更新になる。
+ *
+ * 1行ずつ nocoUpdate を回すと N 往復かかる。数百〜数千行を直すときは
+ * こちらを使うこと（1リクエストあたり 100 行を上限にしている。
+ * NocoDB 側の上限は明示されていないが、大きすぎるとタイムアウトする）。
+ *
+ * @returns 実際に送った行数
+ */
+export async function nocoUpdateMany(
+  tableId: string,
+  rows: Array<Record<string, unknown>>,
+  pkColumn: 'Id' | 'id' = 'Id',
+): Promise<number> {
+  if (!API_TOKEN) throw new Error('NOCODB_API_TOKEN が未設定です');
+  if (rows.length === 0) return 0;
+  if (rows.some(r => r[pkColumn] == null)) {
+    throw new Error(`nocoUpdateMany: 全行に ${pkColumn} が必要です`);
+  }
+
+  const CHUNK = 100;
+  let sent = 0;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    const res = await fetch(`${BASE_URL}/api/v2/tables/${tableId}/records`, {
+      method: 'PATCH',
+      headers: apiHeaders(),
+      body: JSON.stringify(chunk),
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '(body read failed)');
+      throw new Error(
+        `NocoDB bulk update ${res.status}: ${res.statusText} [${tableId}] `
+        + `rows ${i}-${i + chunk.length - 1} — ${errBody}`,
+      );
+    }
+    sent += chunk.length;
+  }
+  return sent;
+}
+
+/**
  * 行 ID を指定してレコードを削除する。
  * NocoDB v2: DELETE /api/v2/tables/{tableId}/records
  */
