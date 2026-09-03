@@ -157,6 +157,11 @@ export interface BuildEvidenceInput {
    * （事例は80件ある）。
    */
   cases?:     CaseEntry[];
+  /**
+   * 業界名（industry_intel の `industry`）。事例を業種で絞るのに使う。
+   * 状況が一致する事例が無いときの第二の軸。
+   */
+  industryName?: string | null;
   playbooks?: PlaybookEntry[];
   /** 交差判定に使う状況ID */
   activeSignals?: string[];
@@ -297,11 +302,26 @@ export function buildEvidenceGroups(input: BuildEvidenceInput): EvidenceGroup[] 
   }
 
   // ── 事例（活用ギャラリー）──────────────────────────────────────────────
-  // 状況が交差するものだけ。さらに Proof形式ごとに上限をかける。
-  // 絞った件数は truncated に出す（黙って切り捨てない）。
+  //
+  // 状況が交差するもの → それが0件なら**業種で絞る**。
+  //
+  // 設計（17_WHO_WHAT §2-2 の ③）は「事例だけは業種で絞る」だったが、
+  // 実装は状況だけで絞っていた。事例80件は「効く状況」が全件空だったので、
+  // **一件も出ないまま**になっていた（2026-08-24 に判明し、両方を直した）。
+  //
+  // 事例は「相手の組織状況」ではなく「サイトの課題」で書かれているので、
+  // 状況（A の語彙）だけで結ぶと構造的に噛み合わない。業種を第二の軸にする。
   const active = new Set(input.activeSignals ?? []);
-  const matchedCases = (input.cases ?? [])
-    .filter(c => c.effectiveFor.some(sid => active.has(sid)));
+  const allCases = input.cases ?? [];
+  const bySituation = allCases.filter(c => c.effectiveFor.some(sid => active.has(sid)));
+
+  const industry = (input.industryName ?? '').trim();
+  const byIndustry = industry
+    ? allCases.filter(c =>
+        c.productTypes.some(t => t && (industry.includes(t) || t.includes(industry))))
+    : [];
+
+  const matchedCases = bySituation.length > 0 ? bySituation : byIndustry;
 
   const perProof = new Map<string, number>();
   let caseShown = 0;
@@ -526,6 +546,14 @@ export interface EvidenceRelevance {
   /** 一致した状況IDの日本語名や語句（なぜ関連なのか） */
   hits: string[];
   by: 'situation' | 'keyword' | null;
+  /**
+   * 選んだ狙いにおける役割。
+   *   tailwind     … 追い風。この狙いを後押しする
+   *   blocker      … 先に解消すべき障害。放置して提案すると通らない
+   *   prerequisite … 成立の前提
+   * null = 役割が決まらない（語句一致・カタログ外の狙いなど）
+   */
+  role: 'tailwind' | 'blocker' | 'prerequisite' | null;
 }
 
 /** 関連判定に使わない一般語（どの提案にも出るもの） */
@@ -593,23 +621,37 @@ export function evidenceRelevance(
     relatedSituations: string[];
     keywords: string[];
     situationLabel?: (sid: string) => string;
+    /**
+     * 状況ID → その狙いにおける役割。
+     * **同じシグナルでも狙いによって意味が反転する**ので、関連の有無だけでは足りない。
+     * 例: 習慣化は Bundle化 では追い風、FDE伴走では「自走できている」という断り材料。
+     */
+    roleOf?: (sid: string) => EvidenceRelevance['role'];
   },
 ): EvidenceRelevance {
   const related = new Set(opts.relatedSituations);
   const sidHits = item.situationIds.filter(sid => related.has(sid));
   if (sidHits.length > 0) {
+    // 役割は「先に解消すべき障害」を最優先で拾う。1つでも blocker があれば blocker
+    const roles = opts.roleOf ? sidHits.map(opts.roleOf) : [];
+    const role: EvidenceRelevance['role'] =
+      roles.includes('blocker')      ? 'blocker'
+      : roles.includes('prerequisite') ? 'prerequisite'
+      : roles.includes('tailwind')     ? 'tailwind'
+      : null;
     return {
       related: true,
       hits: sidHits.map(sid => opts.situationLabel?.(sid) ?? sid),
       by: 'situation',
+      role,
     };
   }
 
   const haystack = `${item.title}\n${item.detail}`;
   const wordHits = opts.keywords.filter(k => k.length >= 2 && haystack.includes(k));
   if (wordHits.length > 0) {
-    return { related: true, hits: wordHits.slice(0, 4), by: 'keyword' };
+    return { related: true, hits: wordHits.slice(0, 4), by: 'keyword', role: null };
   }
 
-  return { related: false, hits: [], by: null };
+  return { related: false, hits: [], by: null, role: null };
 }

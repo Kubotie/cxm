@@ -106,6 +106,13 @@ export interface ReadinessFacts {
   /** 30日の管理画面モジュール利用（有料PJ合算）。null = 有料PJなし */
   moduleSignal: ModuleSignalVM | null;
 
+  /**
+   * 契約プラン。**「提案の狙い」の契約前提の判定に使う。**
+   * Bundle 契約に「Bundle化」を出さないために要る（2026-08-24 追加）。
+   * null = 有料契約が読み取れない。
+   */
+  contractPlan: 'insight' | 'experience' | 'bundle' | null;
+
   /** 生の材料（提案フローが材料カードに使う） */
   raw: {
     commLogs:    CommLogs;
@@ -349,6 +356,11 @@ export async function loadReadinessFacts(
     onboardingCompletedAt: csmPhase?.onboardingCompletedAt ?? null,
     moduleSignal: companyModuleSignal,
 
+    contractPlan: derivePlanFromPaidTypes([
+      ...paidProjects.map(p => p.paidType ?? ''),
+      csmPhase?.paidType ?? '',
+    ].filter(Boolean)),
+
     raw: {
       commLogs,
       storedIntel,
@@ -371,6 +383,22 @@ export async function loadReadinessFacts(
 }
 
 // ── ヘルパー ──────────────────────────────────────────────────────────────────
+
+/**
+ * paid_type の集合から契約プランを決める。
+ * `BUNDLE-PAID` / `PTI-PAID` / `PTX-PAID` のような前方一致で判定する
+ * （company-usage.ts の derivePlan と同じ規則。あちらは非公開なので同型で持つ）。
+ */
+function derivePlanFromPaidTypes(paidTypes: string[]): 'insight' | 'experience' | 'bundle' | null {
+  const has = (v: string) => paidTypes.some(t => t.toUpperCase().startsWith(v));
+  if (has('BUNDLE')) return 'bundle';
+  const hasI = has('PTI');
+  const hasX = has('PTX');
+  if (hasI && hasX) return 'bundle';
+  if (hasI) return 'insight';
+  if (hasX) return 'experience';
+  return null;
+}
 
 /** 有料PJの利用実態を合算する。signal が1件も無ければ null */
 function sumUsage(items: ReadinessProjectFacts[]): ReadinessFacts['raw']['usageTotals'] {

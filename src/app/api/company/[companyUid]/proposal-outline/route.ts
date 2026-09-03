@@ -156,12 +156,22 @@ export async function POST(
     });
   const context = [...(payload.context ?? []), ...custom];
 
-  // ── 提供物はカタログ（正本）から引く。カスタム時のみ担当者の記述を使う ──
+  // ── 狙いはカタログ（正本）から引く。カスタム時のみ担当者の記述を使う ──
+  //
+  // **正本は B1（提案の狙い）。** B（提供できるもの）はその中で使う部品。
+  // 2026-08-24 に「何をしたいか」を B → B1 に切り替えたとき、
+  // ここが B のままで `選択された狙いがカタログに見つかりません` になった。
+  // B にも残しているのは、B1 導入前に保存した骨子記録を開き直せるようにするため。
   const catalog = await fetchWhatCatalog().catch(() => EMPTY_CATALOG);
   const customIntent = payload.customIntent ?? null;
-  const entry = customIntent ? null : catalog.solutions.find(s => s.name === payload.intentName) ?? null;
+  const intentEntry = customIntent
+    ? null
+    : catalog.intents.find(i => i.name === payload.intentName) ?? null;
+  const entry = customIntent || intentEntry
+    ? null
+    : catalog.solutions.find(s => s.name === payload.intentName) ?? null;
 
-  if (!customIntent && !entry) {
+  if (!customIntent && !entry && !intentEntry) {
     return NextResponse.json(
       { error: `選択された狙いがカタログに見つかりません（カタログが更新された可能性があります）: ${payload.intentName}` },
       { status: 409 },
@@ -171,26 +181,37 @@ export async function POST(
     return NextResponse.json({ error: 'カスタムの狙いに名称がありません' }, { status: 400 });
   }
 
-  const naming = entry
-    ? applyNamingRule({ name: entry.name, namingRule: entry.namingRule })
-    // カスタムは担当者が書いた表記をそのまま使う（呼称ルールの照合対象が無い）
-    : { display: customIntent!.displayName.trim(), safe: true };
-  const proposalType = entry ? proposalTypeFromKind(entry.kind) : customIntent!.proposalType;
+  const naming = intentEntry
+    // 狙いの名称は社内語彙。対外呼称ルールは中で使う WHAT 側に付いている
+    ? { display: intentEntry.name, safe: true }
+    : entry
+      ? applyNamingRule({ name: entry.name, namingRule: entry.namingRule })
+      // カスタムは担当者が書いた表記をそのまま使う（呼称ルールの照合対象が無い）
+      : { display: customIntent!.displayName.trim(), safe: true };
+
+  const proposalType = intentEntry
+    ? (/FDE|PoC/i.test(intentEntry.name) ? proposalTypeFromKind('支援メニュー') : proposalTypeFromKind('製品・機能'))
+    : entry ? proposalTypeFromKind(entry.kind) : customIntent!.proposalType;
 
   // カスタムでは「必ず組む相手」が無いので補助は付けない。
   // カタログ外の狙いに勝手に商材を足すと、担当者が意図しない提案になる。
-  const supporting = entry
-    ? (entry.mustPairWith.length > 0
-        ? entry.mustPairWith
-        : catalog.solutions.filter(s => s.role !== '主役WHAT').map(s => s.name))
-        .map(n => catalog.solutions.find(s => s.name === n))
-        .filter((s): s is NonNullable<typeof s> => Boolean(s))
-        .slice(0, 4)
-        .map(s => ({
-          displayName: applyNamingRule({ name: s.name, namingRule: s.namingRule }).display,
-          valueLine: s.valueLine,
-        }))
-    : [];
+  // B1 では「使うWHAT」がそのまま提供物になる。B 由来の場合は従来どおり
+  const supportingNames = intentEntry
+    ? intentEntry.whatNames
+    : entry
+      ? (entry.mustPairWith.length > 0
+          ? entry.mustPairWith
+          : catalog.solutions.filter(s => s.role !== '主役WHAT').map(s => s.name))
+      : [];
+
+  const supporting = supportingNames
+    .map(n => catalog.solutions.find(s => s.name === n))
+    .filter((s): s is NonNullable<typeof s> => Boolean(s))
+    .slice(0, 4)
+    .map(s => ({
+      displayName: applyNamingRule({ name: s.name, namingRule: s.namingRule }).display,
+      valueLine: s.valueLine,
+    }));
 
   const frame = payload.frameName
     ? catalog.frames.find(f => f.name === payload.frameName) ?? null
@@ -219,15 +240,19 @@ export async function POST(
         { role: 'user', content: buildOutlinePrompt({
             companyName: payload.companyName || companyUid,
             intent: {
-              name: entry?.name ?? naming.display,
+              name: intentEntry?.name ?? entry?.name ?? naming.display,
               displayName: naming.display,
-              kind: entry?.kind ?? '担当者が立てた狙い',
-              valueLine: entry?.valueLine ?? customIntent!.valueLine,
-              expectedEffect: entry?.expectedEffect ?? '',
+              kind: intentEntry ? '提案の狙い' : entry?.kind ?? '担当者が立てた狙い',
+              valueLine: intentEntry?.valueLine ?? entry?.valueLine ?? customIntent!.valueLine,
+              expectedEffect: intentEntry?.businessImpact ?? entry?.expectedEffect ?? '',
               evidence: entry?.evidence ?? '',
               namingRule: entry?.namingRule ?? '',
-              antiPatterns: entry?.antiPatterns ?? [],
+              antiPatterns: intentEntry?.antiPatterns ?? entry?.antiPatterns ?? [],
               supporting,
+              // **決裁者・部長向けの文脈。** 機能の話に落ちるのを防ぐ芯になる
+              changeTarget:   intentEntry?.changeTarget,
+              businessImpact: intentEntry?.businessImpact,
+              audiences:      intentEntry?.audiences,
             },
             proposalType,
             evidence: context,
@@ -350,6 +375,11 @@ export async function POST(
     if (c.sharing !== 'ぼかしでOK') continue;
     const core = c.rawName.split(/[（(\s]/)[0].trim();
     if (core.length < 3) continue;
+    // **原文名の先頭語＝社名とは限らない。**
+    // 実測（2026-08-25）: 「アパレルEC」で警告が出たが、これは業種＋サイト種別の
+    // 一般名詞で、伏せた表現（「アパレルのECサイト事例」）にも含まれる語だった。
+    // 一般語を社名として警告すると、担当者が警告を無視するようになる。
+    if (isGenericCaseWord(core, c)) continue;
     if (allText.includes(core)) {
       warnings.push(
         `社名を出せない事例の名称「${core}」が骨子に含まれています。`
@@ -388,4 +418,32 @@ export async function POST(
   };
 
   return NextResponse.json(body);
+}
+
+
+/**
+ * 事例名の先頭語が「社名ではない一般語」か。
+ *
+ * 業種・サイト種別・伏せた表現に含まれる語は、骨子に出ても情報漏れにならない。
+ * ここを緩めないと誤検知が続き、**本物の漏れが埋もれる**。
+ */
+function isGenericCaseWord(
+  core: string,
+  c: { name: string; productTypes: string[]; siteTypes: string[] },
+): boolean {
+  // 伏せた表現そのものに含まれる語なら、出ても問題ない
+  if (c.name.includes(core)) return true;
+
+  // 業種・サイト種別と重なる語（「アパレル」「EC」「アパレルEC」など）
+  const tags = [...c.productTypes, ...c.siteTypes];
+  if (tags.some(t => t && (core.includes(t) || t.includes(core)))) return true;
+
+  // 業態・チャネルの一般語だけで構成されている場合
+  const GENERIC = [
+    'EC', 'ec', 'LP', 'lp', 'サイト', 'ページ', 'アプリ', 'メディア', 'ストア', 'ショップ',
+    'BtoB', 'BtoC', 'B2B', 'B2C', 'SaaS', '通販', '小売', '製造', '金融', '保険',
+    '不動産', '人材', '教育', '医療', '旅行', '宿泊', '美容', 'コスメ', 'アパレル',
+  ];
+  const stripped = GENERIC.reduce((acc, g) => acc.split(g).join(''), core).trim();
+  return stripped.length === 0;
 }

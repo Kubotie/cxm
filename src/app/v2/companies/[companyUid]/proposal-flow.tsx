@@ -23,12 +23,40 @@ import {
 import { InfoTip } from "@/components/ui/info-tip";
 import { outlineToMarkdown, outlineFileName } from "@/lib/company/outline-markdown";
 import type { ProposalIntentsResponse, ProposalIntent, IntentFit } from "@/app/api/company/[companyUid]/proposal-intents/route";
+import type { SituationCandidatesResponse, SituationCandidate } from "@/app/api/company/[companyUid]/situations/route";
 import type { ProposalOutlineResponse, CustomIntent } from "@/app/api/company/[companyUid]/proposal-outline/route";
 import type { EvidenceItem, EvidenceGroup, EvidenceConfidence, EvidenceRelevance } from "@/lib/company/proposal-inputs";
 import { intentKeywords, pruneCommonKeywords, evidenceRelevance } from "@/lib/company/proposal-inputs";
 import type { CompanyProfileResponse } from "@/app/api/company/[companyUid]/profile/route";
 import type { ProposalRecordsResponse } from "@/app/api/company/[companyUid]/proposal-records/route";
 import type { SavedOutlineSummary, SavedOutlineDetail } from "@/lib/nocodb/proposal-outlines";
+
+/**
+ * 観測された状況の、**選んだ狙いにおける役割**の表示。
+ * 同じシグナルでも狙いによって反転する（習慣化は Bundle化 では追い風、
+ * FDE伴走では「自走できている」という断り材料）。
+ */
+const ROLE_BADGE: Record<string, { label: string; cls: string; hint: string }> = {
+  tailwind:     { label: "追い風",     cls: "bg-emerald-100 text-emerald-800", hint: "この狙いを後押しする材料" },
+  blocker:      { label: "先に解消",   cls: "bg-red-100 text-red-800",         hint: "放置して提案すると通らない。先に手当てが要る" },
+  prerequisite: { label: "前提",       cls: "bg-amber-100 text-amber-800",     hint: "この狙いが成立する前提" },
+  related:      { label: "狙いに関連", cls: "bg-blue-100 text-blue-800",       hint: "狙いに関係する材料" },
+};
+
+/**
+ * B1（提案の狙い）由来のフィールドの既定値。
+ * カタログ外の狙い（担当者が立てたもの・保存済み記録の復元）で使う。
+ */
+const EMPTY_INTENT_FIELDS = {
+  contract: "any" as const,
+  contractOk: true,
+  requiredInputs: [] as string[],
+  audiences: [] as string[],
+  changeTarget: "",
+  businessImpact: "",
+  signals: [] as ProposalIntent["signals"],
+};
+
 
 // ── 表示メタ ──────────────────────────────────────────────────────────────────
 
@@ -191,6 +219,7 @@ export function ProposalFlow({ companyUid, profile }: {
       // 選んだ狙いを一覧から引き当てる（カタログが変わっていれば見つからない）
       const target = base.intents.find(i => i.name === detail.intentName) ?? null;
       setIntent(target ?? {
+        ...EMPTY_INTENT_FIELDS,
         name: detail.intentName,
         displayName: saved.intent.displayName,
         nameSafe: saved.intent.nameSafe,
@@ -305,8 +334,13 @@ export function ProposalFlow({ companyUid, profile }: {
       intentKeywords(target?.displayName, target?.valueLine),
       context,
     );
+    // **狙いごとの役割表。** 同じ状況が狙いによって追い風にも障害にもなる
+    const roleBySid = new Map(
+      (target?.signals ?? []).map(sg => [sg.id, sg.role === "unrelated" ? null : sg.role]),
+    );
     return (item: EvidenceItem) => evidenceRelevance(item, {
       relatedSituations, keywords, situationLabel: label,
+      roleOf: sid => roleBySid.get(sid) ?? null,
     });
   }
 
@@ -434,7 +468,20 @@ export function ProposalFlow({ companyUid, profile }: {
               {data.catalog.refreshed && "（取り直し済み）"}
             </span>
           </div>
+          {/* **なぜ出ていないか**を出す。契約前提で外した狙いは順位を下げるのでなく返していない */}
+          {data.hiddenByContract.length > 0 && (
+            <p className="text-[11px] text-slate-400 mt-1.5">
+              契約が
+              <span className="font-bold text-slate-600">
+                {data.contractPlan === "bundle" ? "Bundle" : data.contractPlan === "insight" ? "Insight" : data.contractPlan === "experience" ? "Experience" : "未取得"}
+              </span>
+              のため出していない狙い: {data.hiddenByContract.map(h => h.name).join("、")}
+            </p>
+          )}
         </Card>
+
+        {/* 議事録から状況を拾う。**登録すると上の並びが変わる** */}
+        <SituationCandidates companyUid={companyUid} onRegistered={() => load()} />
 
         {data.intents.length === 0 ? (
           <div className="space-y-3">
@@ -724,6 +771,12 @@ function IntentCard({ intent, rank, onPick }: { intent: ProposalIntent; rank: nu
       <div className="flex flex-wrap items-center gap-1">
         <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded ${f.chip}`} title={f.hint}>{f.label}</span>
         <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded ${t.chip}`}>{t.label}</span>
+        {/* **誰に語るか。** 部長・決裁者なら機能でなく組織と事業の話にする */}
+        {intent.audiences.map(a => (
+          <span key={a} className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded ${
+            a === "決裁者" ? "bg-red-50 text-red-700" : a === "部長" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-500"
+          }`} title="この狙いを持ち込む相手のレイヤー">{a}</span>
+        ))}
         {intent.kind && (
           <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{intent.kind}</span>
         )}
@@ -737,6 +790,23 @@ function IntentCard({ intent, rank, onPick }: { intent: ProposalIntent; rank: nu
 
       {intent.valueLine && (
         <p className="text-[11.5px] text-slate-600 leading-relaxed">{intent.valueLine}</p>
+      )}
+
+      {/* **組織の何を変えるか。** 決裁者・部長には機能でなくここを話す */}
+      {intent.changeTarget && (
+        <p className="text-[11px] text-slate-500 leading-relaxed border-l-2 border-slate-200 pl-2">
+          <span className="font-bold text-slate-600">変えるもの: </span>{intent.changeTarget}
+        </p>
+      )}
+
+      {/* 骨子に要る材料。業界情報が要る狙いは、無いまま書くと Why Now が空になる */}
+      {intent.requiredInputs.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="text-[9.5px] text-slate-400">要る材料</span>
+          {intent.requiredInputs.map(r => (
+            <span key={r} className="text-[9.5px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{r}</span>
+          ))}
+        </div>
       )}
 
       {intent.reasons.length > 0 && (
@@ -793,6 +863,7 @@ function CustomIntentCard({ onPick }: {
       proposalType: type,
     };
     onPick(custom, {
+      ...EMPTY_INTENT_FIELDS,
       name: name.trim(),
       displayName: name.trim(),
       nameSafe: true,
@@ -1085,14 +1156,19 @@ function InfoCard({ item, on, relevance, label, onToggle }: {
         </button>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1">
-            {relevance.related && (
-              <span
-                className="text-[9px] font-bold px-1 py-px rounded bg-blue-100 text-blue-800"
-                title={`${relevance.by === "situation" ? "状況が一致" : "語句が一致"}: ${relevance.hits.join("、")}`}
-              >
-                狙いに関連{relevance.by === "keyword" ? "（語句）" : ""}
-              </span>
-            )}
+            {relevance.related && (() => {
+              // **狙いによって同じシグナルの意味が変わる。**
+              // 「関連あり」だけだと、追い風なのか先に潰すべき障害なのかが読めない。
+              const m = ROLE_BADGE[relevance.role ?? "related"];
+              return (
+                <span
+                  className={`text-[9px] font-bold px-1 py-px rounded ${m.cls}`}
+                  title={`${m.hint}｜${relevance.by === "situation" ? "状況が一致" : "語句が一致"}: ${relevance.hits.join("、")}`}
+                >
+                  {m.label}{relevance.by === "keyword" ? "（語句）" : ""}
+                </span>
+              );
+            })()}
             <span className={`text-[9px] font-bold px-1 py-px rounded ${conf.chip}`} title={conf.hint}>
               {conf.label}
             </span>
@@ -1418,6 +1494,8 @@ function OutlineView({
 }) {
   const [copied, setCopied] = useState(false);
   const s = outline.executiveSummary;
+  /** 空章は出さない。線の引き方（最後だけ引かない）に件数が要るので先に確定させる */
+  const chapters = outline.chapters.filter(c => c.text.trim() || c.unsourced);
 
   /** 表示と .md で内容がずれないよう、変換は outline-markdown.ts に閉じている */
   function buildMarkdown(): { text: string; name: string } {
@@ -1496,74 +1574,117 @@ function OutlineView({
           </div>
         </div>
         {saveMsg && <p className="text-[11px] text-white/80 mt-1.5">{saveMsg}</p>}
-        <dl className="mt-3 space-y-1.5">
+
+        {/* 状況→打ち手の4点。ラベルは小さく、中身を読ませる */}
+        <dl className="mt-3.5 space-y-2.5">
           {([
             ["何が問題か", s.problem],
             ["何を目指すか", s.goal],
             ["何を提案するか", s.proposal],
             ["期待できる成果", s.outcome],
-            ["次に決めてほしいこと", s.decision],
           ] as const).map(([k, v]) => v ? (
-            <div key={k} className="flex flex-col sm:flex-row sm:gap-3">
-              <dt className="text-[11px] font-bold text-white/70 sm:w-[9.5rem] shrink-0">{k}</dt>
-              <dd className="text-[12.5px] leading-relaxed">{v}</dd>
+            <div key={k}>
+              <dt className="text-[10px] font-bold tracking-wide text-white/50 uppercase">{k}</dt>
+              <dd className="text-[13px] leading-[1.75] mt-0.5">{v}</dd>
             </div>
           ) : null)}
         </dl>
+
+        {/* **唯一のアクション。** 4点と同じ書式に並べると埋もれるので切り離す */}
+        {s.decision && (
+          <div className="mt-4 pt-3.5 border-t border-white/20">
+            <div className="flex items-center gap-1.5">
+              <Target className="w-3.5 h-3.5 text-white/70" />
+              <span className="text-[10px] font-bold tracking-wide text-white/70 uppercase">次に決めてほしいこと</span>
+            </div>
+            <p className="text-[13.5px] font-semibold leading-[1.75] mt-1">{s.decision}</p>
+          </div>
+        )}
       </div>
 
-      {/* 9章 */}
-      {outline.chapters.filter(c => c.text.trim() || c.unsourced).map(c => (
-        <div key={c.key} className="grid grid-cols-1 sm:grid-cols-[10.5rem_minmax(0,1fr)] gap-x-4 gap-y-1.5">
-          <div className="rounded-[6px] bg-[#2e5f7e] text-white px-3 py-3 flex flex-col justify-center">
-            <div className="text-[10px] font-bold text-white/60 tabular-nums">{c.no}. {c.en}</div>
-            <div className="text-[12.5px] font-bold leading-snug mt-0.5">{c.label}</div>
-          </div>
-          <div className="py-1.5 min-w-0">
-            {c.unsourced && (
-              <div className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-50 text-red-700 mb-1"
-                   title="顧客の事実を述べる章なのに、根拠となる情報が挙がっていません。そのまま使わないでください">
-                <AlertTriangle className="w-3 h-3" />根拠なし
+      {/* ── 9章 ──────────────────────────────────────────────────────
+          Context → Why Now → Goal → … は**1本の論理の流れ**。
+          章ごとに独立したカードを並べると、9個の島に見えて繋がりが消える（実測で指摘あり）。
+          番号バッジを縦線でつなぎ、上から下へ読む形にする。 */}
+      <ol className="mt-4">
+        {chapters.map((c, idx) => (
+          <li key={c.key} className="relative pl-11 pb-7 last:pb-0">
+            {/* 次の章へ続く線。最後の章では引かない */}
+            {idx < chapters.length - 1 && (
+              <span aria-hidden className="absolute left-[13.5px] top-8 bottom-0 w-px bg-slate-200" />
+            )}
+            <span className="absolute left-0 top-0 w-7 h-7 rounded-full bg-[#2e5f7e] text-white grid place-items-center text-[11.5px] font-bold tabular-nums">
+              {c.no}
+            </span>
+
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <h3 className="text-[13.5px] font-bold text-slate-900">{c.label}</h3>
+                <span className="text-[10.5px] font-semibold text-slate-400">{c.en}</span>
+                {c.unsourced && (
+                  <span
+                    className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-50 text-red-700"
+                    title="顧客の事実を述べる章なのに、根拠となる情報が挙がっていません。そのまま使わないでください"
+                  >
+                    <AlertTriangle className="w-3 h-3" />根拠なし
+                  </span>
+                )}
               </div>
-            )}
-            <p className="text-[12.5px] text-slate-800 leading-relaxed whitespace-pre-wrap">{c.text}</p>
-            {c.bullets.length > 0 && (
-              <ul className="mt-1.5 space-y-0.5">
-                {c.bullets.map((b, i) => (
-                  <li key={i} className="text-[12px] text-slate-700 leading-relaxed flex gap-1.5">
-                    <span className="text-slate-300 shrink-0">・</span><span>{b}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {c.assumptions.length > 0 && (
-              <div className="mt-1.5">
-                <div className="text-[10px] font-bold text-amber-700">この章で置いた仮定</div>
-                <ul className="mt-0.5 space-y-0.5">
-                  {c.assumptions.map((a, i) => (
-                    <li key={i} className="text-[11px] text-amber-800/90 flex gap-1.5">
-                      <span className="text-amber-300 shrink-0">・</span><span>{a}</span>
+
+              {/* ここが読ませたい本文。いちばん大きく、行間も広く取る */}
+              <p className="text-[13.5px] text-slate-800 leading-[1.9] mt-2 whitespace-pre-wrap">
+                {c.text}
+              </p>
+
+              {/* 具体。本文より一段落とす */}
+              {c.bullets.length > 0 && (
+                <ul className="mt-2.5 space-y-1.5">
+                  {c.bullets.map((b, i) => (
+                    <li key={i} className="flex gap-2 text-[12px] text-slate-600 leading-[1.75]">
+                      <span aria-hidden className="mt-[7px] w-1 h-1 rounded-full bg-slate-300 shrink-0" />
+                      <span className="min-w-0">{b}</span>
                     </li>
                   ))}
                 </ul>
-              </div>
-            )}
-            {c.evidence.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-1.5">
-                {c.evidence.map(e => (
-                  <span
-                    key={e.id}
-                    title={`${e.id}（${CONFIDENCE_META[e.confidence as EvidenceConfidence]?.label ?? e.confidence}）`}
-                    className="text-[9.5px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500"
-                  >
-                    {e.title}{e.asOf ? `・${e.asOf}` : ""}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      ))}
+              )}
+
+              {c.assumptions.length > 0 && (
+                <div className="mt-2.5 rounded-[7px] bg-amber-50/70 border border-amber-100 px-2.5 py-2">
+                  <div className="text-[10px] font-bold text-amber-800">この章で置いた仮定</div>
+                  <ul className="mt-1 space-y-1">
+                    {c.assumptions.map((a, i) => (
+                      <li key={i} className="text-[11.5px] text-amber-900/85 leading-relaxed flex gap-1.5">
+                        <span aria-hidden className="text-amber-400 shrink-0">・</span><span>{a}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* **根拠は畳む。** 常時展開すると本文より目立ち、章の切れ目が消える */}
+              {c.evidence.length > 0 && (
+                <details className="mt-2.5 group">
+                  <summary className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-700 cursor-pointer select-none list-none">
+                    <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
+                    この章の根拠 {c.evidence.length}件
+                  </summary>
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {c.evidence.map(e => (
+                      <span
+                        key={e.id}
+                        title={`${e.id}（${CONFIDENCE_META[e.confidence as EvidenceConfidence]?.label ?? e.confidence}）`}
+                        className="text-[9.5px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500"
+                      >
+                        {e.title}{e.asOf ? `・${e.asOf}` : ""}
+                      </span>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          </li>
+        ))}
+      </ol>
 
       {/* 触れない方がよいこと */}
       {outline.avoid.length > 0 && (
@@ -1601,5 +1722,154 @@ function OutlineView({
         ／狙い: {outline.intent.displayName}
       </p>
     </div>
+  );
+}
+
+// ─── 議事録から状況を拾う ──────────────────────────────────────────────────
+//
+// A（状況カタログ）の「手動（診断・登録）」の語彙は、誰かが登録しないと一件も立たない。
+// だが実際には議事録に書かれている。LLM に拾わせて、**採用は人が押す**。
+//
+// ⚠️ 自動登録しない理由: 議事録948件の横断実測（2026-08-24）で、
+//   「担当が変わると知見が引き継がれない」の大半が **Ptmind 側の説明文**だった
+//   （「他のお客様からも伺う声」という枕）。自社のトークを顧客の状況として
+//   登録すると、提案が「相手が言っていないこと」を根拠にし始める。
+function SituationCandidates({ companyUid, onRegistered }: {
+  companyUid: string;
+  onRegistered: () => void;
+}) {
+  const [open, setOpen]       = useState(false);
+  const [data, setData]       = useState<SituationCandidatesResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState<string | null>(null);
+  const [saving, setSaving]   = useState<string | null>(null);
+  const [saved, setSaved]     = useState<Set<string>>(new Set());
+
+  async function find() {
+    setLoading(true); setError(null);
+    try {
+      const r = await fetch(`/api/company/${companyUid}/situations`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+      setData(j as SituationCandidatesResponse);
+      setOpen(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setOpen(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function adopt(c: SituationCandidate) {
+    setSaving(c.situationId);
+    try {
+      const r = await fetch(`/api/company/${companyUid}/situations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          situationId: c.situationId,
+          note: `${c.speaker ? `${c.speaker}: ` : ""}${c.quote}`,
+          observedAt: c.observedAt,
+        }),
+      });
+      if (!r.ok) throw new Error((await r.json()).error ?? `HTTP ${r.status}`);
+      setSaved(prev => new Set(prev).add(c.situationId));
+      onRegistered();   // 狙いの並びが変わるので取り直す
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  return (
+    <Card className="px-5 py-3.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+        <h3 className="text-[13px] font-bold text-slate-800">議事録から状況を拾う</h3>
+        <InfoTip text="組織・体制まわりの状況は自動では取れません。議事録から候補を出し、確認して登録すると上の並びが変わります。自社（Ptmind）の説明文は候補から除いています。" />
+        <button onClick={find} disabled={loading}
+          className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[7px] border border-slate-300 text-[11.5px] font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+          {loading
+            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />議事録を読んでいます…</>
+            : <><Sparkles className="w-3.5 h-3.5" />{data ? "もう一度探す" : "候補を探す"}</>}
+        </button>
+      </div>
+
+      {!open && !loading && (
+        <p className="text-[11.5px] text-slate-500 mt-1.5">
+          「分析できる人がいない」「担当者単独では決裁できない」といった、
+          利用ログには出ない状況を議事録から拾います。
+        </p>
+      )}
+
+      {error && (
+        <div className="flex items-center gap-1.5 text-[12px] text-red-600 mt-2">
+          <AlertCircle className="w-4 h-4" />{error}
+        </div>
+      )}
+
+      {open && data && (
+        <div className="mt-2.5">
+          <p className="text-[11px] text-slate-400">
+            議事録{data.minutesRead}件を読み、候補{data.candidates.length}件
+            {data.droppedAsOurTalk > 0 && (
+              <span title="「他のお客様からも伺う声」のような自社の説明文は、顧客の状況ではないので候補にしません">
+                （自社の説明として除外 {data.droppedAsOurTalk}件）
+              </span>
+            )}
+          </p>
+
+          {data.candidates.length === 0 ? (
+            <p className="text-[12px] text-slate-500 mt-2">
+              {data.note || "議事録から拾える状況はありませんでした。"}
+            </p>
+          ) : (
+            <ul className="mt-2 space-y-2">
+              {data.candidates.map(c => {
+                const done = saved.has(c.situationId) || c.alreadyRegistered;
+                return (
+                  <li key={c.situationId} className="rounded-[8px] border border-slate-200 px-3 py-2.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[12px] font-bold text-slate-800">{c.labelJa}</span>
+                      <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 tabular-nums">
+                        確度 {Math.round(c.confidence * 100)}%
+                      </span>
+                      {c.speaker && (
+                        <span className="text-[10px] text-slate-400">{c.speaker}</span>
+                      )}
+                      {c.observedAt && (
+                        <span className="text-[10px] text-slate-400 tabular-nums">{c.observedAt}</span>
+                      )}
+                      <button
+                        onClick={() => adopt(c)}
+                        disabled={done || saving === c.situationId}
+                        className={`ml-auto text-[11.5px] font-bold px-2.5 py-1 rounded-[6px] transition ${
+                          done
+                            ? "bg-emerald-50 text-emerald-700"
+                            : "bg-slate-900 text-white hover:bg-slate-700 disabled:opacity-50"
+                        }`}
+                      >
+                        {done ? "登録済み" : saving === c.situationId ? "登録中…" : "登録する"}
+                      </button>
+                    </div>
+                    <p className="text-[11.5px] text-slate-600 leading-relaxed mt-1 border-l-2 border-slate-200 pl-2">
+                      「{c.quote}」
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {data.registered.length > 0 && (
+            <p className="text-[10.5px] text-slate-400 mt-2">
+              登録済み: {data.registered.map(r => r.labelJa).join("、")}
+            </p>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }

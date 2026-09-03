@@ -50,6 +50,13 @@ export const WHAT_DB = {
   cases:      'ee2cca29-eb7d-4dfb-8e25-81cea0f396f8',
   /** E｜施策・問いライブラリ。Execution / Approach の材料になる */
   playbooks:  '32eaa40c-6083-4291-a423-b6582e2120dd',
+  /**
+   * B1｜提案の狙い（何をしたいか）。**個社ページのカードに出るのはこれ。**
+   * B（提供できるもの）をそのままカードにすると、Bundle 契約の顧客に
+   * 契約済みの製品を「深化」として出してしまう（2026-08-24 実測）。
+   * 狙いは「契約状態 × 前進の方向」で決まるので、層を分けている。
+   */
+  intents:    '2517081a-d797-48c2-a3dc-6cf2d8adf68e',
 } as const;
 
 /** キャッシュ 1時間 */
@@ -95,6 +102,41 @@ export interface SolutionCatalogEntry {
   owner:          string[];
   proposedCount:  number | null;
   meetingCount:   number | null;
+}
+
+/**
+ * 契約前提。**この狙いが成立する契約状態。**
+ * Bundle 契約に「Bundle化」を出さないための判定に使う。
+ */
+export type ContractPrecondition =
+  | 'any'            // 問わない
+  | 'contracted'     // 契約済み（プラン不問）
+  | 'insight_only'   // Insight のみ
+  | 'experience_only'// Experience のみ
+  | 'none';          // 未契約
+
+export interface ProposalIntentEntry {
+  pageId:      string;
+  name:        string;
+  order:       number;
+  valueLine:   string;
+  contract:    ContractPrecondition;
+  /** 以下はすべて「状況ID の文字列配列」に解決済み */
+  effectiveFor:  string[];
+  prerequisites: string[];
+  antiPatterns:  string[];
+  /** 骨子を書くのに要る材料。利用活性化以外はほぼ業界情報が要る */
+  requiredInputs: string[];
+  /** 誰に語るか。部長・決裁者なら機能ではなく組織と事業の話にする */
+  audiences:   string[];
+  /** 組織の何を変えるか（骨子の Goal / Gap の素材） */
+  changeTarget: string;
+  /** その変化が何につながるか（決裁者向けの芯） */
+  businessImpact: string;
+  /** この狙いの中で使う提供物（B の名称） */
+  whatNames:   string[];
+  /** 文脈フレーム（C の名称） */
+  frameNames:  string[];
 }
 
 export interface NarrativeFrame {
@@ -173,6 +215,8 @@ export interface CatalogIssue {
 
 export interface WhatCatalog {
   situations: SituationRef[];
+  /** B1｜提案の狙い。状態 = 利用可 のみ。**カードに出るのはこれ** */
+  intents:    ProposalIntentEntry[];
   /** 候補条件を満たした主役/補助WHAT のみ */
   solutions:  SolutionCatalogEntry[];
   /** 状態 = 利用可 のフレームのみ */
@@ -185,6 +229,8 @@ export interface WhatCatalog {
   /** 各DBの総行数（フィルタ前）。UI で「なぜ候補が少ないか」を説明するのに使う */
   counts: {
     situations:      number;
+    intentsTotal:    number;
+    intentsUsable:   number;
     solutionsTotal:  number;
     solutionsUsable: number;
     framesTotal:     number;
@@ -200,9 +246,10 @@ export interface WhatCatalog {
 }
 
 export const EMPTY_CATALOG: WhatCatalog = {
-  situations: [], solutions: [], frames: [], cases: [], playbooks: [], issues: [],
+  situations: [], intents: [], solutions: [], frames: [], cases: [], playbooks: [], issues: [],
   counts: {
-    situations: 0, solutionsTotal: 0, solutionsUsable: 0, framesTotal: 0, framesUsable: 0,
+    situations: 0, intentsTotal: 0, intentsUsable: 0,
+    solutionsTotal: 0, solutionsUsable: 0, framesTotal: 0, framesUsable: 0,
     casesTotal: 0, casesUsable: 0, playbooksTotal: 0, playbooksUsable: 0,
   },
   unavailable: 'Notion 未取得',
@@ -260,7 +307,7 @@ async function loadCatalog(): Promise<WhatCatalog> {
   let pages: Map<string, NotionPage[]>;
   try {
     pages = await queryDatabases([
-      WHAT_DB.situations, WHAT_DB.solutions, WHAT_DB.frames,
+      WHAT_DB.situations, WHAT_DB.intents, WHAT_DB.solutions, WHAT_DB.frames,
       WHAT_DB.cases, WHAT_DB.playbooks,
     ]);
   } catch (e) {
@@ -271,7 +318,8 @@ async function loadCatalog(): Promise<WhatCatalog> {
     return { ...EMPTY_CATALOG, unavailable: msg, fetchedAt: new Date().toISOString() };
   }
 
-  const rawA = pages.get(WHAT_DB.situations) ?? [];
+  const rawA  = pages.get(WHAT_DB.situations) ?? [];
+  const rawB1 = pages.get(WHAT_DB.intents)   ?? [];
   const rawB = pages.get(WHAT_DB.solutions)  ?? [];
   const rawC = pages.get(WHAT_DB.frames)     ?? [];
   const rawCase = pages.get(WHAT_DB.cases)     ?? [];
@@ -383,6 +431,63 @@ async function loadCatalog(): Promise<WhatCatalog> {
     });
   }
 
+  // ── B1: 提案の狙い ──────────────────────────────────────────────────────
+  //   C（フレーム名）の解決に使うため、frames より先に名前だけ引いておく
+  const frameNameByPage = new Map<string, string>();
+  for (const p of rawC) {
+    const name = readTitle(p.properties['フレーム名']);
+    if (name) frameNameByPage.set(normalizePageId(p.id), name);
+  }
+
+  const intents: ProposalIntentEntry[] = [];
+
+  for (const p of rawB1) {
+    const name = readTitle(p.properties['名称']);
+    if (!name) continue;
+
+    const status = readSelect(p.properties['状態']);
+    if (status !== CANDIDATE_RULE.status) {
+      issues.push({ target: 'B', rowName: name, reason: 'not_available', detail: `B1 状態 = ${status ?? '未設定'}` });
+      continue;
+    }
+
+    const eff  = resolveSituations(p.properties['効く状況'], name, 'B', 'B1 効く状況');
+    const pre  = resolveSituations(p.properties['前提条件'], name, 'B', 'B1 前提条件');
+    const anti = resolveSituations(p.properties['逆効果になる状況'], name, 'B', 'B1 逆効果になる状況');
+
+    // 逆効果が空だと全顧客にマッチする（B と同じ理由で候補に入れない）
+    if (CANDIDATE_RULE.requireAntiPatterns && anti.ids.length === 0) {
+      issues.push({
+        target: 'B', rowName: name, reason: 'anti_patterns_empty',
+        detail: 'B1 の逆効果になる状況が空のため候補に含めません（空欄禁止）',
+      });
+      continue;
+    }
+    if (eff.hasUnknown || pre.hasUnknown || anti.hasUnknown) continue;
+
+    intents.push({
+      pageId: p.id,
+      name,
+      order:     readNumber(p.properties['並び順']) ?? 99,
+      valueLine: readText(p.properties['一言価値']),
+      contract:  toContractPrecondition(readSelect(p.properties['契約前提'])),
+      effectiveFor:  eff.ids,
+      prerequisites: pre.ids,
+      antiPatterns:  anti.ids,
+      requiredInputs: readMultiSelect(p.properties['必要な材料']),
+      audiences:      readMultiSelect(p.properties['対象レイヤー']),
+      changeTarget:   readText(p.properties['変える対象']),
+      businessImpact: readText(p.properties['事業インパクト']),
+      whatNames: readRelationIds(p.properties['使うWHAT'])
+        .map(pid => solutionNameByPage.get(normalizePageId(pid)))
+        .filter((v): v is string => Boolean(v)),
+      frameNames: readRelationIds(p.properties['語り口'])
+        .map(pid => frameNameByPage.get(normalizePageId(pid)))
+        .filter((v): v is string => Boolean(v)),
+    });
+  }
+  intents.sort((a, b) => a.order - b.order);
+
   // ── C: 文脈フレーム ────────────────────────────────────────────────────
   const frames: NarrativeFrame[] = [];
 
@@ -489,6 +594,7 @@ async function loadCatalog(): Promise<WhatCatalog> {
 
   const data: WhatCatalog = {
     situations,
+    intents,
     solutions,
     frames,
     cases,
@@ -496,6 +602,8 @@ async function loadCatalog(): Promise<WhatCatalog> {
     issues,
     counts: {
       situations:      situations.length,
+      intentsTotal:    rawB1.length,
+      intentsUsable:   intents.length,
       solutionsTotal:  rawB.length,
       solutionsUsable: solutions.length,
       framesTotal:     rawC.length,
@@ -511,6 +619,20 @@ async function loadCatalog(): Promise<WhatCatalog> {
 
   _cache = { data, ts: Date.now() };
   return data;
+}
+
+/**
+ * 契約前提の日本語 → コード上の値。
+ * Notion 側の選択肢名を変えたらここも直す（IDでなく文字列で結んでいる）。
+ */
+function toContractPrecondition(v: string | null): ContractPrecondition {
+  switch (v) {
+    case '契約済み（プラン不問）': return 'contracted';
+    case 'Insight のみ':          return 'insight_only';
+    case 'Experience のみ':       return 'experience_only';
+    case '未契約':                return 'none';
+    default:                      return 'any';
+  }
 }
 
 /** client.ts の NotionProperty を再輸出せずに使うためのローカル別名 */

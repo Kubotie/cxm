@@ -130,12 +130,17 @@ export const PROPOSAL_OUTLINE_TOOL = {
               text: {
                 type: 'string',
                 description:
-                  '章の本文。**2〜3文の1段落**で書く。骨子なので詳細な説明を書かない。'
-                  + '社内用語・状況ID・スコアを出さない',
+                  'この章の**結論を1〜2文**で言い切る。読み手はここだけで章の主旨が取れること。'
+                  + '数値・固有名詞の列挙はここに書かない（bullets の仕事）。'
+                  + '骨子なので詳細な説明を書かない。社内用語・状況ID・スコアを出さない',
               },
               bullets: {
                 type: 'array',
-                description: '本文を補う箇条書き。**0〜3件**。各1行。不要なら空配列',
+                description:
+                  '本文の**裏づけになる具体**。0〜3件、各1行。'
+                  + '**本文の言い換えを書かない。** 本文が結論、bullets は「なぜそう言えるか」の'
+                  + '数値・固有名詞・日付。本文と同じ内容を繰り返した時点で価値がゼロになる。'
+                  + '書くことが無ければ空配列にする',
                 items: { type: 'string' },
               },
               evidenceIds: {
@@ -200,6 +205,14 @@ const NAMING_RULE = `
   **別の商材**であり置き換えてはいけない。
 - 対外呼称ルールが個別に示されている場合は、その提供物に限って適用する。他に波及させない。
 - 状況ID（RD_Util_Low など）、準備度スコア、社内の型名（深化・立て直しなど）を本文に出さない
+
+他社事例の呼び方（**社名の扱い**）:
+- 事例は材料に書かれている**名称をそのまま使う**。名称が「（社名非公開）」となっているものは、
+  **社名を書いてはいけない。** その事例の会社がどこか分かっていても書かない。
+- 材料に社名が無い事例について、知識から社名を補わない。「大手アパレル企業の事例」のような
+  推測の枕も付けない。**材料にある表現の範囲で書く。**
+- 社名を出さずに事例の価値を伝えるときは、業種・サイト種別・打ち手・変化の数値で書く。
+  例: 「同じ課題を持つアパレルのECサイトで、導線を強化して購入率が5%上がっています」
 `.trim();
 
 export const OUTLINE_SYSTEM = `
@@ -219,6 +232,10 @@ export const OUTLINE_SYSTEM = `
 5. 日本語で、社外に出せる言葉で書く。社内用語を持ち込まない。
 6. **これは骨子である。** 各章は要点だけを短く書く。提案書の本文を書かない。
    担当者が読んで「この筋で進める」と判断できる密度で止める。
+7. **text と bullets で同じことを言わない。**
+   text は結論（1〜2文）、bullets はその裏づけ（数値・固有名詞・日付）。
+   text に数値を並べたうえで bullets に同じ数値を書く、という重複が最も読みにくい。
+   裏づけが無い章は bullets を空にしてよい。埋めるために言い換えを作らないこと。
 
 ${CONFIDENCE_RULE}
 
@@ -241,6 +258,15 @@ export interface OutlinePromptInput {
     antiPatterns: string[];
     /** 組み合わせる補助WHAT（部品・証跡） */
     supporting: Array<{ displayName: string; valueLine: string }>;
+    /**
+     * 組織の何を変えるか（B1 の `変える対象`）。
+     * **章3 Goal と章4 Gap の芯になる。** 機能の話に落ちるのを防ぐ。
+     */
+    changeTarget?: string;
+    /** その変化が何につながるか（B1 の `事業インパクト`）。章3 と章9 で使う */
+    businessImpact?: string;
+    /** 誰に語るか（担当者 / 部長 / 決裁者）。部長以上なら組織と事業の話にする */
+    audiences?: string[];
   };
   proposalType: ProposalType;
   /** 選ばれた材料（チェックが入っているものだけ） */
@@ -255,9 +281,14 @@ export function buildOutlinePrompt(input: OutlinePromptInput): string {
     : input.evidence.map(e => [
         `[${e.id}] (${e.confidence}${e.approximate ? ' / 近似判定' : ''}${e.asOf ? ` / ${e.asOf}` : ''})`,
         `  ${e.title}`,
+        // 社名を伏せた事例は、その場で「書いてはいけない」と明示する。
+        // 全体ルールに書くだけだと、材料を読んだモデルが社名を補ってしまう
+        e.title.includes('社名非公開')
+          ? '  ※ この事例は社名を出せません。上の名称のまま呼び、会社名を書かないこと'
+          : null,
         `  ${e.detail.replace(/\n/g, '\n  ')}`,
         `  出所: ${e.source}`,
-      ].join('\n')).join('\n\n');
+      ].filter(Boolean).join('\n')).join('\n\n');
 
   const i = input.intent;
   const intentBlock = [
@@ -272,8 +303,26 @@ export function buildOutlinePrompt(input: OutlinePromptInput): string {
     i.supporting.length
       ? `  組み合わせる部品・証跡:\n${i.supporting.map(s => `    - ${s.displayName}: ${s.valueLine}`).join('\n')}`
       : null,
+    i.changeTarget   ? `  変える対象（組織の何が変わるか）: ${i.changeTarget}` : null,
+    i.businessImpact ? `  事業インパクト: ${i.businessImpact}` : null,
+    i.audiences?.length ? `  語る相手: ${i.audiences.join(' / ')}` : null,
   ].filter(Boolean).join('\n')
     + '\n\n※ 本文に出してよい提供物の名前は上記のみ。他の商材名（似た名前のものを含む）を書かないこと。';
+
+  // **決裁者・部長が読む前提のとき、機能の話に落とさないための指示。**
+  // 実商談948件で予算・稟議は89社に出現し、その多くが
+  // 「担当者単独では決まらない」構造だった（§44）。
+  const audienceGuide = i.audiences?.some(a => a === '決裁者' || a === '部長')
+    ? [
+        '# 読む相手',
+        `この骨子は ${i.audiences.join(' / ')} が読む前提で書くこと。`,
+        '- 章3 Goal は「どの機能を入れるか」ではなく、**組織の何が変わり、業務フローがどう変わるか**で書く',
+        i.changeTarget ? `  変える対象はカタログで決まっている: ${i.changeTarget}` : null,
+        '- 章4 Gap も、機能の不足ではなく**今のやり方の構造**として書く',
+        i.businessImpact ? `- 章9 Decision では事業に返るもの（${i.businessImpact}）を先に置き、費用はその後に書く` : null,
+        '- 担当者がそのまま社内説明に使える言葉にする。専門用語で説明を要するものは避ける',
+      ].filter(Boolean).join('\n')
+    : null;
 
   const chapterBlock = CHAPTERS
     .map(c => `${c.no}. ${c.label}（${c.en}）${c.requiresEvidence ? ' ※材料ID必須' : ''}\n   ${c.brief}`)
@@ -289,6 +338,7 @@ export function buildOutlinePrompt(input: OutlinePromptInput): string {
         + (input.frame.talkingPoints ? `\nトーキングポイント:\n${input.frame.talkingPoints}` : '')
         + (input.frame.avoidWhen ? `\n使わない場面: ${input.frame.avoidWhen}` : '')
       : null,
+    audienceGuide,
     `# 章立て（この順で9章すべて書く）\n${chapterBlock}`,
     input.instruction ? `# 担当者からの指示（最優先で反映する）\n${input.instruction}` : null,
     `# 出力\nwrite_proposal_outline ツールを1回だけ呼んで返すこと。`,

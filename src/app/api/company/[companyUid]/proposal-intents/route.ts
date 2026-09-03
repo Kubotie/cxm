@@ -15,7 +15,11 @@
 import { NextResponse } from 'next/server';
 import { loadReadinessFacts } from '@/lib/company/readiness-facts';
 import { fetchCompanySituations } from '@/lib/nocodb/company-situations';
-import { fetchWhatCatalog, EMPTY_CATALOG, type WhatCatalog } from '@/lib/notion/what-catalog';
+import { fetchStoredIndustryIntel } from '@/lib/nocodb/industry-intel-cache';
+import {
+  fetchWhatCatalog, EMPTY_CATALOG,
+  type WhatCatalog, type ProposalIntentEntry, type ContractPrecondition,
+} from '@/lib/notion/what-catalog';
 import { buildEvidenceGroups, situationIdsFromSelection, type EvidenceGroup } from '@/lib/company/proposal-inputs';
 import { matchWhat, applyNamingRule, type WhatMatchResult } from '@/lib/company/what-matching';
 import { proposalTypeFromKind, type ProposalType } from '@/lib/prompts/proposal-outline';
@@ -31,6 +35,23 @@ export type IntentFit =
   | 'recommended'  // 効く状況が一致している
   | 'possible'     // 一致する状況は無いが、妨げる状況も無い
   | 'not_advised'; // 逆効果になる状況が立っている
+
+/**
+ * 観測された状況が、**選んだ狙いにおいて**どういう意味を持つか。
+ * 同じシグナルでも狙いによって反転する。
+ * 例: `H1_Health_HighHabituation_60d`（習慣化）は
+ *   Bundle化 → tailwind（定着しているから次を足せる）
+ *   FDE伴走  → blocker（自走できているので伴走は要らないと返される）
+ */
+export type SignalRole = 'tailwind' | 'blocker' | 'prerequisite' | 'unrelated';
+
+export interface IntentSignal {
+  id:      string;
+  labelJa: string;
+  role:    SignalRole;
+  /** prerequisite のとき、実際に立っているか */
+  satisfied?: boolean;
+}
 
 export interface ProposalIntent {
   /** カタログ上の名称（骨子生成で送り返す鍵） */
@@ -61,6 +82,25 @@ export interface ProposalIntent {
   supporting: string[];
   /** 当てるときに語り口として使えるフレーム名 */
   frameName: string | null;
+
+  // ── B1（提案の狙い）由来 ──────────────────────────────────────────────
+  /** 契約前提。画面で「この契約だから出ている / 出ていない」を説明する */
+  contract: ContractPrecondition;
+  /** 契約前提を満たしているか。false のものはそもそも返さない */
+  contractOk: boolean;
+  /** 骨子に要る材料。利用活性化以外はほぼ業界情報が要る */
+  requiredInputs: string[];
+  /** 誰に語るか。部長・決裁者なら機能でなく組織と事業の話にする */
+  audiences: string[];
+  /** 組織の何を変えるか（骨子の Goal / Gap の素材） */
+  changeTarget: string;
+  /** その変化が何につながるか（決裁者向けの芯） */
+  businessImpact: string;
+  /**
+   * **観測された状況を、この狙いにおける役割で分類したもの。**
+   * 画面はこれを「追い風 / 先に解消 / 無関係」に並べ替える。
+   */
+  signals: IntentSignal[];
 }
 
 export interface ProposalIntentsResponse {
@@ -76,6 +116,10 @@ export interface ProposalIntentsResponse {
   /** 判定に使った状況ID */
   activeSignals: string[];
   situationLabels: Record<string, string>;
+  /** 契約プラン。狙いの絞り込みに使った値 */
+  contractPlan: 'insight' | 'experience' | 'bundle' | null;
+  /** 契約前提が合わないため出していない狙い。「なぜ出ないか」の答え */
+  hiddenByContract: Array<{ name: string; contract: ContractPrecondition }>;
   /** 逆効果で外したもの。「なぜ出てこないか」の答え */
   excluded: WhatMatchResult['excluded'];
   /** 事例0件による状況の追加。適用しなかった場合も理由を返す */
@@ -106,10 +150,12 @@ export async function GET(
   // Notion 側を直したのに反映されない、を避けるために明示的な取り直しを用意する。
   const refresh = new URL(req.url).searchParams.get('refreshCatalog') === '1';
 
-  const [facts, situations, catalog] = await Promise.all([
+  const [facts, situations, catalog, industry] = await Promise.all([
     loadReadinessFacts(companyUid),
     fetchCompanySituations(companyUid).catch(() => []),
     fetchWhatCatalog({ force: refresh }).catch(() => EMPTY_CATALOG),
+    // 業界名は週次バッチが保存済み。事例を業種で絞る第二の軸に使う
+    fetchStoredIndustryIntel(companyUid).catch(() => ({ intel: null })),
   ]);
 
   if (!facts) {
@@ -192,69 +238,110 @@ export async function GET(
     cases:     catalog.cases,
     playbooks: catalog.playbooks,
     activeSignals: match.activeSignals,
+    industryName: industry.intel?.industry ?? null,
   });
 
   // 補助WHATとフレームを主役に紐づける
   const supportingNames = match.supporting.map(s =>
     applyNamingRule({ name: s.name, namingRule: s.namingRule }).display);
 
-  // ── カード = 利用可の主役WHAT **全件**。絞り込まず順位付けで示す ─────────
-  // 一致したものだけを出すと「今できること」の全体が見えない。
-  // 実測では厳格マッチで3件しか残らず、FDE・利用活性化・AI Ready が
-  // 一覧から消えていた（効く状況が今回の状況と重ならないため）。
+  // ── カード = B1（提案の狙い）─────────────────────────────────────────
+  //
+  // **以前は B（提供できるもの）の主役WHAT をそのまま並べていた。**
+  // その結果、Bundle 契約の顧客に「Ptengine Insight」「Ptengine Experience」を
+  // "深化" として出していた（契約済みのものを提案していた）。
+  // 狙いは「契約状態 × 前進の方向」で決まるので、B1 を正本にする。
+  //
+  // 契約前提を満たさない狙いは**返さない**。順位を下げるだけでは、
+  // Bundle 契約の画面に「Bundle化」が残ってしまう。
   const active = new Set(activeSignals);
-  const matchedByName = new Map(match.primary.map(p => [p.name, p]));
+  const plan = facts.contractPlan;
 
-  const intents: ProposalIntent[] = catalog.solutions
-    .filter(s => s.role === '主役WHAT')
-    .map(s => {
-      const naming = applyNamingRule({ name: s.name, namingRule: s.namingRule });
-      const hitEff  = s.effectiveFor.filter(id => active.has(id));
-      const hitAnti = s.antiPatterns.filter(id => active.has(id));
-      const matched = matchedByName.get(s.name) ?? null;
-      const frame   = match.frames.find(f => f.targetWhat.includes(s.name)) ?? null;
+  const usable = catalog.intents.filter(i => contractSatisfied(i.contract, plan));
 
+  const intents: ProposalIntent[] = usable
+    .map(i => {
+      const hitEff  = i.effectiveFor.filter(id => active.has(id));
+      const hitAnti = i.antiPatterns.filter(id => active.has(id));
+      const missingPre = i.prerequisites.filter(id => !active.has(id));
+
+      // 逆効果が立っていれば非推奨。前提が欠けていれば「条件付き」に落とす。
       const fit: ProposalIntent['fit'] =
-        hitAnti.length > 0 ? 'not_advised'
-        : matched          ? 'recommended'
+        hitAnti.length > 0     ? 'not_advised'
+        : missingPre.length > 0 ? 'possible'
+        : hitEff.length > 0     ? 'recommended'
         : 'possible';
 
+      // **観測された状況を、この狙いにおける役割で分類する。**
+      // 同じシグナルが狙いによって追い風にも障害にもなる。
+      const signals: IntentSignal[] = activeSignals.map(id => {
+        const role: SignalRole =
+          i.antiPatterns.includes(id)  ? 'blocker'
+          : i.prerequisites.includes(id) ? 'prerequisite'
+          : i.effectiveFor.includes(id)  ? 'tailwind'
+          : 'unrelated';
+        return {
+          id, labelJa: labelOf(catalog, id), role,
+          ...(role === 'prerequisite' ? { satisfied: true } : {}),
+        };
+      });
+      // 立っていない前提条件も「まだ確認できていない」ものとして出す
+      for (const id of missingPre) {
+        signals.push({ id, labelJa: labelOf(catalog, id), role: 'prerequisite', satisfied: false });
+      }
+
+      const whatDisplays = i.whatNames.map(n => applyNamingRule({
+        name: n,
+        namingRule: catalog.solutions.find(x => x.name === n)?.namingRule ?? '',
+      }));
+
       return {
-        name: s.name,
-        displayName: naming.display,
-        nameSafe: naming.safe,
-        kind: s.kind,
-        proposalType: proposalTypeFromKind(s.kind),
-        valueLine: s.valueLine,
-        expectedEffect: s.expectedEffect,
+        name: i.name,
+        // 狙いの名称は社内語彙。対外呼称ルールは中で使う WHAT 側に付いている
+        displayName: i.name,
+        nameSafe: whatDisplays.every(d => d.safe),
+        kind: null,
+        proposalType: proposalTypeFromName(i.name),
+        valueLine: i.valueLine,
+        expectedEffect: i.businessImpact,
         fit,
-        relatedSituations: [...new Set([...s.effectiveFor, ...s.prerequisites, ...s.antiPatterns])],
+        relatedSituations: [...new Set([...i.effectiveFor, ...i.prerequisites, ...i.antiPatterns])],
         reasons:  hitEff.map(id => labelOf(catalog, id)),
-        cautions: hitAnti.map(id => labelOf(catalog, id)),
+        cautions: [
+          ...hitAnti.map(id => labelOf(catalog, id)),
+          ...missingPre.map(id => `前提が確認できていません: ${labelOf(catalog, id)}`),
+        ],
         matchedSituations: hitEff,
-        meetingRate: matched?.meetingRate ?? null,
-        supporting: s.mustPairWith.length > 0
-          ? s.mustPairWith.map(n => applyNamingRule({
-              name: n,
-              namingRule: catalog.solutions.find(x => x.name === n)?.namingRule ?? '',
-            }).display)
-          : supportingNames,
-        frameName: frame?.name ?? null,
+        meetingRate: null,
+        supporting: whatDisplays.map(d => d.display),
+        frameName: i.frameNames[0] ?? null,
+        contract: i.contract,
+        contractOk: true,
+        requiredInputs: i.requiredInputs,
+        audiences: i.audiences,
+        changeTarget: i.changeTarget,
+        businessImpact: i.businessImpact,
+        signals,
         // 並べ替え用（レスポンスには出さない）
-        _score: matched?.score ?? 0,
-        _spec:  s.effectiveFor.length,
+        _hit:   hitEff.length,
+        _order: i.order,
       };
     })
-    // おすすめ順: 一致あり（スコア降順 → 特化度）→ 妨げなし → 逆効果あり
+    // おすすめ順: 一致あり（一致数の多い順）→ 妨げなし → 逆効果あり。
+    // 同点は B1 の並び順（人が決めた既定の順）で固定する。
     .sort((a, b) => {
       const rank = (v: ProposalIntent['fit']) =>
         v === 'recommended' ? 0 : v === 'possible' ? 1 : 2;
       return rank(a.fit) - rank(b.fit)
-        || b._score - a._score
-        || a._spec - b._spec
-        || a.name.localeCompare(b.name);
+        || b._hit - a._hit
+        || a._order - b._order;
     })
-    .map(({ _score, _spec, ...rest }) => rest);
+    .map(({ _hit, _order, ...rest }) => rest);
+
+  /** 契約前提で外した狙い。「なぜ出ていないか」を画面に出すために返す */
+  const hiddenByContract = catalog.intents
+    .filter(i => !contractSatisfied(i.contract, plan))
+    .map(i => ({ name: i.name, contract: i.contract }));
 
   const body: ProposalIntentsResponse = {
     companyUid:  facts.companyUid,
@@ -265,6 +352,8 @@ export async function GET(
     situationLabels: Object.fromEntries(
       catalog.situations.filter(s => s.labelJa).map(s => [s.id, s.labelJa]),
     ),
+    contractPlan: plan,
+    hiddenByContract,
     excluded: match.excluded,
     noMatchingCase: match.noMatchingCase,
     unevaluated: facts.behavior.missing,
@@ -290,4 +379,31 @@ function daysUntil(dateStr: string | null): number | null {
   if (Number.isNaN(t)) return null;
   const days = Math.ceil((t - Date.now()) / 86400000);
   return days >= 0 ? days : null;
+}
+
+/**
+ * 契約前提を満たすか。
+ *
+ * **Bundle 契約に「Bundle化」を出さないための判定。**
+ * プランが読み取れない（null）ときは、契約に依存しない狙いだけ通す。
+ */
+function contractSatisfied(
+  required: ContractPrecondition,
+  plan: 'insight' | 'experience' | 'bundle' | null,
+): boolean {
+  switch (required) {
+    case 'any':             return true;
+    case 'contracted':      return plan !== null;
+    case 'insight_only':    return plan === 'insight';
+    case 'experience_only': return plan === 'experience';
+    case 'none':            return plan === null;
+  }
+}
+
+/**
+ * 狙いの名前から骨子の型を決める。
+ * FDE / PoC は伴走の比重が大きく、章8（Execution）の書き方が変わる。
+ */
+function proposalTypeFromName(name: string): ProposalType {
+  return /FDE|PoC/i.test(name) ? proposalTypeFromKind('支援メニュー') : proposalTypeFromKind('製品・機能');
 }
