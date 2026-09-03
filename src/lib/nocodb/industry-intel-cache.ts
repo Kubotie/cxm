@@ -108,3 +108,61 @@ export async function saveIndustryIntel(input: {
 function jstStamp(): string {
   return new Date(Date.now() + 9 * 3600_000).toISOString().replace('T', ' ').slice(0, 16);
 }
+
+// ── 一覧取得（ホーム画面用）──────────────────────────────────────────────────
+
+/**
+ * 保存済みの業界インテルを全社分読む。
+ *
+ * ホーム画面の「業界ニュース」は**週次バッチが保存したものだけ**を見る。
+ * ここで Web 検索に落ちると1社85秒かかるので、**絶対にフォールバックしない**。
+ * 取得できていない企業は「未取得」として件数で示す（黙って空にしない）。
+ */
+export async function fetchAllStoredIndustryIntel(
+  limit = 500,
+): Promise<Array<{
+  companyUid:   string;
+  companyName:  string | null;
+  industryName: string | null;
+  intel:        IndustryIntel | null;
+  error:        string | null;
+  fetchedAt:    string | null;
+  ageDays:      number | null;
+}>> {
+  const tableId = TABLE_IDS.industry_intel_cache;
+  if (!tableId) return [];
+
+  const rows = await nocoFetch<IndustryIntelRow>(tableId, {
+    sort:  '-updated_at_jst',
+    limit: String(Math.min(limit, 1000)),
+  }, false).catch(() => [] as IndustryIntelRow[]);
+
+  // 同じ company_uid が複数行あっても最新1行だけ使う（upsert 失敗時の重複対策）
+  const seen = new Set<string>();
+  const out: Array<ReturnType<typeof toEntry>> = [];
+  for (const r of rows) {
+    if (!r.company_uid || seen.has(r.company_uid)) continue;
+    seen.add(r.company_uid);
+    out.push(toEntry(r));
+  }
+  return out;
+}
+
+function toEntry(r: IndustryIntelRow) {
+  let intel: IndustryIntel | null = null;
+  if (r.intel_json) {
+    try { intel = JSON.parse(r.intel_json) as IndustryIntel; } catch { intel = null; }
+  }
+  const t = r.fetched_at_jst
+    ? new Date(r.fetched_at_jst.replace(' ', 'T') + ':00+09:00').getTime()
+    : NaN;
+  return {
+    companyUid:   r.company_uid,
+    companyName:  r.company_name ?? null,
+    industryName: r.industry_name ?? intel?.industry ?? null,
+    intel,
+    error:        r.error ?? null,
+    fetchedAt:    r.fetched_at_jst ?? null,
+    ageDays:      Number.isNaN(t) ? null : Math.floor((Date.now() - t) / 86400_000),
+  };
+}

@@ -15,7 +15,11 @@
 //   個社の材料からは業界全体の動きは分からないため、Web 検索で別途集める（industry-intel.ts）。
 //   コストがかかるので既定ではキャッシュのみ参照し、?industry=refresh で明示的に取得する。
 //
-// 生成結果は保存しない（都度生成）。保存が必要になったら company_summary_state 相当を足す。
+// **生成結果は company_profile_cache に保存し、既定では保存済みを返す。**
+//   1社30秒かかるため、都度生成では顧客情報タブを開くたびに30秒待たされていた。
+//   ?refresh=1        … 作り直して保存する（担当者が「更新」を押したとき）
+//   ?industry=refresh … 業界トレンドも取り直す（Web検索。さらに時間がかかる）
+//   週次バッチ /api/batch/company-profile-weekly が古い順に埋める。
 
 import { NextResponse } from 'next/server';
 import { fetchCompanyByUid } from '@/lib/nocodb/companies';
@@ -31,6 +35,7 @@ import {
 import {
   fetchStoredIndustryIntel, saveIndustryIntel,
 } from '@/lib/nocodb/industry-intel-cache';
+import { fetchStoredProfile, saveProfile } from '@/lib/nocodb/company-profile-cache';
 import { getAnthropicClient, getAnthropicModel } from '@/lib/anthropic/client';
 import { EXTERNAL_SIGNAL_META, type ExternalSignalItem } from '@/lib/company/external-signal';
 import {
@@ -42,7 +47,9 @@ import {
   type ProfileEvidence,
 } from '@/lib/prompts/company-profile';
 
-export const maxDuration = 120;
+// 生成は議事録8件の本文を読ませるため長い（ローカル実測 127秒 / 2026-08-24）。
+// 120秒では途中で切れるため上限（このプランの最大は300秒）まで上げる。
+export const maxDuration = 300;
 
 /** 議事録は新しいものから何件読むか（本文を渡すため多すぎない範囲で） */
 const MINUTES_LIMIT = 8;
@@ -91,6 +98,10 @@ export interface CompanyProfileResponse {
     };
   };
   generatedAt: string;
+  /** 保存済みを返したか。false = このリクエストで生成した */
+  fromCache: boolean;
+  /** 生成からの経過日数。fromCache のときだけ入る */
+  ageDays: number | null;
 }
 
 // ── 本体 ──────────────────────────────────────────────────────────────────────
@@ -100,10 +111,28 @@ export async function GET(
   { params }: { params: Promise<{ companyUid: string }> },
 ) {
   const { companyUid } = await params;
+  const sp = new URL(req.url).searchParams;
   // industry=refresh のときだけ業界トレンドを取りに行く（Web検索のコストがかかるため）
-  const refreshIndustry = new URL(req.url).searchParams.get('industry') === 'refresh';
+  const refreshIndustry = sp.get('industry') === 'refresh';
+  // refresh=1 / industry=refresh は作り直し。それ以外は保存済みを返す
+  const forceRegenerate = sp.get('refresh') === '1' || refreshIndustry;
   if (!companyUid) {
     return NextResponse.json({ error: 'companyUid が指定されていません' }, { status: 400 });
+  }
+
+  // ── 保存済みを返す（既定）──────────────────────────────────────────────
+  // 生成は1社30秒かかる。**開くたびに待たせない**ことを優先し、
+  // 古さは fromCache / ageDays で返して画面に出す（黙って古いものを出さない）。
+  if (!forceRegenerate) {
+    const cached = await fetchStoredProfile<CompanyProfileResponse>(companyUid)
+      .catch(() => ({ profile: null, generatedAt: null, ageDays: null }));
+    if (cached.profile) {
+      return NextResponse.json({
+        ...cached.profile,
+        fromCache: true,
+        ageDays:   cached.ageDays,
+      } satisfies CompanyProfileResponse);
+    }
   }
 
   const [company, projects, minutes, support, snapshot, signalMap, intel] = await Promise.all([
@@ -122,16 +151,12 @@ export async function GET(
 
   // ── 業界トレンド（市場・業界セクションの材料）────────────────────────────
   // 既定はキャッシュのみ。無ければ market セクションは空になる（個社材料から推測させない）
+  //
+  // ⚠️ ここは以前、保存済みを読んだ直後に `else` 側の
+  //    `getCachedIndustryIntel()` で**上書きして捨てていた**（2026-08-24 修正）。
+  //    週次バッチが集めた業界トレンドが画面に出ないまま「業界トレンドを調べる」が
+  //    表示され続ける状態だった。分岐を1本にまとめて再発しないようにする。
   let industry: IndustryIntel | null = null;
-  // 週次バッチで保存したものを先に読む。
-  // プロセス内キャッシュだけだと再起動で消え、開くたびに再検索していた。
-  if (!refreshIndustry) {
-    const stored = await fetchStoredIndustryIntel(companyUid).catch(
-      () => ({ intel: null, fetchedAt: null, ageDays: null }),
-    );
-    if (stored.intel) industry = stored.intel;
-  }
-
   if (refreshIndustry) {
     industry = await fetchIndustryIntel({
       companyName: company.name,
@@ -139,8 +164,15 @@ export async function GET(
       domain:      company.companyDomain,
       force:       true,
     }).catch(() => null);
+    if (industry) {
+      await saveIndustryIntel({ companyUid, companyName: company.name, intel: industry })
+        .catch(() => undefined);
+    }
   } else {
-    industry = getCachedIndustryIntel(company.name);
+    const stored = await fetchStoredIndustryIntel(companyUid).catch(
+      () => ({ intel: null, fetchedAt: null, ageDays: null }),
+    );
+    industry = stored.intel ?? getCachedIndustryIntel(company.name);
   }
 
   // ── 材料の組み立て（ID を振る）──────────────────────────────────────────
@@ -333,7 +365,22 @@ export async function GET(
       },
     },
     generatedAt: new Date().toISOString(),
+    fromCache: false,
+    ageDays:   0,
   };
+
+  // 保存に失敗しても生成物は返す（画面を空にしない）
+  await saveProfile({
+    companyUid,
+    companyName:   company.name,
+    profile:       body,
+    headline:      body.headline,
+    bulletCount:   sections.reduce((n, s) => n + s.bullets.length, 0),
+    evidenceCount: evidences.length,
+    unknownCount:  body.unknowns.length,
+    industryName:  body.industry.name,
+    trendCount:    body.industry.trendCount,
+  }).catch(() => undefined);
 
   return NextResponse.json(body);
 }
