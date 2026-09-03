@@ -18,7 +18,7 @@ import {
   type AiPanelPrefs,
 } from "@/lib/prefs/ai-panel";
 import { usePathname } from "next/navigation";
-import ReactMarkdown from "react-markdown";
+import { AiMarkdown, CopyButton } from "./ai-markdown";
 import {
   Sparkles, X, Send, History, Plus, Trash2, Pencil, Check, Loader2,
   Database, ChevronDown, ChevronRight, AlertCircle, MessageSquare, GripVertical,
@@ -110,14 +110,16 @@ function MessageBubble({ message }: { message: AiChatMessage }) {
     );
   }
   return (
-    <div>
-      <div className="prose prose-sm prose-slate max-w-none text-[12.5px]
-        prose-headings:text-[13px] prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
-        prose-p:my-1.5 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5
-        prose-table:text-[11px] prose-code:text-[11px] prose-pre:text-[11px]">
-        <ReactMarkdown>{message.content}</ReactMarkdown>
-      </div>
+    // group: 普段は隠しておき、ホバー/フォーカス時にコピーを出す。
+    // 回答ごとに常時ボタンがあると、本文より操作系が目立ってしまう。
+    <div className="group">
+      <AiMarkdown>{message.content}</AiMarkdown>
       {message.toolCalls && <ToolCallList calls={message.toolCalls} />}
+      <div className="mt-0.5 flex opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+        {/* コピーするのは表示中の HTML ではなく Markdown 原文。
+            Slack や Notion に貼ったときに表・見出しがそのまま復元される */}
+        <CopyButton getText={() => message.content} label="回答をコピー" />
+      </div>
     </div>
   );
 }
@@ -611,6 +613,15 @@ export function AiSidePanel({ open, setOpen, width, setWidth, disabled }: AiSide
         <div className="flex items-center gap-1.5">
           <Sparkles className="h-4 w-4 flex-none text-blue-600" />
           <span className="flex-1 text-[12.5px] font-semibold text-slate-900">ページアシスタント</span>
+          {messages.length > 0 && view === "chat" && (
+            <CopyButton
+              label=""
+              className="!px-1.5"
+              getText={() => messages
+                .map(m => `${m.role === "user" ? "## 質問" : "## 回答"}\n\n${m.content}`)
+                .join("\n\n---\n\n")}
+            />
+          )}
           <button
             onClick={newChat}
             title="新しいチャット"
@@ -739,11 +750,7 @@ export function AiSidePanel({ open, setOpen, width, setWidth, disabled }: AiSide
                 )}
 
                 {streamText ? (
-                  <div className="prose prose-sm prose-slate max-w-none text-[12.5px]
-                    prose-headings:text-[13px] prose-headings:font-semibold prose-p:my-1.5
-                    prose-ul:my-1.5 prose-li:my-0.5 prose-table:text-[11px]">
-                    <ReactMarkdown>{streamText}</ReactMarkdown>
-                  </div>
+                  <AiMarkdown>{streamText}</AiMarkdown>
                 ) : liveTools.length === 0 && (!thinking || !prefs.showThinking) ? (
                   <div className="flex items-center gap-2 text-[11.5px] text-slate-500">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" /> 考えています…

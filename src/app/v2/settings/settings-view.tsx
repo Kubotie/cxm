@@ -314,10 +314,16 @@ export function SettingsView() {
   }
 
   // ── AI パネルへの申告 ──────────────────────────────────────────────────────
+  // ── AI パネルへの申告 ──────────────────────────────────────────────────────
+  //
+  // **値だけを渡してはいけない画面。** 設定値はフィールド名から意味を推測できず、
+  // 実際に AI が retentionDays: 0 を「保持しない」と誤読した（正しくは無期限）。
+  // 各項目に「この値が何を意味するか」と「実際に配線されているか」を添える。
   useRegisterAiPageContext({
     pageId: "v2-settings",
     title: "設定",
-    description: "ログイン中ユーザーの表示スコープ・重点領域を設定する画面。",
+    description:
+      "ログイン中ユーザー自身の表示スコープ・重点領域と、AI アシスタントの挙動を設定する画面。",
     snapshot: {
       ユーザー: profile ? { 表示名: profile.name, ID: profile.name2, ロール: profile.role } : null,
       表示スコープ: scope,
@@ -327,9 +333,38 @@ export function SettingsView() {
       使用モデル: srvPrefs?.model || defaultModel,
       チャット履歴件数: threadCount,
     },
-    hints: { 読込中: loading },
+    hints: {
+      読込中: loading,
+      // 値の意味。フィールド名からの推測を禁じるための正本
+      各設定の意味: {
+        "AI回答設定.retentionDays":
+          "チャット履歴の保持日数。**0 は無期限（消さない）**。30/90/180/365 を選ぶとその日数を過ぎたスレッドが一覧取得時に削除される",
+        "AI回答設定.instructions":
+          "回答スタイル・常用の前提。空でなければシステムプロンプト末尾に「利用者の指示」として毎回付与される（上限600文字）",
+        "AI回答設定.model":
+          "使用モデル。空文字なら環境変数 ANTHROPIC_MODEL の既定値が使われる",
+        "AIパネル設定.openOnLoad":  "画面を開いた時にパネルを自動で開くか",
+        "AIパネル設定.historyScope": "履歴一覧の初期スコープ（page=この画面のみ / all=すべて）",
+        "AIパネル設定.showThinking": "生成中に思考テキストを表示するか",
+        "表示スコープ": "一覧に出す企業の範囲（mine/team/all）",
+        "重点領域": "AI が優先する観点として選ぶタグ",
+      },
+      // 「値が空だから効かない」のか「そもそも読む側が無い」のかを区別させる
+      配線状況: {
+        実際に効いている: [
+          "AI回答設定.instructions（空でなければ付与）",
+          "AI回答設定.model",
+          "AI回答設定.retentionDays（1以上のとき履歴を削除）",
+          "AIパネル設定.openOnLoad / historyScope / showThinking",
+        ],
+        保存されるだけで未接続: [
+          "重点領域（focus_areas）— 保存はされるが、現状これを読む画面・AI 処理は存在しない",
+          "表示スコープ — 反映先は旧 UI の一覧（Home / Companies / Outbound）のみ。v2 の各画面には未接続",
+        ],
+      },
+    },
     sources: [
-      { label: "ユーザープロファイル", endpoint: "/api/user/profile", description: "staff_identify の自分の行" },
+      { label: "ユーザープロファイル", endpoint: "/api/user/profile", description: "staff_identify の自分の行（表示スコープ・重点領域の保存先）" },
     ],
   });
 

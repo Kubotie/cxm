@@ -351,7 +351,7 @@ function Row({ r }: { r: ProjectModuleRow }) {
         </Link>
         <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-x-2">
           {r.companyUid ? (
-            <Link href={`/v2/companies/${r.companyUid}`} className="text-blue-700 hover:underline inline-flex items-center gap-0.5">
+            <Link href={`/v2/companies/${r.companyUid}?from=projects`} className="text-blue-700 hover:underline inline-flex items-center gap-0.5">
               {r.companyName}<ExternalLink className="w-2.5 h-2.5" />
             </Link>
           ) : (

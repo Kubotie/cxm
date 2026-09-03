@@ -178,3 +178,25 @@
     line-height: 1.5;
   }
 }
+
+/* ─── AI パネル内の横スクロール領域 ────────────────────────────────────────────
+   表やコードブロックは、パネル本体ではなく自分の中で横スクロールさせている。
+   ただし macOS のオーバーレイスクロールバーは静止時に消えるため、
+   「まだ右に続きがある」ことに気づけない。細いバーを常時表示して手がかりにする。 */
+.ai-scrollbox {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-slate-300, #cbd5e1) transparent;
+}
+.ai-scrollbox::-webkit-scrollbar {
+  height: 8px;
+}
+.ai-scrollbox::-webkit-scrollbar-track {
+  background: transparent;
+}
+.ai-scrollbox::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 4px;
+}
+.ai-scrollbox::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8;
+}

@@ -143,7 +143,7 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
             </div>
             <div className="text-[11.5px] text-slate-500 mt-1 flex flex-wrap items-center gap-x-3">
               {data.companyUid ? (
-                <Link href={`/v2/companies/${data.companyUid}`} className="text-blue-700 hover:underline inline-flex items-center gap-0.5">
+                <Link href={`/v2/companies/${data.companyUid}?from=projects`} className="text-blue-700 hover:underline inline-flex items-center gap-0.5">
                   {data.companyName}<ExternalLink className="w-3 h-3" />
                 </Link>
               ) : (

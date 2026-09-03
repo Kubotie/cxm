@@ -396,14 +396,14 @@ export function Tier3DashboardView() {
                         {i + 1}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <Link href={`/v2/companies/${it.companyUid}`} className="block text-[12.5px] font-bold text-slate-900 truncate hover:text-blue-600 hover:underline">
+                        <Link href={`/v2/companies/${it.companyUid}?from=tier3`} className="block text-[12.5px] font-bold text-slate-900 truncate hover:text-blue-600 hover:underline">
                           {it.canonicalName}
                         </Link>
                         <div className="text-[10.5px] text-slate-500 mt-0.5">{it.primaryReason}</div>
                         <div className="flex items-center gap-2 mt-1.5">
                           <SeverityChip severity={it.severity} />
                           <span className="ml-auto text-[11px] font-semibold text-slate-400 tabular-nums">{formatMrr(it.mrr)}</span>
-                          <Link href={`/v2/companies/${it.companyUid}`} className="flex-none inline-flex items-center gap-0.5 text-[11px] font-bold text-blue-600 hover:underline">
+                          <Link href={`/v2/companies/${it.companyUid}?from=tier3`} className="flex-none inline-flex items-center gap-0.5 text-[11px] font-bold text-blue-600 hover:underline">
                             対応 <ArrowUpRight className="w-3 h-3" />
                           </Link>
                         </div>
@@ -515,7 +515,7 @@ export function Tier3DashboardView() {
                       <tr key={it.companyUid} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
                         <td className="px-3.5 py-2.5">
                           <div className="flex flex-col gap-0.5">
-                            <Link href={`/v2/companies/${it.companyUid}`} className="font-bold text-[12.5px] text-slate-900 hover:text-blue-600 hover:underline">
+                            <Link href={`/v2/companies/${it.companyUid}?from=tier3`} className="font-bold text-[12.5px] text-slate-900 hover:text-blue-600 hover:underline">
                               {it.canonicalName}
                             </Link>
                             <span className="text-[10.5px] text-slate-400">{it.owner === "—" ? "担当なし" : it.owner}</span>
@@ -540,7 +540,7 @@ export function Tier3DashboardView() {
                         </td>
                         <td className="px-3.5 py-2.5"><SeverityChip severity={it.severity} /></td>
                         <td className="px-3.5 py-2.5 text-right">
-                          <Link href={`/v2/companies/${it.companyUid}`} className="inline-flex items-center gap-0.5 text-[11px] font-bold text-blue-600 hover:underline">
+                          <Link href={`/v2/companies/${it.companyUid}?from=tier3`} className="inline-flex items-center gap-0.5 text-[11px] font-bold text-blue-600 hover:underline">
                             対応 <ArrowUpRight className="w-3 h-3" />
                           </Link>
                         </td>

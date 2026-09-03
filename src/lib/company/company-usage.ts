@@ -12,7 +12,7 @@ import { fetchCompanyByUid } from '@/lib/nocodb/companies';
 import { fetchProjectsByCompany } from '@/lib/nocodb/project-info';
 import { fetchLatestSnapshot, nDaysAgoDateStr } from '@/lib/nocodb/company-snapshot';
 import { fetchProjectSnapshotsByDate } from '@/lib/nocodb/project-user-snapshots';
-import { fetchProjectModuleMap, type ProjectModuleData } from '@/lib/metabase/project-modules';
+import { loadProjectFacts, type ProjectFacts } from '@/lib/company/project-facts';
 import { fetchProjectMetrics, type ProjectMetricRow } from '@/lib/nocodb/project-metrics';
 import { pvPeriodStatus } from '@/lib/company/proposal-readiness';
 import { buildModuleSignal, type ModuleSignalVM } from '@/lib/company/module-signals';
@@ -197,12 +197,26 @@ export async function loadCompanyUsage(companyUid: string): Promise<CompanyUsage
   const company = await fetchCompanyByUid(companyUid).catch(() => null);
   if (!company) return null;
 
-  const [projects, snapshot, silentSnapshot, moduleMap] = await Promise.all([
+  const [projects, snapshot, silentSnapshot] = await Promise.all([
     fetchProjectsByCompany(companyUid).catch(() => []),
     fetchLatestSnapshot(companyUid).catch(() => null),
     fetchLatestChronicSilentSnapshot('JP').catch(() => null),
-    fetchProjectModuleMap().catch(() => new Map<string, ProjectModuleData>()),
   ]);
+
+  // ── モジュール利用は事前計算（project_metrics）から読む ────────────────────
+  //   以前は `fetchProjectModuleMap()` で **モジュールCSVを毎回全件DL**していた。
+  //   実測（2026-08-24 / 本番）: コールド **31.7秒**、ウォーム1.1秒。
+  //   個社ページの初期表示はこの API を待つので、朝いちばんに開いた人が31秒待つ。
+  //   ボードと同じ `loadProjectFacts()`（事前計算優先・カバー率が落ちたらCSV）に統一する。
+  //
+  // ⚠️ **有料PJだけを渡すこと。** `loadProjectFacts` は事前計算のカバー率が
+  //    50%を切ると「バッチが動いていない」と判断して CSV に落ちる。
+  //    無料PJは事前計算の対象外なので、全PJを渡すと（有料1・無料3のような会社で）
+  //    カバー率が 0.25 になり、**毎回 CSV を引いていた**（実測 24秒 / 2026-08-24）。
+  const paidIds = projects.filter(p => (p.paidType ?? '').toUpperCase().includes('PAID')).map(p => p.id);
+  const facts = await loadProjectFacts(paidIds).catch(
+    () => ({ map: new Map<string, ProjectFacts>() } as { map: Map<string, ProjectFacts> }),
+  );
 
   // 朝のバッチ（project_metrics）で埋められる欠損を先に取る。
   // 日次スナップショットは pv_ceiling / last_active_date / 集計期間 を持たないため、
@@ -276,9 +290,11 @@ export async function loadCompanyUsage(companyUid: string): Promise<CompanyUsage
       breadthScore:  p.breadthScore,
       habituation:   p.habituationStatus,
       lastActive:    sd?.lastActiveDate ?? act?.maxLastActiveDate ?? m?.last_active_date ?? null,
-      moduleSignal:  buildModuleSignal({
+      // 事前計算にある（＝有料）PJはそれを使う。無料PJは行が無いのが正常なので、
+      // CSV を引かずに data:null で判定する（L30=0 なら休眠になる）。
+      moduleSignal:  facts.map.get(p.id)?.module ?? buildModuleSignal({
         paidType:  p.paidType,
-        data:      moduleMap.get(p.id) ?? null,
+        data:      null,
         l30Active: p.l30Active ?? sd?.l30Active ?? null,
       }),
     };

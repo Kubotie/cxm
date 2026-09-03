@@ -484,7 +484,7 @@ function CompanyCard({ item, accent, bar }: { item: BoardItem; accent: string; b
   const u = item.usage;
 
   return (
-    <Link href={`/v2/companies/${item.companyUid}`}
+    <Link href={`/v2/companies/${item.companyUid}?from=readiness`}
       className={`group block rounded-[10px] border border-slate-200 border-l-4 ${accent} bg-white
         shadow-[0_1px_2px_rgba(15,23,42,.06)] hover:shadow-[0_2px_8px_rgba(15,23,42,.10)] hover:border-slate-300 transition`}>
       <div className="px-4 py-3.5">

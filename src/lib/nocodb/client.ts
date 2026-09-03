@@ -98,6 +98,8 @@ export const TABLE_IDS = {
   proposal_outlines:           process.env.NOCODB_PROPOSAL_OUTLINES_TABLE_ID         ?? '',
   project_metrics:             process.env.NOCODB_PROJECT_METRICS_TABLE_ID           ?? '',
   industry_intel_cache:        process.env.NOCODB_INDUSTRY_INTEL_TABLE_ID            ?? '',
+  company_profile_cache:       process.env.NOCODB_COMPANY_PROFILE_TABLE_ID           ?? '',
+  company_campaign_org:        process.env.NOCODB_CAMPAIGN_ORG_TABLE_ID              ?? '',
 };
 
 export interface NocoDBResponse<T> {
