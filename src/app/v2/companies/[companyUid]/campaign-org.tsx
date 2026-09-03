@@ -4,15 +4,17 @@
 //
 // 「この会社で誰が何をしているか」を施策名と作成者の時系列から読む。
 //
-// 明細は13.8MBあるので**ボタンを押したときだけ**取得する。
-// 開くだけで走らせると、顧客情報タブが毎回5秒待たされる。
+// 明細は13.8MB（本番コールドで28.8秒）。以前は「押したときだけ」取得していたが、
+// **日次バッチ（cxm_campaign_org）が毎朝まとめて作る**ようにしたので、
+// 画面は開いたときに保存済みを読むだけでよくなった（2026-08-24）。
+// 保存済みが無い企業だけ、その場で明細から作る導線を残す。
 //
 // 読み違いを防ぐため、画面に必ず出すもの:
 //   - 無題を除いた件数（24%は無題）
 //   - 削除の内訳（DELETEDの70%は一度も公開されていない）
 //   - このデータで答えられないこと（停止時刻・成果が無い）
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Loader2, AlertCircle, Users, Sparkles, ChevronDown, Info,
   UserPlus, UserMinus, Clock,
@@ -47,10 +49,10 @@ export function CampaignOrgSection({ companyUid }: { companyUid: string }) {
   const [showAll, setShowAll] = useState(false);
   const [showLimits, setShowLimits] = useState(false);
 
-  async function load() {
+  async function load(refresh = false) {
     setLoading(true); setError(null);
     try {
-      const r = await fetch(`/api/company/${companyUid}/campaigns`);
+      const r = await fetch(`/api/company/${companyUid}/campaigns${refresh ? "?refresh=1" : ""}`);
       const j = await r.json();
       if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
       setData(j as CompanyCampaignsResponse);
@@ -61,6 +63,24 @@ export function CampaignOrgSection({ companyUid }: { companyUid: string }) {
     }
   }
 
+  // 保存済みを読むだけなので、開いたときに自動で取りに行く。
+  // 事前計算が無い企業でも、このリクエストは即座に「無い」と返って
+  // その場計算の導線に切り替わる（明細のDLは refresh のときだけ）。
+  useEffect(() => {
+    let alive = true;
+    setLoading(true); setError(null);
+    fetch(`/api/company/${companyUid}/campaigns`)
+      .then(async r => {
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+        return j as CompanyCampaignsResponse;
+      })
+      .then(j => { if (alive) setData(j); })
+      .catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [companyUid]);
+
   if (!data) {
     return (
       <Card className="px-5 py-4">
@@ -68,24 +88,29 @@ export function CampaignOrgSection({ companyUid }: { companyUid: string }) {
           <Users className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
           <div className="min-w-0">
             <h3 className="text-[13px] font-bold text-slate-900">施策から読む組織の動き</h3>
-            <p className="text-[11.5px] text-slate-500 mt-1 leading-relaxed">
-              施策名と作成者の時系列から、どの部署が何を狙っているか・誰が動いているかを読みます。
-              明細データが大きいため、押したときだけ取得します（初回は5秒ほど）。
-            </p>
-            {error && (
-              <div className="flex items-center gap-1.5 text-[12px] text-red-600 mt-2">
-                <AlertCircle className="w-4 h-4" />{error}
-              </div>
+            {loading ? (
+              <p className="flex items-center gap-1.5 text-[12px] text-slate-400 mt-1.5">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />読み込んでいます…
+              </p>
+            ) : (
+              <>
+                <p className="text-[11.5px] text-slate-500 mt-1 leading-relaxed">
+                  この企業の事前計算がまだありません（毎朝のバッチが作ります）。
+                  今すぐ見る場合は明細を取りに行きます（30秒ほどかかります）。
+                </p>
+                {error && (
+                  <div className="flex items-center gap-1.5 text-[12px] text-red-600 mt-2">
+                    <AlertCircle className="w-4 h-4" />{error}
+                  </div>
+                )}
+                <button
+                  onClick={() => load(true)}
+                  className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[7px] bg-slate-900 text-white text-[12px] font-bold hover:bg-slate-700"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />今すぐ読み込む
+                </button>
+              </>
             )}
-            <button
-              onClick={load}
-              disabled={loading}
-              className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[7px] bg-slate-900 text-white text-[12px] font-bold hover:bg-slate-700 disabled:opacity-50"
-            >
-              {loading
-                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />読み込んでいます…</>
-                : <><Sparkles className="w-3.5 h-3.5" />施策の動きを読む</>}
-            </button>
           </div>
         </div>
       </Card>
@@ -108,7 +133,11 @@ export function CampaignOrgSection({ companyUid }: { companyUid: string }) {
         <span className="text-[11px] text-slate-400 tabular-nums">
           施策 {org.total.toLocaleString("ja-JP")}件（名前あり {org.named.toLocaleString("ja-JP")}）
         </span>
-        <button onClick={load} disabled={loading}
+        {data.computedAt && (
+          <span className="text-[10.5px] text-slate-400">{data.computedAt} 時点</span>
+        )}
+        <button onClick={() => load(true)} disabled={loading}
+          title="明細を取り直して作り直します（30秒ほど）"
           className="ml-auto text-[11px] text-slate-500 hover:text-slate-900 underline decoration-dotted disabled:opacity-50">
           {loading ? "更新中…" : "更新"}
         </button>
@@ -119,6 +148,49 @@ export function CampaignOrgSection({ companyUid }: { companyUid: string }) {
         <p className="mt-2.5 text-[13px] text-slate-900 leading-relaxed border-l-[3px] border-slate-900 pl-3">
           {org.summaries.headline}
         </p>
+      )}
+
+      {/* **方針の変化。** 件数の説明ではなく「どこへ向かっているか」を先に置く */}
+      {org.summaries.direction && (
+        <div className="mt-2.5 rounded-[8px] bg-slate-50 border border-slate-150 px-3 py-2.5">
+          <div className="flex items-center gap-1.5">
+            <h4 className="text-[11.5px] font-bold text-slate-700">直近90日でどう変わったか</h4>
+            <InfoTip text="直近90日と、その前の90日を突き合わせています。施策名のテーマ・作る量・公開に至った割合・ABテストの比率の差分です。なぜそうしたかの解釈はしていません。" />
+          </div>
+          <p className="text-[12.5px] text-slate-800 leading-relaxed mt-1">
+            {org.summaries.direction}
+          </p>
+
+          {/* 差分の数字。文章の裏づけ */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-slate-500 tabular-nums">
+            <span>作成 {org.direction.created.prev} → <span className="font-bold text-slate-700">{org.direction.created.recent}</span></span>
+            <span>公開 {org.direction.launched.prev} → <span className="font-bold text-slate-700">{org.direction.launched.recent}</span></span>
+            {org.direction.launchRate.recent !== null && (
+              <span>公開到達率 {org.direction.launchRate.prev ?? "—"}% → <span className="font-bold text-slate-700">{org.direction.launchRate.recent}%</span></span>
+            )}
+            {org.direction.abShare.recent !== null && (
+              <span>AB比率 {org.direction.abShare.prev ?? "—"}% → <span className="font-bold text-slate-700">{org.direction.abShare.recent}%</span></span>
+            )}
+          </div>
+
+          {/* テーマの入れ替わり */}
+          {(org.direction.emerging.length > 0 || org.direction.faded.length > 0) && (
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              {org.direction.emerging.map(t => (
+                <span key={`e-${t.word}`} className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700"
+                  title={`今期に入ったテーマ（${t.recent}本）`}>
+                  ＋{t.word}
+                </span>
+              ))}
+              {org.direction.faded.map(t => (
+                <span key={`f-${t.word}`} className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 line-through"
+                  title={`前期にあって今期は出ていない（通算${t.count}本）`}>
+                  {t.word}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {/* 内訳（数字の裏づけ） */}

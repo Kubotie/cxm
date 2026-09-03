@@ -19,7 +19,7 @@
 //   operators 等  アカウント別稼働
 //   生指標        l30/l7/PV/期間/最終活動（CSVを引かずに済ませるため）
 
-import { TABLE_IDS, nocoFetch } from '@/lib/nocodb/client';
+import { TABLE_IDS, nocoFetch, nocoCount } from '@/lib/nocodb/client';
 import { nocoCreate, nocoUpdate } from '@/lib/nocodb/write';
 
 export interface ProjectMetricRow {
@@ -181,4 +181,48 @@ export function isFresh(row: ProjectMetricRow | undefined): boolean {
   if (!row?.metric_date) return false;
   const y = new Date(Date.now() + 9 * 3600_000 - 86400_000).toISOString().slice(0, 10);
   return row.metric_date >= y;
+}
+
+// ── バッチ稼働状況（ホーム画面用）──────────────────────────────────────────
+
+export interface MetricsBatchStatus {
+  /** 最新の集計日（YYYY-MM-DD） */
+  latestDate:  string | null;
+  /** 最新行の集計時刻（JST） */
+  computedAt:  string | null;
+  /** 最新集計日の行数 = 対象プロジェクト数 */
+  rowCount:    number;
+  /** 今日の分が入っているか */
+  isToday:     boolean;
+}
+
+/**
+ * 日次バッチ（cxm_project_metrics）が最後にいつ何件書いたかを返す。
+ *
+ * ホームで「今見ているデータがいつのものか」を出すために使う。
+ * 画面が黙って昨日のデータを出していると、朝バッチが落ちた日に気づけない。
+ */
+export async function fetchMetricsBatchStatus(): Promise<MetricsBatchStatus> {
+  const tableId = TABLE_IDS.project_metrics;
+  const empty: MetricsBatchStatus = { latestDate: null, computedAt: null, rowCount: 0, isToday: false };
+  if (!tableId) return empty;
+
+  const rows = await nocoFetch<ProjectMetricRow>(tableId, {
+    sort:   '-metric_date',
+    fields: 'metric_date,computed_at_jst',
+    limit:  '1',
+  }, false).catch(() => [] as ProjectMetricRow[]);
+
+  const latestDate = rows[0]?.metric_date ?? null;
+  if (!latestDate) return empty;
+
+  const rowCount = await nocoCount(tableId, { where: `(metric_date,eq,${latestDate})` })
+    .catch(() => -1);
+
+  return {
+    latestDate,
+    computedAt: rows[0]?.computed_at_jst ?? null,
+    rowCount:   rowCount < 0 ? 0 : rowCount,
+    isToday:    latestDate === jstDate(),
+  };
 }
