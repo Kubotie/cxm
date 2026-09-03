@@ -13,3 +13,13 @@ coverage/
 .vercel/
 .vercel
 .env*.local
+
+# 社内MCP（サイズ大・秘密情報を含む）
+ptengine-analytics-mcp/
+# 実顧客データを含む検証物（共有範囲に注意）
+docs-src/cxm_v2/samples/
+# 一時検証スクリプト
+w.mts
+
+# 圧縮した配布物（中身はリポジトリにあるものと同じ）
+*.zip
