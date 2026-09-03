@@ -26,7 +26,8 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   // ── メインナビ ──
-  { title: 'Home',       icon: Home,            href: '/' },
+  // `/` は v2 ホームへリダイレクトするようになったため、旧ホームは /legacy を指す
+  { title: 'Home',       icon: Home,            href: '/legacy' },
   { title: 'Companies',  icon: Building2,        href: '/companies' },
   { title: 'Tier 3',     icon: Layers,           href: '/console/tier3' },
   { title: '解約分析',   icon: TrendingDown,     href: '/console/churn-analysis' },

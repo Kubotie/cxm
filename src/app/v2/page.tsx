@@ -1,9 +1,11 @@
-// ─── /v2 → 提案準備ボードへ ───────────────────────────────────────────────────
-//   v2 の入口は「誰に提案できるか」を決める画面に集約する。
-//   機能しないホーム画面を置かない（動線に乗らないものは運用されない）。
+// ─── /v2 → ホーム ────────────────────────────────────────────────────────────
+//   ログイン直後の着地点。「今日どこから手をつけるか」を決める画面。
+//   個社の精査は提案準備ボード（/v2/readiness）から先へ進む。
 
-import { redirect } from "next/navigation";
+import { V2HomeView } from "./home-view";
+
+export const metadata = { title: "ホーム | CXM" };
 
 export default function V2HomePage() {
-  redirect("/v2/readiness");
+  return <V2HomeView />;
 }

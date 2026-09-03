@@ -7,8 +7,9 @@
 // 動線からは外して下部の「アーカイブ」に畳んでおく。
 // 参照: docs-src/cxm_v2/17_WHO_WHAT_Matching_Plan.md §10（動線に乗らないものは運用されない）
 //
-// 主動線は2階層のみ:
-//   提案準備ボード（誰に提案できるか）→ 個社ページ（その顧客をどう進めるか）
+// 主動線:
+//   ホーム（今日どこから手をつけるか）
+//     → 提案準備ボード（誰に提案できるか）→ 個社ページ（その顧客をどう進めるか）
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -16,13 +17,14 @@ import { useState } from "react";
 import {
   Target, Layers, ChevronRight, Archive, ArrowLeftRight, Settings,
   Building2, ArrowLeft,
-  BarChart3,
+  BarChart3, House,
 } from "lucide-react";
 
 interface NavItem { title: string; icon: React.ElementType; href: string; note?: string; }
 
 /** 主動線（実データで動く画面のみ） */
 const NAV: NavItem[] = [
+  { title: "ホーム",         icon: House,       href: "/v2" },
   { title: "提案準備ボード", icon: Target,      href: "/v2/readiness", note: "Tier 1–3" },
   { title: "プロジェクト分析", icon: BarChart3, href: "/v2/projects",  note: "30日" },
   { title: "Tier 3 管理",   icon: Layers,      href: "/v2/tier3" },
@@ -33,7 +35,7 @@ const NAV: NavItem[] = [
  * 画面もコンポーネントも消していないので、必要になったらここから開ける。
  */
 const ARCHIVE: { title: string; href: string }[] = [
-  { title: "Home（旧）",        href: "/" },
+  { title: "Home（旧）",        href: "/legacy" },
   { title: "Companies（旧）",   href: "/companies" },
   { title: "解約分析",          href: "/console/churn-analysis" },
   { title: "Actions",           href: "/actions" },
@@ -58,6 +60,8 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
   const onCompanyPage = pathname.startsWith("/v2/companies/");
 
   const isActive = (href: string) => {
+    // ホームは完全一致のみ。前方一致にすると /v2 配下の全画面で光る
+    if (href === "/v2") return pathname === "/v2";
     if (href === "/v2/readiness") {
       return pathname === href || pathname.startsWith(href + "/") || onCompanyPage;
     }

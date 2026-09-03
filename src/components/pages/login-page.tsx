@@ -24,7 +24,7 @@ export function LoginPage() {
         body:    JSON.stringify({ email, password }),
       });
       if (res.ok) {
-        router.push("/");
+        router.push("/v2");
         router.refresh();
       } else {
         const body = await res.json().catch(() => ({})) as { error?: string };
