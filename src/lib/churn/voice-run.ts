@@ -171,6 +171,9 @@ export async function runChurnVoice(opts: {
 
   if (targets.length === 0) {
     result.durationMs = Date.now() - startedAt;
+    console.log(
+      `[churn-voice] 未処理なし（対象${docs.length}件はすべて抽出済み）duration=${result.durationMs}ms`,
+    );
     return result;
   }
 
@@ -226,9 +229,12 @@ export async function runChurnVoice(opts: {
   }
 
   result.durationMs = Date.now() - startedAt;
+  // remaining はバックグラウンド実行だとレスポンスで返らない。
+  // 「あと何回叩けば行き渡るか」はログでしか分からないので必ず出す。
   console.log(
     `[churn-voice] 完了 docs=${result.scannedDocs} extracted=${result.extracted} ` +
-    `skipped=${result.skippedExisting} failed=${result.failed} duration=${result.durationMs}ms`,
+    `skipped=${result.skippedExisting} failed=${result.failed} ` +
+    `remaining=${result.remaining} duration=${result.durationMs}ms`,
   );
   return result;
 }
