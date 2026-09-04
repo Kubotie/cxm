@@ -320,12 +320,24 @@ export default function DrillView({ companyUid }: { companyUid: string }) {
               議事録・問い合わせから抽出。採用するまでスコアには入らない
             </span>
             <span className="ml-auto font-mono text-[11px] text-slate-400">
-              レビュー待ち {data.voices.filter(v => v.reviewStatus === "pending").length}
+              要レビュー {data.voices.filter(v => v.reviewStatus === "pending" && v.priority === "required").length}
             </span>
           </div>
-          {data.voices.map(v => (
+          {/* 契約・競合に直接触れるものと高確信度だけを上に出す。
+              週20件のレビューは続かないので、残りは下に畳む */}
+          {data.voices.filter(v => v.priority === "required").map(v => (
             <VoiceRow key={v.voiceId} v={v} busy={busyVoice === v.voiceId} onReview={reviewVoice} />
           ))}
+          {data.voices.some(v => v.priority === "reference") && (
+            <details className="border-t border-slate-100">
+              <summary className="px-3.5 py-2 text-[11px] text-slate-500 cursor-pointer hover:text-slate-900">
+                参考（レビュー不要）{data.voices.filter(v => v.priority === "reference").length}件
+              </summary>
+              {data.voices.filter(v => v.priority === "reference").map(v => (
+                <VoiceRow key={v.voiceId} v={v} busy={busyVoice === v.voiceId} onReview={reviewVoice} />
+              ))}
+            </details>
+          )}
         </section>
       )}
 
@@ -489,6 +501,9 @@ function VoiceRow({ v, busy, onReview }: {
       <p className="text-[13px] text-slate-900 leading-relaxed bg-red-50 border-l-2 border-red-700 px-3 py-2 rounded-r">
         「{v.quotedText}」
       </p>
+      {v.extractReason && (
+        <p className="text-[11px] text-slate-500 leading-relaxed">なぜ拾ったか：{v.extractReason}</p>
+      )}
       {!done && (
         <div className="flex gap-1.5 justify-end">
           <button onClick={() => onReview(v.voiceId, "confirmed")} disabled={busy}

@@ -63,6 +63,10 @@ export interface RadarVoiceItem {
   /** 抽出元へのリンク。Notion 議事録 / Intercom 会話 */
   url:          string | null;
   sourceLabel:  string;
+  /** required = レビューを回すべきもの。reference = 参考どまり */
+  priority:     'required' | 'reference';
+  /** なぜ契約継続に影響すると判断したか（LLM の説明） */
+  extractReason: string | null;
 }
 
 export interface RadarCompanyResponse {
@@ -112,6 +116,8 @@ async function fetchVoices(companyUid: string): Promise<RadarVoiceItem[]> {
     reviewedBy:   r.reviewed_by ? String(r.reviewed_by) : null,
     url:          sourceUrl(String(r.source_type ?? ''), r.source_record_id ? String(r.source_record_id) : null),
     sourceLabel:  SOURCE_LABEL[String(r.source_type ?? '')] ?? String(r.source_type ?? ''),
+    priority:     (String(r.review_priority ?? 'required') as RadarVoiceItem['priority']),
+    extractReason: r.extract_reason ? String(r.extract_reason) : null,
   })).filter(v => v.voiceId && v.quotedText);
 }
 

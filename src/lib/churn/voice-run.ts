@@ -14,7 +14,7 @@ import { nocoCreate } from '@/lib/nocodb/write';
 import { getOpenAIClient, getOpenAIModel } from '@/lib/openai/client';
 import {
   CHURN_VOICE_SYSTEM_PROMPT, CHURN_VOICE_JSON_SCHEMA,
-  buildChurnVoicePrompt, VOICE_INTENT_LABEL,
+  buildChurnVoicePrompt, VOICE_INTENT_LABEL, voiceReviewPriority,
 } from '@/lib/prompts/churn-voice';
 
 // ── 型 ────────────────────────────────────────────────────────────────────────
@@ -38,9 +38,11 @@ export interface VoiceRunResult {
   /** この回で処理しきれなかった残り。0 になるまで再実行すれば全社に行き渡る */
   remaining:    number;
   durationMs:   number;
+  /** 自社側の発言として捨てた数。プロンプトの効き具合はここで見る */
+  droppedNonCustomer: number;
   hits: Array<{
     companyName: string; intentType: string; confidence: number;
-    occurredAt: string; quote: string;
+    occurredAt: string; quote: string; priority: 'required' | 'reference';
   }>;
 }
 
@@ -164,6 +166,7 @@ export async function runChurnVoice(opts: {
     scannedDocs: targets.length,
     companies: new Set(targets.map(d => d.companyUid)).size,
     extracted: 0, skippedExisting: docs.length - pending.length, failed: 0,
+    droppedNonCustomer: 0,
     /** まだ手を付けていない残り。0 になるまで繰り返し叩けばよい */
     remaining: Math.max(0, pending.length - targets.length),
     durationMs: 0, hits: [],
@@ -193,16 +196,24 @@ export async function runChurnVoice(opts: {
 
       const raw = completion.choices[0]?.message?.content ?? '{"hits":[]}';
       const parsed = JSON.parse(raw) as {
-        hits: Array<{ intent_type: string; quoted_text: string; reason: string; confidence: number }>;
+        hits: Array<{
+          intent_type: string; speaker: string; quoted_text: string;
+          reason: string; confidence: number;
+        }>;
       };
 
       for (const hit of parsed.hits ?? []) {
         if (!hit.quoted_text?.trim() || hit.confidence < 0.5) continue;
+        // 顧客が言っていないものを言質として数えると critical が汚れる。
+        // 実測: エレコムの誤検知は議事録のネクストアクション欄＝自社のタスクだった。
+        if (hit.speaker !== 'customer') { result.droppedNonCustomer++; continue; }
+
+        const priority = voiceReviewPriority(hit.intent_type, hit.confidence);
         result.extracted++;
         result.hits.push({
           companyName: doc.companyName, intentType: hit.intent_type,
           confidence: hit.confidence, occurredAt: doc.occurredAt,
-          quote: hit.quoted_text.slice(0, 120),
+          quote: hit.quoted_text.slice(0, 120), priority,
         });
         if (opts.dryRun || !TABLE_IDS.churn_radar_voice) continue;
 
@@ -216,6 +227,9 @@ export async function runChurnVoice(opts: {
           intent_label:     VOICE_INTENT_LABEL[hit.intent_type] ?? hit.intent_type,
           quoted_text:      hit.quoted_text.slice(0, 500),
           confidence:       hit.confidence,
+          speaker:          hit.speaker,
+          review_priority:  priority,
+          extract_reason:   hit.reason?.slice(0, 300) ?? null,
           // **承認されるまでスコアには入らない。** 誤検知で critical を汚さないため
           review_status:    'pending',
           reviewed_by:      null,
@@ -233,6 +247,8 @@ export async function runChurnVoice(opts: {
   // 「あと何回叩けば行き渡るか」はログでしか分からないので必ず出す。
   console.log(
     `[churn-voice] 完了 docs=${result.scannedDocs} extracted=${result.extracted} ` +
+    `(要レビュー ${result.hits.filter(h => h.priority === 'required').length}) ` +
+    `自社発言で除外=${result.droppedNonCustomer} ` +
     `skipped=${result.skippedExisting} failed=${result.failed} ` +
     `remaining=${result.remaining} duration=${result.durationMs}ms`,
   );
