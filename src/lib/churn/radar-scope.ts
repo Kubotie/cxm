@@ -8,7 +8,7 @@
 //
 // 副作用なし。描画側（クライアント）とテストの両方から使う。
 
-import type { RadarLayer, RadarStage } from '@/lib/churn/radar-rules';
+import { daysToCancelDeadline, type RadarLayer, type RadarStage } from '@/lib/churn/radar-rules';
 
 /** セクターの角度範囲（度）。上半円を3等分する */
 export const SCOPE_SECTORS: Record<RadarLayer, [number, number]> = {
@@ -23,15 +23,25 @@ export const SCOPE_SECTOR_LABEL: Record<RadarLayer, string> = {
   voice: '言質',
 };
 
-/** 危険圏＝更新90日以内。解約判断が実際に行われる圏内 */
-export const SCOPE_DANGER_DAYS = 90;
-/** 外周が示す日数 */
-export const SCOPE_MAX_DAYS = 365;
+/**
+ * 危険圏＝解約申出の期限まで30日以内（＝更新31〜60日前）。
+ *
+ * **本当の締切は更新日ではない。** 解約を申し出られるのは更新30日前まで。
+ * 半径は「締切までの残日数」で取り、この圏内に入った顧客が今週の仕事になる。
+ */
+export const SCOPE_DANGER_DAYS = 30;
+/** 外周が示す日数（締切まで） */
+export const SCOPE_MAX_DAYS = 335;
 /**
  * 危険圏に割り当てる半径の比率。
- * 線形にすると90日以内が中心の1/4に潰れて、一番見たい範囲が読めなくなる。
+ * 線形にすると危険圏が中心のごく一部に潰れて、一番見たい範囲が読めなくなる。
  */
 const DANGER_RADIUS_RATIO = 0.42;
+/**
+ * 締切を過ぎた顧客を置く半径。
+ * 今期はもう解約されないが、消すと見落とすので中心のすぐ外に薄く置く。
+ */
+const PASSED_RADIUS = 0.06;
 
 export const STAGE_COLOR: Record<RadarStage, string> = {
   critical: '#ff5a4a',
@@ -42,15 +52,25 @@ export const STAGE_COLOR: Record<RadarStage, string> = {
 
 /**
  * 更新までの残日数を半径（0〜1）に変換する。
- * - 満了済み（負）は中心に置く
+ *
+ * 中心は「更新日」ではなく**解約を申し出られる最終日**（更新30日前）。
+ * - 締切を過ぎたもの（更新30日以内）は中心のすぐ外に薄く固める。今期はもう動かせない
  * - 更新日が不明なものは外周に置く（時間の軸に乗せられないため）
  */
 export function radiusRatio(daysToRenewal: number | null): number {
-  if (daysToRenewal === null) return 1;
-  const d = Math.max(0, Math.min(SCOPE_MAX_DAYS, daysToRenewal));
+  const deadline = daysToCancelDeadline(daysToRenewal);
+  if (deadline === null) return 1;
+  if (deadline < 0) return PASSED_RADIUS;
+  const d = Math.min(SCOPE_MAX_DAYS, deadline);
   if (d <= SCOPE_DANGER_DAYS) return (d / SCOPE_DANGER_DAYS) * DANGER_RADIUS_RATIO;
   return DANGER_RADIUS_RATIO
     + ((d - SCOPE_DANGER_DAYS) / (SCOPE_MAX_DAYS - SCOPE_DANGER_DAYS)) * (1 - DANGER_RADIUS_RATIO);
+}
+
+/** 危険圏に入っているか。更新31〜60日前 ＝ 締切まで0〜30日 */
+export function inDangerZone(daysToRenewal: number | null): boolean {
+  const d = daysToCancelDeadline(daysToRenewal);
+  return d !== null && d >= 0 && d <= SCOPE_DANGER_DAYS;
 }
 
 /**

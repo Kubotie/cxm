@@ -47,8 +47,8 @@ export const RADAR_THRESHOLD = {
   minWindowCoverage: 0.7,
   /** B1: 接触空白の既定閾値 */
   blankDays: 60,
-  /** B1: 更新がこの日数以内なら空白の閾値を短縮する */
-  blankTightenWithinRenewal: 90,
+  /** B1: 解約申出の期限（更新30日前）がこの日数以内なら空白の閾値を短縮する */
+  blankTightenWithinRenewal: 60,
   /** B1: 短縮後の空白閾値 */
   blankDaysTightened: 30,
   /** B2: 担当交代からこの日数以内を「直後」とみなす */
@@ -77,13 +77,27 @@ export const RADAR_WEIGHT = {
 export const RADAR_STAGE_CUT = { critical: 8, warn: 4, watch: 2 } as const;
 
 /**
- * critical に必要な「更新までの近さ」。
+ * 解約を申し出られる最終日は「更新日の30日前」。
  *
- * critical の意味は **今週手を打つ** であって「一番悪い」ではない。更新まで300日ある企業は、
+ * **本当の締切は更新日ではない。** 更新30日前を過ぎた顧客は、今期の解約を申し出られない
+ * ＝今週手を打つ対象ではなくなる。逆に山場は更新31〜60日前で、ここを逃すと
+ * 何をしても今期は動かせない。半径も時計もこの日を基準にする。
+ */
+export const CANCEL_NOTICE_DAYS = 30;
+
+/** 更新までの残日数 → 解約を申し出られる期限までの残日数。負なら締切後 */
+export function daysToCancelDeadline(daysToRenewal: number | null): number | null {
+  return daysToRenewal === null ? null : daysToRenewal - CANCEL_NOTICE_DAYS;
+}
+
+/**
+ * critical に必要な「締切までの近さ」。
+ *
+ * critical の意味は **今週手を打つ** であって「一番悪い」ではない。締切まで150日ある企業は、
  * どれだけ落ちていても今週やる仕事ではない（warn に留めて更新前に拾う）。
  * ただし言質だけは例外で、距離を問わず critical にする。顧客が口に出した以上、時間の問題ではない。
  */
-export const RADAR_CRITICAL_WITHIN_DAYS = 180;
+export const RADAR_CRITICAL_WITHIN_DAYS = 150;
 
 /**
  * 各シグナルが何を見て立ったか。
@@ -239,14 +253,20 @@ function windowCoverage(dates: string[], today: string, windowDays: number): num
 // ── 契約時計 ──────────────────────────────────────────────────────────────────
 
 /**
- * 更新までの残日数から乗数を決める。
- * 同じ症状でも更新30日前と300日前では意味が違う。更新日が不明なら等倍。
+ * 解約申出期限までの残日数から乗数を決める。更新日が不明なら等倍。
+ *
+ * ⚠️ 更新日そのものではなく**解約を申し出られる期限**（更新30日前）を基準にする。
+ *   更新15日前の顧客はもう今期の解約を申し出られないので、どれだけ落ちていても
+ *   「今週やる」ではない。山場は更新31〜60日前 ＝ 締切まで0〜30日。
+ *   締切を過ぎたものは ×1.0 に戻す（次期に向けた関係修復は要るが、緊急ではない）。
  */
 export function clockMultiplier(daysToRenewal: number | null): number {
-  if (daysToRenewal === null) return 1.0;
-  if (daysToRenewal <= 30)  return 2.0;
-  if (daysToRenewal <= 90)  return 1.5;
-  if (daysToRenewal <= 180) return 1.2;
+  const d = daysToCancelDeadline(daysToRenewal);
+  if (d === null) return 1.0;
+  if (d < 0)   return 1.0;   // 締切後。今期はもう動かせない
+  if (d <= 30) return 2.0;   // 更新31〜60日前。**ここが山場**
+  if (d <= 60) return 1.5;   // 更新61〜90日前
+  if (d <= 150) return 1.2;  // 更新91〜180日前
   return 1.0;
 }
 
@@ -262,6 +282,8 @@ export function evaluateRadar(input: RadarInput): RadarResult {
   const skip = (id: string, reason: string) => missing.push({ id, reason });
 
   const daysToRenewal = input.renewalDate ? -(daysBetween(input.renewalDate, today) ?? 0) : null;
+  // 本当の締切は更新日ではなく「解約を申し出られる最終日」＝更新30日前
+  const deadlineDays = daysToCancelDeadline(daysToRenewal);
 
   // 日付昇順を保証する。呼び出し側の取得順に依存させない
   const usage = [...input.usage].sort((a, b) => a.date.localeCompare(b.date));
@@ -372,14 +394,17 @@ export function evaluateRadar(input: RadarInput): RadarResult {
 
   // ── B1: 接触空白 ─────────────────────────────────────────────────────────
   const blank = daysBetween(input.lastContactDate, today);
-  const tighten = daysToRenewal !== null && daysToRenewal <= RADAR_THRESHOLD.blankTightenWithinRenewal;
+  // 締切（更新30日前）が近いほど、空白を許す余地がない
+  const tighten =
+    deadlineDays !== null && deadlineDays >= 0
+    && deadlineDays <= RADAR_THRESHOLD.blankTightenWithinRenewal;
   const blankCut = tighten ? RADAR_THRESHOLD.blankDaysTightened : RADAR_THRESHOLD.blankDays;
   if (blank === null) {
     skip('B1', '最終接点の記録が無い');
   } else if (blank >= blankCut) {
     hit('B1', 'blank', '接触空白',
       tighten
-        ? `最終接点から${blank}日（更新${daysToRenewal}日前のため${blankCut}日で判定）`
+        ? `最終接点から${blank}日（解約申出の期限まで${deadlineDays}日のため${blankCut}日で判定）`
         : `最終接点から${blank}日`);
   }
 
@@ -434,8 +459,9 @@ export function evaluateRadar(input: RadarInput): RadarResult {
   const score = Math.round((decayScore + blankScore + voiceScore) * clock * 10) / 10;
 
   // 更新日が不明な企業も critical には上げない。「いつまでに」が無いものは今週の仕事にできない。
+  // 締切を過ぎたもの（更新30日以内）も、今期は動かせないので critical にしない。
   const renewalNear =
-    daysToRenewal !== null && daysToRenewal <= RADAR_CRITICAL_WITHIN_DAYS;
+    deadlineDays !== null && deadlineDays >= 0 && deadlineDays <= RADAR_CRITICAL_WITHIN_DAYS;
   const reachedCritical = score >= RADAR_STAGE_CUT.critical;
 
   const stage: RadarStage =
@@ -498,9 +524,13 @@ function buildTopReason(
 ): string {
   if (signals.length === 0) return '点灯している要因はない。';
 
-  const head = daysToRenewal !== null
-    ? (daysToRenewal < 0 ? '契約満了後、' : `更新まで${daysToRenewal}日。`)
-    : '';
+  const deadline = daysToCancelDeadline(daysToRenewal);
+  const head =
+    daysToRenewal === null ? ''
+    : daysToRenewal < 0 ? '契約満了後、'
+    : deadline !== null && deadline < 0
+      ? `更新まで${daysToRenewal}日（解約申出の期限は過ぎている）。`
+      : `解約申出の期限まで${deadline}日（更新まで${daysToRenewal}日）。`;
 
   // 重い順に2件まで。
   // 3件並べると一覧のカードで2〜3行に伸び、隣に置く根拠チップとほぼ同じ文が重複する。

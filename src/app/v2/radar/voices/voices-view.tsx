@@ -11,7 +11,7 @@
 //   - 原文の引用（要約ではなく）
 //   - 出所へのリンク（Notion / Intercom）
 //   - なぜ拾ったか（抽出時の説明）
-//   - その会社の状態と更新までの日数 ─ 同じ発言でも期限が近いほど重い
+//   - その会社の状態と解約申出の期限までの日数 ─ 同じ発言でも期限が近いほど重い
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -22,7 +22,7 @@ import { useRegisterAiPageContext } from "@/components/ai";
 import type {
   RadarVoicesResponse, RadarVoiceListItem,
 } from "@/app/api/radar/voices/route";
-import type { RadarStage } from "@/lib/churn/radar-rules";
+import { daysToCancelDeadline, type RadarStage } from "@/lib/churn/radar-rules";
 
 type ReviewStatus = "pending" | "confirmed" | "rejected";
 type Scope = "required" | "reference" | "done";
@@ -50,9 +50,20 @@ function yen(n: number | null): string {
 export default function VoicesView() {
   const [data, setData]     = useState<RadarVoicesResponse | null>(null);
   const [scope, setScope]   = useState<Scope>("required");
+  const [owner, setOwner]   = useState<string>("all");
+  const [viewer, setViewer] = useState<string | null>(null);
   const [error, setError]   = useState<string | null>(null);
   const [busy, setBusy]     = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // 自分の担当を初期選択にはしない（他人の分も見えたほうが週次のトリアージは回る）。
+  // ただしボタンには出す。cxm_user_uid は HttpOnly なので profile を1回引くしかない
+  useEffect(() => {
+    fetch("/api/user/profile")
+      .then(r => r.ok ? r.json() : null)
+      .then(p => setViewer(p?.name2 ?? null))
+      .catch(() => setViewer(null));
+  }, []);
 
   const load = useCallback((s: Scope) => {
     setLoading(true);
@@ -109,7 +120,21 @@ export default function VoicesView() {
     }
   };
 
-  const items = data?.items ?? [];
+  /** 担当ごとの件数。押す前に何件になるか分かるようにする */
+  const ownerCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const v of data?.items ?? []) {
+      const k = v.ownerName ?? "—";
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [data]);
+
+  const items = useMemo(
+    () => (data?.items ?? []).filter(v => owner === "all" || (v.ownerName ?? "—") === owner),
+    [data, owner],
+  );
+
   const byCompany = useMemo(() => {
     const m = new Map<string, RadarVoiceListItem[]>();
     for (const v of items) {
@@ -127,13 +152,14 @@ export default function VoicesView() {
       + "人が採用／棄却する画面。採用したものだけが解約レーダーのスコアに入る。",
     snapshot: {
       scope, counts: data?.counts ?? null,
+      owner,
       items: items.slice(0, 30).map(v => ({
         company: v.companyName, stage: v.stage, daysToRenewal: v.daysToRenewal,
         intent: `${v.intentType} ${v.intentLabel}`, quote: v.quotedText,
         reason: v.extractReason, status: v.reviewStatus,
       })),
     },
-    hints: { 読込中: loading, エラー: error },
+    hints: { 読込中: loading, エラー: error, 担当フィルタ: owner },
     sources: [{
       label: "言質レビュー一覧",
       endpoint: "/api/radar/voices",
@@ -191,6 +217,33 @@ export default function VoicesView() {
         </div>
       </header>
 
+      {/* ── 担当フィルタ ─────────────────────────────────────────────── */}
+      {ownerCounts.length > 1 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10.5px] text-slate-400 font-mono mr-0.5">担当</span>
+          <button onClick={() => setOwner("all")}
+            className={`text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1.5
+              ${owner === "all"
+                ? "bg-slate-900 border-slate-900 text-white font-bold"
+                : "bg-white border-slate-300 text-slate-600 hover:border-slate-400"}`}>
+            全体
+            <span className={`font-mono ${owner === "all" ? "text-slate-300" : "text-slate-400"}`}>
+              {data?.items.length ?? 0}
+            </span>
+          </button>
+          {ownerCounts.map(([name, n]) => (
+            <button key={name} onClick={() => setOwner(name)}
+              className={`text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1.5
+                ${owner === name
+                  ? "bg-slate-900 border-slate-900 text-white font-bold"
+                  : "bg-white border-slate-300 text-slate-600 hover:border-slate-400"}`}>
+              {name}{viewer && name === viewer ? "（自分）" : ""}
+              <span className={`font-mono ${owner === name ? "text-slate-300" : "text-slate-400"}`}>{n}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-800 text-[12px] rounded-lg px-3 py-2">
           {error}
@@ -208,7 +261,8 @@ export default function VoicesView() {
           flex flex-col items-center gap-2">
           <CheckCircle2 className="w-6 h-6 text-emerald-600" />
           <p className="text-[13px] text-slate-700 font-bold">
-            {scope === "required" ? "レビュー待ちはありません" : "該当するものはありません"}
+            {owner !== "all" ? `${owner} の担当分はありません`
+              : scope === "required" ? "レビュー待ちはありません" : "該当するものはありません"}
           </p>
           {scope === "required" && (
             <p className="text-[11.5px] text-slate-500">
@@ -235,17 +289,27 @@ export default function VoicesView() {
                   {yen(group[0].mrr)}
                 </span>
                 <span className="text-[11px] text-slate-500">担当 {group[0].ownerName ?? "—"}</span>
-                <span className="ml-auto text-right font-mono flex-none">
-                  <b className={`text-[14px] ${
-                    group[0].daysToRenewal === null ? "text-slate-400"
-                    : group[0].daysToRenewal <= 30 ? "text-red-700"
-                    : group[0].daysToRenewal <= 90 ? "text-amber-700" : "text-slate-600"}`}>
-                    {group[0].daysToRenewal === null ? "—" : `${group[0].daysToRenewal}日`}
-                  </b>
-                  <span className="text-[9.5px] text-slate-400 ml-1">
-                    {group[0].daysToRenewal === null ? "更新日不明" : "後に更新"}
-                  </span>
-                </span>
+                {/* 見るべきは更新日ではなく「解約を申し出られる期限」（更新30日前）。
+                    締切を過ぎた顧客は今期もう動かせない */}
+                {(() => {
+                  const dl = daysToCancelDeadline(group[0].daysToRenewal);
+                  return (
+                    <span className="ml-auto text-right font-mono flex-none">
+                      <b className={`text-[14px] ${
+                        dl === null ? "text-slate-400"
+                        : dl < 0 ? "text-slate-400"
+                        : dl <= 30 ? "text-red-700"
+                        : dl <= 60 ? "text-amber-700" : "text-slate-600"}`}>
+                        {dl === null ? "—" : dl < 0 ? "締切後" : `${dl}日`}
+                      </b>
+                      <span className="text-[9.5px] text-slate-400 ml-1">
+                        {dl === null ? "更新日不明"
+                          : dl < 0 ? `更新まで${group[0].daysToRenewal}日`
+                          : "で申出締切"}
+                      </span>
+                    </span>
+                  );
+                })()}
               </div>
               {group.map(v => (
                 <VoiceItem key={v.voiceId} v={v} busy={busy === v.voiceId} onReview={review} />

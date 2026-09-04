@@ -13,7 +13,7 @@ import {
   fetchAllRadarStates, parseReason, radarTablesReady,
   type RadarStateRow, type AckStatus,
 } from '@/lib/churn/radar-state';
-import { SCOPE_DANGER_DAYS } from '@/lib/churn/radar-scope';
+import { inDangerZone } from '@/lib/churn/radar-scope';
 import type { RadarStage, RadarSignal, RadarLayer } from '@/lib/churn/radar-rules';
 
 export const dynamic = 'force-dynamic';
@@ -48,7 +48,7 @@ export interface RadarBoardResponse {
   /** 現在ユーザーの owner 名（name2）。担当フィルタの初期値に使う */
   viewerOwnerName: string | null;
   counts:  Record<RadarStage, number> & { total: number };
-  /** 更新90日以内かつ点灯中 */
+  /** 解約申出の期限まで30日以内（＝更新31〜60日前）かつ点灯中 */
   dangerZone:      number;
   /** 危険圏の MRR 合計 */
   dangerZoneMrr:   number;
@@ -157,9 +157,8 @@ export async function GET(): Promise<NextResponse<RadarBoardResponse>> {
   for (const p of points) counts[p.stage]++;
 
   const lit = points.filter(p => p.stage !== 'clear');
-  const danger = lit.filter(
-    p => p.daysToRenewal !== null && p.daysToRenewal <= SCOPE_DANGER_DAYS,
-  );
+  // 危険圏＝解約申出の期限（更新30日前）まで30日以内
+  const danger = lit.filter(p => inDangerZone(p.daysToRenewal));
 
   const longest = lit
     .filter(p => p.agedDays !== null)

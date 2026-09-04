@@ -23,8 +23,9 @@ import {
 import { useRegisterAiPageContext } from "@/components/ai";
 import {
   SCOPE_SECTORS, SCOPE_SECTOR_LABEL, SCOPE_DANGER_DAYS, STAGE_COLOR,
-  radiusRatio, angleFor, dotRadius, polar,
+  radiusRatio, angleFor, dotRadius, polar, inDangerZone,
 } from "@/lib/churn/radar-scope";
+import { daysToCancelDeadline, CANCEL_NOTICE_DAYS } from "@/lib/churn/radar-rules";
 import type { RadarBoardResponse, RadarBoardPoint } from "@/app/api/radar/board/route";
 import type { RadarStage, RadarLayer } from "@/lib/churn/radar-rules";
 import type { AckStatus } from "@/lib/churn/radar-state";
@@ -54,8 +55,14 @@ const ACK_TEXT: Record<AckStatus, string> = {
 // 内側に押し込まれて光点と重なる。
 const W = 568, H = 334, CX = 284, CY = 302, R = 248;
 
-/** 描く目盛り。日数と表示ラベル */
-const RING_MARKS: Array<[number, string]> = [[30, "30日"], [90, "90日"], [180, "180日"], [365, "1年"]];
+/**
+ * 描く目盛り。**解約申出の期限まで**の日数で刻む。
+ * radiusRatio は「更新までの日数」を受けるので、+30 して渡す。
+ */
+const RING_MARKS: Array<[number, string]> = [
+  [30,  "締切30日前"], [90,  "3ヶ月"], [180, "半年"], [335, "1年"],
+];
+const ringRadiusRatio = (deadlineDays: number) => radiusRatio(deadlineDays + CANCEL_NOTICE_DAYS);
 
 /** 上半円の弧。右端から左端へ、上を通る */
 function arc(r: number): string {
@@ -83,7 +90,7 @@ type SortKey    = "renewal" | "score" | "aged";
  * 先頭の顔ぶれが変わらず「効いていない」ように見える。
  */
 const SORT_META: Record<SortKey, { label: string; note: string }> = {
-  renewal: { label: "更新が近い順", note: "いつまでに手を打つかの順" },
+  renewal: { label: "締切が近い順", note: "解約申出の期限が近い順。いつまでに手を打つかの順" },
   score:   { label: "重い順",       note: "症状の重さの順" },
   aged:    { label: "放置が長い順", note: "鳴りっぱなしの日数の順" },
 };
@@ -121,7 +128,7 @@ export default function ScopeView() {
 
   /** フィルタごとの母数。押す前に結果が分かるようボタンに出す */
   const scopeCounts = useMemo(() => ({
-    danger: lit.filter(p => p.daysToRenewal !== null && p.daysToRenewal <= SCOPE_DANGER_DAYS).length,
+    danger: lit.filter(p => inDangerZone(p.daysToRenewal)).length,
     lit:    lit.length,
     all:    points.length,
   }), [lit, points]);
@@ -129,13 +136,18 @@ export default function ScopeView() {
   const listed = useMemo(() => {
     const base =
       listScope === "danger"
-        ? lit.filter(p => p.daysToRenewal !== null && p.daysToRenewal <= SCOPE_DANGER_DAYS)
+        ? lit.filter(p => inDangerZone(p.daysToRenewal))
         : listScope === "lit" ? lit : points;
     return [...base].sort((a, b) => {
       if (sortKey === "score") return b.score - a.score;
       if (sortKey === "aged")  return (b.agedDays ?? -1) - (a.agedDays ?? -1);
-      // 既定：更新が近い順。同着は重い順。「いつまでに」が作業の順番を決める
-      const da = a.daysToRenewal ?? 9999, db = b.daysToRenewal ?? 9999;
+      // 既定：解約申出の期限が近い順。同着は重い順。
+      // 締切を過ぎたものは後ろへ（今期はもう動かせない）
+      const norm = (d: number | null) => {
+        const x = daysToCancelDeadline(d);
+        return x === null ? 9999 : x < 0 ? 9000 - x : x;
+      };
+      const da = norm(a.daysToRenewal), db = norm(b.daysToRenewal);
       return da !== db ? da - db : b.score - a.score;
     });
   }, [lit, points, listScope, sortKey]);
@@ -146,10 +158,7 @@ export default function ScopeView() {
     return c;
   }, [points]);
 
-  const dangerPoints = useMemo(
-    () => lit.filter(p => p.daysToRenewal !== null && p.daysToRenewal <= SCOPE_DANGER_DAYS),
-    [lit],
-  );
+  const dangerPoints = useMemo(() => lit.filter(p => inDangerZone(p.daysToRenewal)), [lit]);
 
   useRegisterAiPageContext({
     pageId: "v2-radar",
@@ -308,7 +317,7 @@ export default function ScopeView() {
           <div className="flex items-baseline gap-2.5 flex-wrap">
             <span className="text-[12.5px] font-bold text-white">スコープ</span>
             <span className="text-[10.5px] font-mono text-slate-500 tracking-wide">
-              中心＝更新日 ／ 外周＝1年先
+              中心＝解約申出の期限（更新30日前）／ 外周＝1年先
             </span>
             <span className="ml-auto text-[10px] font-mono text-emerald-400 flex items-center gap-1.5">
               <i className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -332,16 +341,17 @@ export default function ScopeView() {
                 </linearGradient>
               </defs>
 
-              {/* 危険圏（更新90日以内） */}
+              {/* 危険圏＝解約申出の期限まで30日以内（更新31〜60日前）。
+                  ここを逃すと今期は何をしても動かせない */}
               <path
-                d={`M${CX - R * radiusRatio(SCOPE_DANGER_DAYS)},${CY} `
-                  + `A${R * radiusRatio(SCOPE_DANGER_DAYS)},${R * radiusRatio(SCOPE_DANGER_DAYS)} 0 0 1 `
-                  + `${CX + R * radiusRatio(SCOPE_DANGER_DAYS)},${CY} Z`}
+                d={`M${CX - R * ringRadiusRatio(SCOPE_DANGER_DAYS)},${CY} `
+                  + `A${R * ringRadiusRatio(SCOPE_DANGER_DAYS)},${R * ringRadiusRatio(SCOPE_DANGER_DAYS)} 0 0 1 `
+                  + `${CX + R * ringRadiusRatio(SCOPE_DANGER_DAYS)},${CY} Z`}
                 fill="url(#radar-danger)" />
 
               {/* リングの弧。ラベルは光点の後（最前面）にまとめて描く */}
               {RING_MARKS.map(([d, label]) => {
-                const r = R * radiusRatio(d);
+                const r = R * ringRadiusRatio(d);
                 const strong = d === SCOPE_DANGER_DAYS;
                 return (
                   <path key={label} d={arc(r)} fill="none"
@@ -375,7 +385,10 @@ export default function ScopeView() {
                 const r    = R * radiusRatio(p.daysToRenewal);
                 const deg  = angleFor(p.sector, p.companyUid);
                 const [x, y] = polar(CX, CY, r, deg);
-                const size = dotRadius(p.mrr);
+                // 締切を過ぎた顧客は今期もう動かせない。中心に集まるが、
+                // 小さく暗くして危険圏の顧客と見間違えないようにする
+                const passed = (daysToCancelDeadline(p.daysToRenewal) ?? 0) < 0;
+                const size = dotRadius(p.mrr) * (passed ? 0.6 : 1);
                 const color = STAGE_COLOR[p.stage];
                 const isHover = hovered === p.companyUid;
                 return (
@@ -384,12 +397,12 @@ export default function ScopeView() {
                     onMouseLeave={() => setHovered(null)}
                     onClick={() => router.push(`/v2/radar/${p.companyUid}`)}
                     className="cursor-pointer">
-                    {p.stage !== "watch" && (
+                    {p.stage !== "watch" && !passed && (
                       <circle cx={x} cy={y} r={size + 6} fill={color} opacity={isHover ? 0.3 : 0.14} />
                     )}
                     <circle cx={x} cy={y} r={size} fill={color}
-                      opacity={p.stage === "watch" ? 0.62 : 1}
-                      className={p.isNew ? "radar-blip" : undefined} />
+                      opacity={passed ? 0.35 : p.stage === "watch" ? 0.62 : 1}
+                      className={p.isNew && !passed ? "radar-blip" : undefined} />
                     {isHover && (
                       <>
                         <line x1={x} y1={y} x2={x} y2={y - 18} stroke={color} strokeWidth="1" opacity="0.7" />
@@ -401,19 +414,26 @@ export default function ScopeView() {
                         <text x={x} y={y - 33} textAnchor="middle" fontFamily="ui-monospace, monospace"
                           fontSize="9" fill="#a4b0c2" stroke="#0b1220" strokeWidth="3"
                           paintOrder="stroke" strokeLinejoin="round">
-                          {p.daysToRenewal !== null ? `更新まで${p.daysToRenewal}日` : "更新日不明"}
+                          {(() => {
+                            const dl = daysToCancelDeadline(p.daysToRenewal);
+                            return dl === null ? "更新日不明"
+                              : dl < 0 ? `申出締切は過ぎている（更新まで${p.daysToRenewal}日）`
+                              : `申出締切まで${dl}日`;
+                          })()}
                           {p.agedDays !== null ? ` ／ ${p.agedDays}日鳴りっぱなし` : ""}
                         </text>
                       </>
                     )}
-                    <title>{`${p.name}／${STAGE_META[p.stage].label}／${p.daysToRenewal !== null ? `更新まで${p.daysToRenewal}日` : "更新日不明"}`}</title>
+                    <title>{`${p.name}／${STAGE_META[p.stage].label}／${
+                      daysToCancelDeadline(p.daysToRenewal) === null ? "更新日不明"
+                      : `申出締切まで${daysToCancelDeadline(p.daysToRenewal)}日`}`}</title>
                   </g>
                 );
               })}
 
               {/* ── 目盛りは最前面。光点の下に潜ると読めなくなる ─────────── */}
               {RING_MARKS.map(([d, label]) => {
-                const r = R * radiusRatio(d);
+                const r = R * ringRadiusRatio(d);
                 const strong = d === SCOPE_DANGER_DAYS;
                 return (
                   <text key={`lbl-${label}`} x={CX - 9} y={CY - r + 11} textAnchor="end"
@@ -442,7 +462,11 @@ export default function ScopeView() {
               <text x={CX} y={CY + 17} textAnchor="middle" fontFamily="ui-monospace, monospace"
                 fontSize="8.5" fill="#6b7f96"
                 stroke="#0b1220" strokeWidth="2.5" paintOrder="stroke"
-                strokeLinejoin="round">更新日</text>
+                strokeLinejoin="round">解約申出の期限</text>
+              <text x={CX} y={CY + 28} textAnchor="middle" fontFamily="ui-monospace, monospace"
+                fontSize="7.5" fill="#4a5c72"
+                stroke="#0b1220" strokeWidth="2.5" paintOrder="stroke"
+                strokeLinejoin="round">＝更新30日前</text>
             </svg>
           </div>
         </div>
@@ -457,13 +481,13 @@ export default function ScopeView() {
             </div>
             <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
               {verdict
-                ? `critical はゼロ。危険圏（更新90日以内で点灯中）の${dangerPoints.length}社は、更新前に接触しておけばよい。`
+                ? `critical はゼロ。危険圏（解約申出の期限まで30日以内）の${dangerPoints.length}社は、期限までに接触しておけばよい。`
                 : `${yen(thisWeek.reduce((a, p) => a + (p.mrr ?? 0), 0))}／月。危険圏には${dangerPoints.length}社。`}
             </p>
           </div>
 
           <div className="grid grid-cols-2 gap-1.5">
-            <Gauge k="危険圏 90日以内" v={dangerPoints.length} tone={dangerPoints.length > 0 ? "warn" : "ok"} n="点灯中" />
+            <Gauge k="危険圏 締切30日以内" v={dangerPoints.length} tone={dangerPoints.length > 0 ? "warn" : "ok"} n="点灯中" />
             <Gauge k="新規点灯" v={lit.filter(p => p.isNew).length} tone="warn" n="7日以内" />
             <Gauge k="最長放置"
               v={data?.longestAged ? `${data.longestAged.days}日` : "—"}
@@ -486,6 +510,10 @@ export default function ScopeView() {
               点の大きさ＝MRR
               <span className="ml-auto font-mono">clear {counts.clear}</span>
             </div>
+            <div className="flex items-center gap-2 text-[10.5px] text-slate-500">
+              <span className="w-1.5 h-1.5 rounded-full flex-none bg-slate-500 opacity-40 ml-0.5 mr-1" />
+              中心の薄い点＝申出締切を過ぎた顧客（今期は動かせない）
+            </div>
           </div>
         </div>
       </div>
@@ -495,7 +523,7 @@ export default function ScopeView() {
         <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 border-b border-slate-100 flex-wrap">
           <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-[11.5px] font-bold text-slate-900">
-              {listScope === "danger" ? "危険圏（更新90日以内かつ点灯中）"
+              {listScope === "danger" ? "危険圏（解約申出の期限まで30日以内＝更新31〜60日前）"
                 : listScope === "lit" ? "点灯中のすべて" : "全社"}
             </span>
             <span className="font-mono text-[11.5px] text-slate-500">
@@ -535,7 +563,7 @@ export default function ScopeView() {
           <div className="px-3.5 py-8 text-center text-[12px] text-slate-500 flex flex-col items-center gap-2">
             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
             {listScope === "danger"
-              ? "更新が近くて落ちている顧客はいません。今週はここを見なくてよい。"
+              ? "解約申出の期限が近くて落ちている顧客はいません。今週はここを見なくてよい。"
               : "該当する顧客はいません。"}
           </div>
         ) : listed.map(p => (
@@ -567,6 +595,7 @@ function RadarRow({ p, busy, onAck }: {
   p: RadarBoardPoint; busy: boolean; onAck: (uid: string, s: AckStatus) => void;
 }) {
   const meta = STAGE_META[p.stage];
+  const deadline = daysToCancelDeadline(p.daysToRenewal);
   // 放置が長いほど強く出す。無視されていること自体を可視化するのがこの画面の役目
   const aged = p.agedDays ?? 0;
   const agedTone = aged >= 60 ? "text-red-700 font-semibold"
@@ -586,15 +615,20 @@ function RadarRow({ p, busy, onAck }: {
           )}
           <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{yen(p.mrr)}</span>
           <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-full ${meta.chip}`}>{meta.label}</span>
-          <span className="ml-auto text-right flex-none min-w-[64px]">
+          {/* 見るべきは更新日ではなく「解約を申し出られる期限」。
+              締切を過ぎた顧客は今期もう動かせないので、そう表示する */}
+          <span className="ml-auto text-right flex-none min-w-[76px]">
             <b className={`block font-mono text-[15px] leading-none whitespace-nowrap ${
-              p.daysToRenewal === null ? "text-slate-400"
-              : p.daysToRenewal <= 30 ? "text-red-700"
-              : p.daysToRenewal <= 90 ? "text-amber-700" : "text-slate-600"}`}>
-              {p.daysToRenewal === null ? "—" : `${p.daysToRenewal}日`}
+              deadline === null ? "text-slate-400"
+              : deadline < 0 ? "text-slate-400"
+              : deadline <= 30 ? "text-red-700"
+              : deadline <= 60 ? "text-amber-700" : "text-slate-600"}`}>
+              {deadline === null ? "—" : deadline < 0 ? "締切後" : `${deadline}日`}
             </b>
             <span className="block text-[9.5px] text-slate-400 tracking-wide mt-0.5">
-              {p.daysToRenewal === null ? "更新日不明" : "後に更新"}
+              {deadline === null ? "更新日不明"
+                : deadline < 0 ? `更新まで${p.daysToRenewal}日`
+                : "で申出締切"}
             </span>
           </span>
         </div>

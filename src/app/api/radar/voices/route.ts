@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { nocoFetchAll, TABLE_IDS } from '@/lib/nocodb/client';
 import { fetchAllRadarStates } from '@/lib/churn/radar-state';
 import { sourceUrl, SOURCE_LABEL } from '@/lib/churn/radar-source';
-import type { RadarStage } from '@/lib/churn/radar-rules';
+import { daysToCancelDeadline, type RadarStage } from '@/lib/churn/radar-rules';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +25,7 @@ export interface RadarVoiceListItem {
   voiceId:       string;
   companyUid:    string;
   companyName:   string;
-  /** 同じ発言でも、更新が近い会社ほど重い。判断材料として添える */
+  /** 同じ発言でも、解約申出の期限が近い会社ほど重い。判断材料として添える */
   stage:         RadarStage;
   daysToRenewal: number | null;
   ownerName:     string | null;
@@ -135,9 +135,13 @@ export async function GET(req: NextRequest): Promise<NextResponse<RadarVoicesRes
   const items = all
     .filter(v => status   === 'all' || v.reviewStatus === status)
     .filter(v => priority === 'all' || v.priority     === priority)
-    // 更新が近い会社から。同じ発言でも期限が近いほど先に判断すべき
+    // 解約申出の期限が近い会社から。締切を過ぎたものは後ろへ（今期は動かせない）
     .sort((a, b) => {
-      const da = a.daysToRenewal ?? 9999, db = b.daysToRenewal ?? 9999;
+      const norm = (d: number | null) => {
+        const x = daysToCancelDeadline(d);
+        return x === null ? 9999 : x < 0 ? 9000 - x : x;
+      };
+      const da = norm(a.daysToRenewal), db = norm(b.daysToRenewal);
       if (da !== db) return da - db;
       return b.confidence - a.confidence;
     });
