@@ -369,6 +369,22 @@ export default function DrillView({ companyUid }: { companyUid: string }) {
                     出所：{data.signalSources[s.id]}
                   </p>
                 )}
+                {/* 「92日開いたまま」だけでは動けない。その現物を開けるようにする */}
+                {s.refs && s.refs.length > 0 && (
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1">
+                    {s.refs.map((r, i) => r.url ? (
+                      <a key={i} href={r.url} target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-[11px] text-blue-700
+                          hover:text-blue-900 hover:underline">
+                        {r.label}<ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    ) : (
+                      <span key={i} className="text-[11px] text-slate-400">
+                        {r.label}（{r.sourceLabel ?? r.source}・リンクなし）
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
               <span className="ml-auto font-mono text-[11px] text-slate-400 flex-none">+{s.weight}</span>
             </div>

@@ -23,6 +23,7 @@ import type {
   RadarVoicesResponse, RadarVoiceListItem,
 } from "@/app/api/radar/voices/route";
 import { daysToCancelDeadline, type RadarStage } from "@/lib/churn/radar-rules";
+import { readOwnerFilter, writeOwnerFilter } from "@/lib/churn/radar-prefs";
 
 type ReviewStatus = "pending" | "confirmed" | "rejected";
 type Scope = "required" | "reference" | "done";
@@ -50,7 +51,9 @@ function yen(n: number | null): string {
 export default function VoicesView() {
   const [data, setData]     = useState<RadarVoicesResponse | null>(null);
   const [scope, setScope]   = useState<Scope>("required");
-  const [owner, setOwner]   = useState<string>("all");
+  // 担当フィルタはレーダーと共通のキーで保つ
+  const [owner, setOwnerState] = useState<string>("all");
+  const setOwner = (v: string) => { setOwnerState(v); writeOwnerFilter(v); };
   const [viewer, setViewer] = useState<string | null>(null);
   const [error, setError]   = useState<string | null>(null);
   const [busy, setBusy]     = useState<string | null>(null);
@@ -59,6 +62,7 @@ export default function VoicesView() {
   // 自分の担当を初期選択にはしない（他人の分も見えたほうが週次のトリアージは回る）。
   // ただしボタンには出す。cxm_user_uid は HttpOnly なので profile を1回引くしかない
   useEffect(() => {
+    setOwnerState(readOwnerFilter());
     fetch("/api/user/profile")
       .then(r => r.ok ? r.json() : null)
       .then(p => setViewer(p?.name2 ?? null))

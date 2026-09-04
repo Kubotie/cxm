@@ -97,6 +97,20 @@ export interface RadarCompanyResponse {
   signalSources: Record<string, string>;
 }
 
+/** シグナルの根拠レコードにリンクを付ける。純粋関数側は URL を知らない */
+function withRefUrls(signals: RadarResult['signals']): RadarResult['signals'] {
+  return signals.map(sig => sig.refs
+    ? {
+        ...sig,
+        refs: sig.refs.map(r => ({
+          ...r,
+          url: sourceUrl(r.source, r.recordId),
+          sourceLabel: SOURCE_LABEL[r.source] ?? r.source,
+        })),
+      }
+    : sig);
+}
+
 /** 言質を全ステータス取得する。collectRadarFacts は confirmed しか返さないため別途引く */
 async function fetchVoices(companyUid: string): Promise<RadarVoiceItem[]> {
   if (!TABLE_IDS.churn_radar_voice) return [];
@@ -295,10 +309,11 @@ export async function GET(
       ackStatus: (state?.ack_status ?? 'none') as AckStatus,
       ackBy: state?.ack_by ?? null,
       topReason: state?.top_reason ?? current.topReason,
-      current: state
-        ? { ...current, signals: parseReason(state.reason_json).signals.length > 0
-            ? parseReason(state.reason_json).signals : current.signals }
-        : current,
+      current: (() => {
+        const saved = state ? parseReason(state.reason_json).signals : [];
+        const signals = saved.length > 0 ? saved : current.signals;
+        return { ...current, signals: withRefUrls(signals) };
+      })(),
       series,
       events: timeline,
       coverage: {

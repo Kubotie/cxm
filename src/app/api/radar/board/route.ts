@@ -14,6 +14,7 @@ import {
   type RadarStateRow, type AckStatus,
 } from '@/lib/churn/radar-state';
 import { inDangerZone } from '@/lib/churn/radar-scope';
+import { sourceUrl, SOURCE_LABEL } from '@/lib/churn/radar-source';
 import type { RadarStage, RadarSignal, RadarLayer } from '@/lib/churn/radar-rules';
 
 export const dynamic = 'force-dynamic';
@@ -89,7 +90,17 @@ function toPoint(row: RadarStateRow, today: string): RadarBoardPoint {
     tier:          row.tier ?? null,
     ownerName:     row.owner_name ?? null,
     topReason:     row.top_reason ?? '',
-    signals:       parseReason(row.reason_json).signals,
+    // 根拠レコードにリンクを付ける。「92日開いたまま」だけでは動けない
+    signals:       parseReason(row.reason_json).signals.map(sig => sig.refs
+      ? {
+          ...sig,
+          refs: sig.refs.map(r => ({
+            ...r,
+            url: sourceUrl(r.source, r.recordId),
+            sourceLabel: SOURCE_LABEL[r.source] ?? r.source,
+          })),
+        }
+      : sig),
     agedDays:      aged,
     isNew:         aged !== null && aged <= 7,
     ackStatus:     (row.ack_status ?? 'none') as AckStatus,

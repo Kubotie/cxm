@@ -147,12 +147,17 @@ export interface VoiceHit {
   label:      string;          // 「自動更新の回避」など
   occurredAt: string;
   quote:      string;
+  /** 抽出元。画面が原文へのリンクを組む */
+  sourceType?: string | null;
+  recordId?:   string | null;
 }
 
 /** 開いたままの高重要度チケット */
 export interface OpenTicket {
   openedAt: string;
   title:    string | null;
+  /** Notion ページとして開くための id。画面がリンクを組む */
+  recordId?: string | null;
 }
 
 export interface RadarInput {
@@ -167,6 +172,8 @@ export interface RadarInput {
   habituation:  HabituationDay[];
   /** 最終接点日（議事録 / Slack / Chatwork / Intercom の最大値） */
   lastContactDate: string | null;
+  /** 最終接点の出所。B1 が立ったときに「どこで途切れたか」を辿れるようにする */
+  lastContactRef?: { source: string; recordId: string | null } | null;
   /** CSM 担当が変わった日。分からなければ null */
   ownerChangedAt:  string | null;
   /** 未取得なら null（S1 を評価しない）。空配列は「取得したが0件」 */
@@ -180,6 +187,22 @@ export interface RadarInput {
 export type RadarLayer = 'decay' | 'blank' | 'voice';
 export type RadarStage = 'critical' | 'warn' | 'watch' | 'clear';
 
+/**
+ * シグナルの根拠になった実レコード。
+ *
+ * **「92日開いたまま」と言われても、そのチケットを開けなければ動けない。**
+ * 純粋関数側は URL を組まず、source と id だけ持つ（URL の知識は radar-source.ts）。
+ */
+export interface SignalRef {
+  /** 'ticket' | 'minutes' | 'intercom' | 'slack' | 'chatwork' */
+  source:   string;
+  recordId: string | null;
+  label:    string;
+  /** API 層が付ける。純粋関数は URL を知らない */
+  url?:         string | null;
+  sourceLabel?: string;
+}
+
 export interface RadarSignal {
   id:     string;
   layer:  RadarLayer;
@@ -187,6 +210,8 @@ export interface RadarSignal {
   /** なぜ立ったか。**実測値を必ず含める**（顧客に持っていける粒度にする） */
   detail: string;
   weight: number;
+  /** 根拠レコード。画面はここからリンクを組む */
+  refs?:  SignalRef[];
 }
 
 export interface RadarResult {
@@ -277,8 +302,12 @@ export function evaluateRadar(input: RadarInput): RadarResult {
   const signals: RadarSignal[] = [];
   const missing: Array<{ id: string; reason: string }> = [];
 
-  const hit = (id: string, layer: RadarLayer, label: string, detail: string) =>
-    signals.push({ id, layer, label, detail, weight: RADAR_WEIGHT[id as keyof typeof RADAR_WEIGHT] ?? 0 });
+  const hit = (id: string, layer: RadarLayer, label: string, detail: string, refs?: SignalRef[]) =>
+    signals.push({
+      id, layer, label, detail,
+      weight: RADAR_WEIGHT[id as keyof typeof RADAR_WEIGHT] ?? 0,
+      ...(refs && refs.length > 0 ? { refs } : {}),
+    });
   const skip = (id: string, reason: string) => missing.push({ id, reason });
 
   const daysToRenewal = input.renewalDate ? -(daysBetween(input.renewalDate, today) ?? 0) : null;
@@ -405,7 +434,15 @@ export function evaluateRadar(input: RadarInput): RadarResult {
     hit('B1', 'blank', '接触空白',
       tighten
         ? `最終接点から${blank}日（解約申出の期限まで${deadlineDays}日のため${blankCut}日で判定）`
-        : `最終接点から${blank}日`);
+        : `最終接点から${blank}日`,
+      // どこで途切れたかを辿れるようにする
+      input.lastContactRef
+        ? [{
+            source: input.lastContactRef.source,
+            recordId: input.lastContactRef.recordId,
+            label: `最後の接点（${input.lastContactDate}）`,
+          }]
+        : undefined);
   }
 
   // ── B2: 担当交代の直後 ───────────────────────────────────────────────────
@@ -432,7 +469,13 @@ export function evaluateRadar(input: RadarInput): RadarResult {
     if (stale.length > 0) {
       const worst = stale[0];
       hit('S1', 'blank', '未解決の摩擦',
-        `高重要度チケットが${worst.age}日開いたまま（${stale.length}件）`);
+        `高重要度チケットが${worst.age}日開いたまま（${stale.length}件）`,
+        // 「92日開いたまま」と言われても、そのチケットを開けなければ動けない
+        stale.slice(0, 3).map(x => ({
+          source: 'ticket',
+          recordId: x.t.recordId ?? null,
+          label: x.t.title?.slice(0, 40) ?? `${x.age}日前のチケット`,
+        })));
     }
   }
 
@@ -445,6 +488,9 @@ export function evaluateRadar(input: RadarInput): RadarResult {
         id: v.intentType, layer: 'voice', label: v.label,
         detail: `${v.occurredAt.slice(0, 10)}「${truncate(v.quote, 40)}」`,
         weight: RADAR_WEIGHT.V,
+        ...(v.recordId
+          ? { refs: [{ source: v.sourceType ?? 'minutes', recordId: v.recordId, label: '原文を開く' }] }
+          : {}),
       });
     }
   }

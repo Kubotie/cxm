@@ -18,7 +18,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Loader2, AlertCircle, RefreshCw, ArrowUpRight, CheckCircle2, Gauge as GaugeIcon,
-  MessageSquareQuote,
+  MessageSquareQuote, ExternalLink,
 } from "lucide-react";
 import { useRegisterAiPageContext } from "@/components/ai";
 import {
@@ -26,6 +26,7 @@ import {
   radiusRatio, angleFor, dotRadius, polar, inDangerZone,
 } from "@/lib/churn/radar-scope";
 import { daysToCancelDeadline, CANCEL_NOTICE_DAYS } from "@/lib/churn/radar-rules";
+import { readOwnerFilter, writeOwnerFilter } from "@/lib/churn/radar-prefs";
 import type { RadarBoardResponse, RadarBoardPoint } from "@/app/api/radar/board/route";
 import type { RadarStage, RadarLayer } from "@/lib/churn/radar-rules";
 import type { AckStatus } from "@/lib/churn/radar-state";
@@ -80,7 +81,6 @@ function yen(n: number | null): string {
 
 // ── 本体 ──────────────────────────────────────────────────────────────────────
 
-type OwnerScope = "all" | "mine";
 type ListScope  = "danger" | "lit" | "all";
 type SortKey    = "renewal" | "score" | "aged";
 
@@ -100,7 +100,11 @@ export default function ScopeView() {
   const [data, setData]       = useState<RadarBoardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
-  const [ownerScope, setOwnerScope] = useState<OwnerScope>("all");
+  // 担当フィルタは画面をまたいで保つ（言質レビューと共通）。
+  // レーダーで自分に絞ったのに移動すると全体に戻る、では毎回選び直しになる
+  const [owner, setOwnerState] = useState<string>("all");
+  useEffect(() => { setOwnerState(readOwnerFilter()); }, []);
+  const setOwner = (v: string) => { setOwnerState(v); writeOwnerFilter(v); };
   const [listScope, setListScope]   = useState<ListScope>("danger");
   const [sortKey, setSortKey]       = useState<SortKey>("renewal");
   const [hovered, setHovered] = useState<string | null>(null);
@@ -118,11 +122,19 @@ export default function ScopeView() {
 
   const points = useMemo(() => {
     if (!data) return [];
-    if (ownerScope === "mine" && data.viewerOwnerName) {
-      return data.points.filter(p => p.ownerName === data.viewerOwnerName);
+    if (owner === "all") return data.points;
+    return data.points.filter(p => (p.ownerName ?? "—") === owner);
+  }, [data, owner]);
+
+  /** 担当ごとの件数。押す前に何件になるか分かるようにする */
+  const ownerCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of data?.points ?? []) {
+      const k = p.ownerName ?? "—";
+      m.set(k, (m.get(k) ?? 0) + 1);
     }
-    return data.points;
-  }, [data, ownerScope]);
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [data]);
 
   const lit = useMemo(() => points.filter(p => p.stage !== "clear"), [points]);
 
@@ -179,7 +191,7 @@ export default function ScopeView() {
       })),
     },
     hints: {
-      担当フィルタ: ownerScope === "mine" ? (data?.viewerOwnerName ?? "自分") : "全体",
+      担当フィルタ: owner,
       リスト範囲: listScope,
       読込中: loading,
       エラー: error,
@@ -259,25 +271,28 @@ export default function ScopeView() {
           </p>
         </div>
         <div className="flex gap-1.5 items-center">
-          {(["all", "mine"] as OwnerScope[]).map(s => {
-            // 押す前に何件になるか見せる。件数が出ていないと、押しても
-            // 先頭の顔ぶれが変わらないフィルタは「効いていない」ように見える
-            const n = s === "all"
-              ? (data?.points.length ?? 0)
-              : (data?.points.filter(p => p.ownerName === data?.viewerOwnerName).length ?? 0);
-            return (
-              <button key={s} onClick={() => setOwnerScope(s)}
-                disabled={s === "mine" && !data?.viewerOwnerName}
-                className={`text-[11px] px-2.5 py-1 rounded-full border transition disabled:opacity-40
-                  flex items-center gap-1.5
-                  ${ownerScope === s
-                    ? "bg-slate-900 border-slate-900 text-white font-bold"
-                    : "bg-white border-slate-300 text-slate-600 hover:border-slate-400"}`}>
-                {s === "all" ? "全体" : `自分の担当${data?.viewerOwnerName ? `（${data.viewerOwnerName}）` : ""}`}
-                <span className={`font-mono ${ownerScope === s ? "text-slate-300" : "text-slate-400"}`}>{n}</span>
-              </button>
-            );
-          })}
+          {/* 押す前に何件になるか見せる。件数が出ていないと、押しても
+              先頭の顔ぶれが変わらないフィルタは「効いていない」ように見える */}
+          <button onClick={() => setOwner("all")}
+            className={`text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1.5
+              ${owner === "all"
+                ? "bg-slate-900 border-slate-900 text-white font-bold"
+                : "bg-white border-slate-300 text-slate-600 hover:border-slate-400"}`}>
+            全体
+            <span className={`font-mono ${owner === "all" ? "text-slate-300" : "text-slate-400"}`}>
+              {data?.points.length ?? 0}
+            </span>
+          </button>
+          {ownerCounts.map(([name, n]) => (
+            <button key={name} onClick={() => setOwner(name)}
+              className={`text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1.5
+                ${owner === name
+                  ? "bg-slate-900 border-slate-900 text-white font-bold"
+                  : "bg-white border-slate-300 text-slate-600 hover:border-slate-400"}`}>
+              {name}{data?.viewerOwnerName === name ? "（自分）" : ""}
+              <span className={`font-mono ${owner === name ? "text-slate-300" : "text-slate-400"}`}>{n}</span>
+            </button>
+          ))}
           <button onClick={load} disabled={loading}
             className="text-[11px] px-2.5 py-1 rounded-full border border-slate-300 bg-white text-slate-600
               hover:border-slate-400 transition flex items-center gap-1 disabled:opacity-50">
@@ -641,13 +656,24 @@ function RadarRow({ p, busy, onAck }: {
 
         {p.signals.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            {p.signals.map(s => (
-              <span key={s.id}
-                className={`text-[11px] px-2 py-0.5 rounded flex items-center gap-1 ${
-                  s.layer === "voice" ? "bg-red-50 text-red-800" : "bg-slate-100 text-slate-600"}`}>
-                <b className="font-mono font-semibold opacity-60">{s.id}</b>{s.label}
-              </span>
-            ))}
+            {p.signals.map(s => {
+              // 根拠の現物が開けるものはチップ自体をリンクにする
+              const url = s.refs?.find(r => r.url)?.url ?? null;
+              const cls = `text-[11px] px-2 py-0.5 rounded flex items-center gap-1 ${
+                s.layer === "voice" ? "bg-red-50 text-red-800" : "bg-slate-100 text-slate-600"}`;
+              const body = (
+                <>
+                  <b className="font-mono font-semibold opacity-60">{s.id}</b>{s.label}
+                  {url && <ExternalLink className="w-2.5 h-2.5 opacity-60" />}
+                </>
+              );
+              return url ? (
+                <a key={s.id} href={url} target="_blank" rel="noreferrer"
+                  className={`${cls} hover:underline`}>{body}</a>
+              ) : (
+                <span key={s.id} className={cls}>{body}</span>
+              );
+            })}
           </div>
         )}
 

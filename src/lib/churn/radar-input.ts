@@ -78,7 +78,11 @@ export function factsToInput(facts: RadarFacts, today: string): RadarInput {
   // その日時点で開いていた高重要度チケット
   const openHighTickets: OpenTicket[] = facts.highTickets
     .filter(t => t.openedAt <= today && (t.closedAt === null || t.closedAt > today))
-    .map(t => ({ openedAt: t.openedAt, title: t.title }));
+    .map(t => ({ openedAt: t.openedAt, title: t.title, recordId: t.recordId }));
+
+  // 最終接点の出所。B1 が立ったとき「どこで途切れたか」を辿れるようにする
+  const contactsUpTo = facts.contacts.filter(c => c.date <= today);
+  const lastContact = contactsUpTo.length > 0 ? contactsUpTo[contactsUpTo.length - 1] : null;
 
   return {
     companyUid:  facts.companyUid,
@@ -88,6 +92,8 @@ export function factsToInput(facts: RadarFacts, today: string): RadarInput {
     usage:       facts.usage.filter(d => d.date <= today),
     habituation: facts.habituation.filter(d => d.date <= today),
     lastContactDate,
+    lastContactRef: lastContact
+      ? { source: lastContact.source, recordId: lastContact.recordId } : null,
     ownerChangedAt,
     openHighTickets,
     voices: facts.voices === null ? null : facts.voices.filter(v => v.occurredAt.slice(0, 10) <= today),
@@ -141,12 +147,14 @@ interface RawTicketRow {
 }
 
 interface RawVoiceRow {
-  company_uid?:   string | null;
-  intent_type?:   string | null;
-  intent_label?:  string | null;
-  occurred_at?:   string | null;
-  quoted_text?:   string | null;
-  review_status?: string | null;
+  company_uid?:      string | null;
+  intent_type?:      string | null;
+  intent_label?:     string | null;
+  occurred_at?:      string | null;
+  quoted_text?:      string | null;
+  review_status?:    string | null;
+  source_type?:      string | null;
+  source_record_id?: string | null;
 }
 
 /** "2026-04-07 08:03:51+00:00" / ISO → "YYYY-MM-DD"。壊れていれば null */
@@ -442,6 +450,8 @@ export async function collectRadarFacts(
           label:      r.intent_label?.trim() || '言質',
           occurredAt: ymd(r.occurred_at) ?? '',
           quote:      r.quoted_text?.trim() ?? '',
+          sourceType: r.source_type?.trim() ?? null,
+          recordId:   r.source_record_id?.trim() ?? null,
         }))
         .filter(v => v.occurredAt !== '');
     }
