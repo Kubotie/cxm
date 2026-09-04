@@ -56,6 +56,8 @@ export interface RadarBoardResponse {
   recoveredThisWeek: number;
   longestAged:     { name: string; days: number } | null;
   unacked:         number;
+  /** 言質のレビュー待ち。溜まると critical に上がるはずの企業が上がらない */
+  voiceReviewPending: number;
   points:          RadarBoardPoint[];
   /** セットアップが未完了のときの案内 */
   setupHint?:      string;
@@ -95,6 +97,17 @@ function toPoint(row: RadarStateRow, today: string): RadarBoardPoint {
   };
 }
 
+/** レビュー待ちの言質（要レビューのみ）。溜まっていること自体を画面に出す */
+async function countVoiceReviewPending(): Promise<number> {
+  if (!TABLE_IDS.churn_radar_voice) return 0;
+  const rows = await nocoFetch<{ review_status?: string | null }>(TABLE_IDS.churn_radar_voice, {
+    where:  '(review_status,eq,pending)~and(review_priority,eq,required)',
+    fields: 'review_status',
+    limit:  '500',
+  }, false).catch(() => []);
+  return rows.length;
+}
+
 /** 今週 clear に戻った件数。events から数える（state には残らないため） */
 async function countRecovered(sinceDate: string): Promise<number> {
   if (!TABLE_IDS.churn_radar_events) return 0;
@@ -114,7 +127,7 @@ export async function GET(): Promise<NextResponse<RadarBoardResponse>> {
     ready: false, asOf: null, viewerOwnerName: null,
     counts: { critical: 0, warn: 0, watch: 0, clear: 0, total: 0 },
     dangerZone: 0, dangerZoneMrr: 0, newlyDetected: 0, recoveredThisWeek: 0,
-    longestAged: null, unacked: 0, points: [],
+    longestAged: null, unacked: 0, voiceReviewPending: 0, points: [],
   };
 
   if (!radarTablesReady()) {
@@ -163,6 +176,7 @@ export async function GET(): Promise<NextResponse<RadarBoardResponse>> {
     dangerZoneMrr: danger.reduce((a, p) => a + (p.mrr ?? 0), 0),
     newlyDetected: lit.filter(p => p.isNew).length,
     recoveredThisWeek: await countRecovered(weekAgo),
+    voiceReviewPending: await countVoiceReviewPending(),
     longestAged: longest ? { name: longest.name, days: longest.agedDays as number } : null,
     unacked: lit.filter(p => p.ackStatus === 'none').length,
     // スコアの重い順。スコープは全点を描き、リストは上位だけを使う

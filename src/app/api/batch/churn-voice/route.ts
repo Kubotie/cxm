@@ -11,6 +11,11 @@
 //   uid=sf_xxx     対象を絞る
 //   window_days=30 何日ぶんの文書を見るか
 //
+// ⚠️ 既定の30日窓は「週次で回すため」のもの。**導入直後に一度だけ**、
+//   window_days を広げて過去分を掘り起こす必要がある。エレコムの決定打
+//   （2026-07-03「自動更新でない方が安心だよね」）は30日窓の外にあり、
+//   既定のまま回すと永久に拾われない。remaining が減らなくなるまで繰り返し叩く。
+//
 // 実処理は src/lib/churn/voice-run.ts。
 
 import { NextRequest, NextResponse } from 'next/server';

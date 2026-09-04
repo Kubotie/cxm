@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { nocoFetch, TABLE_IDS } from '@/lib/nocodb/client';
+import { sourceUrl, SOURCE_LABEL } from '@/lib/churn/radar-source';
 import { collectRadarFacts, factsToInput } from '@/lib/churn/radar-input';
 import { evaluateRadar, SIGNAL_SOURCE, type RadarResult } from '@/lib/churn/radar-rules';
 import { fetchRadarState, fetchRadarEvents, parseReason, type AckStatus } from '@/lib/churn/radar-state';
@@ -120,39 +121,6 @@ async function fetchVoices(companyUid: string): Promise<RadarVoiceItem[]> {
     extractReason: r.extract_reason ? String(r.extract_reason) : null,
   })).filter(v => v.voiceId && v.quotedText);
 }
-
-// ── 出所リンク ───────────────────────────────────────────────────────────────
-//
-// **根拠を辿れないものは信じてもらえない。** リンクが張れるもの（Notion / Intercom）は
-// リンクに、張れないもの（Slack / Chatwork）は本文の抜粋で示す。
-// URL の規則は既存の /api/company/[companyUid]/communications と揃えている。
-
-/** Intercom ワークスペースの id_code（Ptengine / US）。秘密情報ではない */
-const INTERCOM_APP_ID = 'cfiqb37k';
-
-function intercomUrl(conversationId: string | null | undefined): string | null {
-  const id = String(conversationId ?? '').trim();
-  if (!/^\d+$/.test(id)) return null;
-  return `https://app.intercom.com/a/inbox/${INTERCOM_APP_ID}/inbox/conversation/${id}`;
-}
-
-/** CSE チケットも議事録も実体は Notion ページ。ハイフンを抜いた32桁で開ける */
-function notionUrl(pageId: string | null | undefined): string | null {
-  const id = String(pageId ?? '').replace(/-/g, '').toLowerCase();
-  return /^[0-9a-f]{32}$/.test(id) ? `https://www.notion.so/${id}` : null;
-}
-
-function sourceUrl(source: string, recordId: string | null): string | null {
-  if (!recordId) return null;
-  if (source === 'intercom') return intercomUrl(recordId);
-  if (source === 'minutes' || source === 'ticket') return notionUrl(recordId);
-  return null;   // slack / chatwork はリンクを持たない。抜粋で示す
-}
-
-const SOURCE_LABEL: Record<string, string> = {
-  minutes: 'Notion 議事録', intercom: 'Intercom', chatwork: 'Chatwork',
-  slack: 'Slack', ticket: 'CSE チケット',
-};
 
 // ── ヘルパー ─────────────────────────────────────────────────────────────────
 

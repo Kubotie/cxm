@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Loader2, AlertCircle, RefreshCw, ArrowUpRight, CheckCircle2, Gauge as GaugeIcon,
+  MessageSquareQuote,
 } from "lucide-react";
 import { useRegisterAiPageContext } from "@/components/ai";
 import {
@@ -273,6 +274,18 @@ export default function ScopeView() {
               hover:border-slate-400 transition flex items-center gap-1 disabled:opacity-50">
             <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />再読込
           </button>
+          {/* レビュー待ちが溜まると、critical に上がるはずの企業が上がらない。
+              件数をここに出して放置させない */}
+          <Link href="/v2/radar/voices"
+            className={`text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1.5
+              ${(data?.voiceReviewPending ?? 0) > 0
+                ? "bg-red-50 border-red-300 text-red-800 font-bold hover:border-red-500"
+                : "bg-white border-slate-300 text-slate-600 hover:border-slate-400"}`}>
+            <MessageSquareQuote className="w-3 h-3" />言質レビュー
+            {(data?.voiceReviewPending ?? 0) > 0 && (
+              <span className="font-mono">{data?.voiceReviewPending}</span>
+            )}
+          </Link>
           <Link href="/v2/radar/accuracy"
             className="text-[11px] px-2.5 py-1 rounded-full border border-slate-300 bg-white text-slate-600
               hover:border-slate-400 transition flex items-center gap-1">

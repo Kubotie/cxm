@@ -59,6 +59,23 @@ const MAX_DOCS = 60;
 
 const DAY_MS = 86400_000;
 
+/**
+ * 引用文から安定した短いキーを作る。
+ *
+ * voice_id を `文書ID:意図` にしていたら、同じ議事録から同じ意図が2件出たときに
+ * 衝突した（実測: React の key 重複 → レビュー時にどちらが更新されるか不定）。
+ * 引用そのものを混ぜて一意にする。**再抽出しても同じ引用なら同じ ID** になるので、
+ * レビュー状態を引き継げる。
+ */
+function quoteKey(text: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+
 function ymd(value: unknown): string | null {
   if (value == null || value === '') return null;
   const m = String(value).trim().match(/^(\d{4}-\d{2}-\d{2})/);
@@ -124,10 +141,16 @@ async function collectDocs(uids: string[], since: string): Promise<SourceDoc[]> 
     }
   }
 
+  // ⚠️ 同じ文書が複数行で入っていることがある（log_notion_minutes に同一 page_id が
+  //    重複）。畳まないと同じ本文を2回 LLM に投げ、同じ引用が2行できる（実測）。
+  //    fetchDoneRecordIds は実行前のスナップショットなので、同一実行内の重複は防げない。
+  const uniq = new Map<string, SourceDoc>();
+  for (const d of docs) if (!uniq.has(d.sourceRecordId)) uniq.set(d.sourceRecordId, d);
+
   // ⚠️ ここで MAX_DOCS に切らない。切ってから処理済みを除くと、上位を処理済みが
   //    占めた時点で対象が 0 件になり、2回目以降がまったく進まなくなる。
   //    上限は「未処理だけに絞ったあと」に適用する（呼び出し側）。
-  return docs.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+  return [...uniq.values()].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
 }
 
 /** 既に抽出済みの source_record_id を引く。同じ文書を二度課金しない */
@@ -218,7 +241,7 @@ export async function runChurnVoice(opts: {
         if (opts.dryRun || !TABLE_IDS.churn_radar_voice) continue;
 
         await nocoCreate(TABLE_IDS.churn_radar_voice, {
-          voice_id:         `${doc.sourceRecordId}:${hit.intent_type}`,
+          voice_id:         `${doc.sourceRecordId}:${hit.intent_type}:${quoteKey(hit.quoted_text)}`,
           company_uid:      doc.companyUid,
           source_type:      doc.sourceType,
           source_record_id: doc.sourceRecordId,
