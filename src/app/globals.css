@@ -200,3 +200,21 @@
 .ai-scrollbox::-webkit-scrollbar-thumb:hover {
   background-color: #94a3b8;
 }
+
+/* ── 解約レーダーのスコープ（/v2/radar）──────────────────────────────────────
+   走査線は「計器が生きているか」を動きで示すためのもの。数字で出すより速く伝わる。
+   点滅は7日以内の新規点灯だけに限る（全部光ると光が意味を失う）。 */
+@keyframes radar-sweep-rot {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(150deg); }
+}
+@keyframes radar-blip-fade {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+.radar-sweep { animation: radar-sweep-rot 7s linear infinite; }
+.radar-blip  { animation: radar-blip-fade 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .radar-sweep { animation: none; transform: rotate(75deg); }
+  .radar-blip  { animation: none; }
+}

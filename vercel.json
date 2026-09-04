@@ -23,6 +23,14 @@
     {
       "path": "/api/batch/intercom-reconcile",
       "schedule": "0 21 * * *"
+    },
+    {
+      "path": "/api/batch/churn-radar",
+      "schedule": "0 20 * * *"
+    },
+    {
+      "path": "/api/batch/churn-voice",
+      "schedule": "0 21 * * 0"
     }
   ]
 }

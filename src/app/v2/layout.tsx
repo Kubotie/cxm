@@ -17,7 +17,7 @@ import { useState } from "react";
 import {
   Target, Layers, ChevronRight, Archive, ArrowLeftRight, Settings,
   Building2, ArrowLeft,
-  BarChart3, House,
+  BarChart3, House, Radar,
 } from "lucide-react";
 
 interface NavItem { title: string; icon: React.ElementType; href: string; note?: string; }
@@ -27,6 +27,7 @@ const NAV: NavItem[] = [
   { title: "ホーム",         icon: House,       href: "/v2" },
   { title: "提案準備ボード", icon: Target,      href: "/v2/readiness", note: "Tier 1–3" },
   { title: "プロジェクト分析", icon: BarChart3, href: "/v2/projects",  note: "30日" },
+  { title: "解約レーダー",   icon: Radar,       href: "/v2/radar",     note: "予兆" },
   { title: "Tier 3 管理",   icon: Layers,      href: "/v2/tier3" },
 ];
 
@@ -37,7 +38,7 @@ const NAV: NavItem[] = [
 const ARCHIVE: { title: string; href: string }[] = [
   { title: "Home（旧）",        href: "/legacy" },
   { title: "Companies（旧）",   href: "/companies" },
-  { title: "解約分析",          href: "/console/churn-analysis" },
+  { title: "解約分析（事後）",   href: "/console/churn-analysis" },
   { title: "Actions",           href: "/actions" },
   { title: "Assets",            href: "/assets" },
   { title: "Documents",         href: "/documents" },

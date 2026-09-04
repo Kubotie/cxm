@@ -54,6 +54,13 @@ export const TABLE_IDS = {
   project_user_snapshots:      process.env.NOCODB_PROJECT_USER_SNAPSHOTS_TABLE_ID ?? 'm9nw1u7b0fztc9v',
   // 解約遡及分析の週次レポート（AI サマリー + JSON）
   churn_retrospective_reports: process.env.NOCODB_CHURN_RETROSPECTIVE_REPORTS_TABLE_ID ?? 'mlbtuf6b5b4732r',
+  // ── 解約レーダー（事前検知）───────────────────────────────────────────────
+  // docs-src/cxm_v2/19_Churn_Radar_Design.md §4。
+  // 未設定なら日次バッチは書き込みをスキップし、UI は 503 + セットアップ手順を返す
+  // （判定ロジック自体は state 無しでもバックテストで動く）。
+  churn_radar_state:           process.env.NOCODB_CHURN_RADAR_STATE_TABLE_ID  ?? '',
+  churn_radar_events:          process.env.NOCODB_CHURN_RADAR_EVENTS_TABLE_ID ?? '',
+  churn_radar_voice:           process.env.NOCODB_CHURN_RADAR_VOICE_TABLE_ID  ?? '',
   // Ptengine「持続休眠（chronic silent）」スナップショット（MCP 出力を ingest API 経由で1回1行保存）
   // 週次解約レポートの AI プロンプト注入・enrichment 用の source。1行 = 1 refMonth の全休眠PJ。
   chronic_silent_snapshots:    process.env.NOCODB_CHRONIC_SILENT_SNAPSHOTS_TABLE_ID ?? 'md9ojsg9528zz2e',
