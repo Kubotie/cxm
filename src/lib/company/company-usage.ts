@@ -16,6 +16,7 @@ import { loadProjectFacts, type ProjectFacts } from '@/lib/company/project-facts
 import { fetchProjectMetrics, type ProjectMetricRow } from '@/lib/nocodb/project-metrics';
 import { pvPeriodStatus } from '@/lib/company/proposal-readiness';
 import { buildModuleSignal, type ModuleSignalVM } from '@/lib/company/module-signals';
+import { buildSuperLoginTargets, type SuperLoginTarget } from '@/lib/company/super-login';
 import { fetchProjectSignalMap, type ProjectSignalData } from '@/lib/metabase/project-signals';
 import { fetchProjectUserActivityMap, type ProjectUserActivity } from '@/lib/metabase/project-user-activity';
 import { fetchLatestChronicSilentSnapshot, buildSilentItemByCompanyUid } from '@/lib/nocodb/chronic-silent';
@@ -98,6 +99,13 @@ export interface CompanyUsageResponse {
   opportunitySignals: { description: string }[];
 
   projects: ProjectUsageItem[];
+
+  /**
+   * 顧客の管理画面へ代理ログインする入口（superLogin）。
+   * 代表メールで束ねてあるので、共通なら1件・分かれていればアドレスの数だけ入る。
+   * **無料PJは含まない。** 空配列 = 有料PJがない、または代表メールが未登録。
+   */
+  loginTargets: SuperLoginTarget[];
 }
 
 // ── ユーティリティ ────────────────────────────────────────────────────────────
@@ -377,6 +385,8 @@ export async function loadCompanyUsage(companyUid: string): Promise<CompanyUsage
     riskSignals:        vm.riskSignals.map(s => ({ severity: s.severity, description: s.description })),
     opportunitySignals: vm.opportunitySignals.map(s => ({ description: s.description })),
     projects: projectItems,
+    // 代理ログインは project_info の代表メールから作る（追加の取得はしない）
+    loginTargets: buildSuperLoginTargets(projects),
   };
 
   return response;

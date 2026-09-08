@@ -467,6 +467,12 @@ export function CompanyDetailView({
   );
 }
 
+/**
+ * 代理ログインのリンクを畳まずに出す本数。これを超えたら「他N件」にする。
+ * 3本出すとヘッダーの右側（プラン/MRR/契約更新/サポート）が2段に折り返したため2本。
+ */
+const LOGIN_LINKS_VISIBLE = 2;
+
 function HeaderCard({ data, sev }: { data: CompanyUsageResponse; sev: typeof SEV[Severity] }) {
   return (
     <Card className={`border-l-4 ${sev.ring}`}>
@@ -483,6 +489,7 @@ function HeaderCard({ data, sev }: { data: CompanyUsageResponse; sev: typeof SEV
           </div>
           <div className="text-[11.5px] text-slate-400 mt-0.5">
             担当: {data.owner === "—" ? "担当なし" : data.owner}{data.tier != null && <span className="ml-2">· Tier {data.tier}</span>}
+            <SuperLoginLinks targets={data.loginTargets ?? []} />
           </div>
         </div>
         <div className="flex-1" />
@@ -498,6 +505,62 @@ function HeaderCard({ data, sev }: { data: CompanyUsageResponse; sev: typeof SEV
         <HeaderStat label="サポート" value={<span className={`text-sm font-bold tabular-nums ${(data.openSupport ?? 0) > 0 ? "text-amber-600" : "text-slate-900"}`}>{data.openSupport ?? 0}<span className="text-[10px] font-normal text-slate-400"> 件</span></span>} />
       </div>
     </Card>
+  );
+}
+
+/**
+ * 顧客の管理画面へ代理ログインする（superLogin）。
+ *
+ * **担当・Tier と同じ行のテキストリンクに留める。** 毎日押すものではないので、
+ * ボタンにするとヘッダーの主役（会社名・重大度・契約）より目立ってしまう。
+ *
+ * リンクは**代表メールアドレス1つにつき1本**（束ね方は `buildSuperLoginTargets` が正本）。
+ * 同じアドレスのPJは1本に畳まれる（実測: 株式会社ポストスケイプの `kondo@` は33PJで1本）。
+ * それでも本数が増えるのは、代理店がPJごとにアカウントを分けているためで、
+ * **減らすとログインできないPJが出る。** そこで
+ *   - 何アカウントあるかを見出しに出して「多い理由」を読めるようにし、
+ *   - 4本目以降は畳んで1行に収める。
+ * **無料版PJは対象外。**
+ */
+function SuperLoginLinks({ targets }: { targets: CompanyUsageResponse["loginTargets"] }) {
+  const [expanded, setExpanded] = useState(false);
+  if (targets.length === 0) return null;
+
+  const shown  = expanded ? targets : targets.slice(0, LOGIN_LINKS_VISIBLE);
+  const hidden = targets.length - shown.length;
+
+  return (
+    <>
+      <span className="ml-2">·</span>
+      {/* アドレスが分かれているときは、いくつのアカウントに分かれているかを先に言う */}
+      {targets.length > 1 && <span className="ml-2">ログイン（{targets.length}アカウント）:</span>}
+      {shown.map(t => (
+        <a
+          key={t.email}
+          href={t.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          // どのアカウントで入るのかは押す前に分かるようにする（代理ログインなので）
+          title={`${t.email} で Ptengine 管理画面にログインします\n対象: ${t.projectNames.join(" / ")}`}
+          className="ml-2 text-slate-500 hover:text-blue-700 underline decoration-dotted"
+        >
+          {targets.length === 1 ? "ログインする" : t.label}
+          <ExternalLink className="inline w-2.5 h-2.5 ml-0.5 align-[-1px]" />
+        </a>
+      ))}
+      {hidden > 0 && (
+        <button onClick={() => setExpanded(true)}
+          className="ml-2 text-slate-400 hover:text-slate-700 underline decoration-dotted">
+          他{hidden}件
+        </button>
+      )}
+      {expanded && targets.length > LOGIN_LINKS_VISIBLE && (
+        <button onClick={() => setExpanded(false)}
+          className="ml-2 text-slate-400 hover:text-slate-700 underline decoration-dotted">
+          畳む
+        </button>
+      )}
+    </>
   );
 }
 

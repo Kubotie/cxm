@@ -1270,6 +1270,7 @@ export interface RawProjectInfo {
   project_name?:   string | null;           // 実テーブル: project_name ✓
   // ── 実テーブルの実カラム ──────────────────────────────────────────────────
   master_company_sf_id?: string | null;     // SF Account ID（company_uid の代替 FK）
+  master_account_email?: string | null;     // プロジェクトの代表メールアドレス ✓
   habituation_status?:   string | null;     // "True" / "False"
   l30_active?:           number | null;     // 過去30日アクティブイベント数
   paid_type?:            string | null;     // "PTI-PAID" / "PTX-PAID" / "FREE"
@@ -1303,6 +1304,11 @@ export interface AppProjectInfo {
   useCase:            string | null;
   health:             'high' | 'medium' | 'low' | null;
   paidType:           string | null;  // "PTI-PAID" / "PTX-PAID" / "FREE"
+  /**
+   * プロジェクトの代表メールアドレス（Ptengine のマスターアカウント）。
+   * 管理画面への代理ログイン（superLogin）に使う。
+   */
+  masterAccountEmail: string | null;
   // ── 利用状況シグナル（UI + AI 用）────────────────────────────────────────
   /** 過去30日アクティブイベント数（利用活動量の直接指標） */
   l30Active:          number | null;
@@ -1370,6 +1376,9 @@ export function toAppProjectInfo(raw: RawProjectInfo, companyUid?: string): AppP
     useCase:            raw.use_case ? String(raw.use_case) : null,
     health,
     paidType:           (raw.paid_type as string | null | undefined) ?? null,
+    masterAccountEmail: raw.master_account_email
+      ? String(raw.master_account_email).trim() || null
+      : null,
     l30Active:          raw.l30_active != null ? Number(raw.l30_active) : null,
     habituationStatus:  raw.habituation_status != null
       ? String(raw.habituation_status).toLowerCase() === 'true'
