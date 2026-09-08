@@ -12,13 +12,18 @@
 //
 // この画面の役割は「提案先を選ぶ」ことだけ。個社の精査は詳細ページに委ねる。
 // レーンは4つ。上から順に、今週手を動かす優先順になっている。
+//
+// レーンとは別に「事例機会」を横串で出す（2026-09-08）。
+// **レーンは「提案していいか」の軸で、事例機会は「話しかける理由」の軸。**
+// 同じ題材のABテストを並べている顧客は、こちらが聞くまでもなく何かを確かめている。
+// 準備度が低くても事例の相談はできるので、レーンには混ぜず絞り込みで探せるようにした。
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Loader2, AlertCircle, Search, ArrowUpRight, CalendarClock,
   Target, Sparkles, Wrench, TrendingDown, Info,
-  HelpCircle, ChevronDown,
+  HelpCircle, ChevronDown, FlaskConical,
 } from "lucide-react";
 import { InfoTip } from "@/components/ui/info-tip";
 import { useRegisterAiPageContext } from "@/components/ai";
@@ -27,6 +32,9 @@ import type {
   ProposalBoardResponse, BoardItem, BoardLane,
 } from "@/app/api/companies/proposal-board/route";
 import type { ReadinessLevel } from "@/lib/company/proposal-readiness";
+import {
+  STRENGTH_META as CASE_STRENGTH_META, CASE_OPPORTUNITY_LIMITS,
+} from "@/lib/company/case-opportunity";
 import {
   FACTOR_META, BLOCKER_META, READINESS_CAP_NOTE, USAGE_METRIC_META, BLOCKER_VS_SCORE_NOTE,
 } from "@/lib/company/proposal-readiness";
@@ -107,6 +115,8 @@ export function ReadinessBoardView() {
   const [q, setQ]           = useState("");
   const [owner, setOwner]   = useState<string>("all");
   const [tiers, setTiers]   = useState<Set<number>>(new Set([1, 2, 3]));
+  /** 事例機会があるものだけに絞る。レーン横断で探すための軸 */
+  const [caseOnly, setCaseOnly] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -123,9 +133,20 @@ export function ReadinessBoardView() {
     return data.items.filter(i =>
       (owner === "all" || i.owner === owner)
       && (i.tier == null || tiers.has(i.tier))
+      && (!caseOnly || i.caseOpportunity !== null)
       && (kw === "" || i.companyName.toLowerCase().includes(kw) || i.owner.toLowerCase().includes(kw))
     );
-  }, [data, q, owner, tiers]);
+  }, [data, q, owner, tiers, caseOnly]);
+
+  /** 事例機会の件数（Tier・担当の絞り込みは反映し、事例機会トグル自体は除く） */
+  const caseCount = useMemo(() => {
+    if (!data) return 0;
+    return data.items.filter(i =>
+      (owner === "all" || i.owner === owner)
+      && (i.tier == null || tiers.has(i.tier))
+      && i.caseOpportunity !== null,
+    ).length;
+  }, [data, owner, tiers]);
 
   const byLane = useMemo(() => {
     const m: Record<BoardLane, BoardItem[]> = { renewal: [], ready: [], conditional: [], hold: [] };
@@ -147,7 +168,11 @@ export function ReadinessBoardView() {
       shownItems: filtered.length,
       items: filtered,
     },
-    hints: { 検索語: q, 担当フィルタ: owner, Tierフィルタ: Array.from(tiers), 読込中: loading, エラー: error },
+    hints: {
+      検索語: q, 担当フィルタ: owner, Tierフィルタ: Array.from(tiers),
+      事例機会のみ: caseOnly, 事例機会の社数: caseCount,
+      読込中: loading, エラー: error,
+    },
     sources: [
       {
         label: "提案準備ボード",
@@ -196,6 +221,7 @@ export function ReadinessBoardView() {
               Tier 1–3 / {data.counts.all}社
               {data.snapshotDate && ` ・ スナップショット ${data.snapshotDate}`}
               {data.trendFromDate && ` ・ 推移起点 ${data.trendFromDate}`}
+              {data.caseAsOf && ` ・ 事例機会 ${data.caseAsOf} 時点（${data.caseEvaluatedCount}社を評価）`}
             </p>
           </div>
 
@@ -212,6 +238,21 @@ export function ReadinessBoardView() {
                 </button>
               ))}
             </div>
+
+            {/* 事例機会。レーン横断で「話しかける理由がある顧客」を探す軸 */}
+            <button
+              onClick={() => setCaseOnly(v => !v)}
+              title={"同じ題材のABテストを2本以上、実際に配信している顧客です。\n"
+                + "顧客が自分で何かを確かめている状態で、結果を相手が持っています。\n"
+                + "判定は施策名からの推定で、成果の数値は含まれません。"}
+              className={`h-[32px] inline-flex items-center gap-1.5 px-2.5 rounded-[8px] text-[11.5px] font-bold border transition
+                ${caseOnly
+                  ? "bg-violet-600 text-white border-violet-600"
+                  : "bg-white text-slate-500 border-slate-300 hover:border-slate-400"}`}>
+              <FlaskConical className="w-3.5 h-3.5" />
+              事例機会
+              <span className="tabular-nums">{caseCount}</span>
+            </button>
 
             {/* 担当 */}
             <select value={owner} onChange={e => setOwner(e.target.value)}
@@ -321,7 +362,7 @@ function LegendPanel() {
         <HelpCircle className="w-4 h-4 text-slate-400 shrink-0" />
         <span className="text-[12.5px] font-bold text-slate-800">指標とフラグの見方</span>
         <span className="text-[11px] text-slate-400">
-          準備度の4要素・カードの数字・赤いフラグ{BLOCKER_META.length}種類の定義
+          準備度の4要素・カードの数字・事例機会・赤いフラグ{BLOCKER_META.length}種類の定義
         </span>
         <ChevronDown className={`w-4 h-4 text-slate-400 ml-auto shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
@@ -410,6 +451,40 @@ function LegendPanel() {
               {READINESS_CAP_NOTE.map((n, i) => (
                 <li key={i} className="text-[11.5px] text-slate-700 flex gap-1.5">
                   <span className="text-slate-300 shrink-0">・</span><span>{n}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* 事例機会 */}
+          <div>
+            <h3 className="text-[12px] font-bold text-slate-800">事例機会</h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              施策名から「顧客がいま何を確かめようとしているか」を読んでいます。
+              同じ題材（動画・レビュー・クーポンなど）のABテストを
+              <span className="font-semibold">2本以上、実際に配信している</span>ときに立ちます。
+              施策の本数を見る指標ではありません。
+              <span className="font-semibold">顧客が自分で検証している = 結果を相手が持っている</span>ため、
+              事例取材・共同発信の打診先になり、提案の文脈もそこに合わせられます。
+            </p>
+            <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-1.5">
+              {(["done", "running", "weak"] as const).map(k => {
+                const m = CASE_STRENGTH_META[k];
+                const tone = CASE_TONE[m.tone] ?? CASE_TONE.violet;
+                return (
+                  <div key={k} className={`rounded-[8px] border px-3 py-2 ${tone.box}`}>
+                    <span className={`text-[10.5px] font-bold px-1.5 py-0.5 rounded ${tone.chip}`}>{m.label}</span>
+                    <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">{m.hint}</p>
+                  </div>
+                );
+              })}
+            </div>
+            {/* **判定の限界を凡例に必ず出す。** 成果が入っていないデータで
+                「効いた」と読ませないため */}
+            <ul className="mt-2 space-y-0.5">
+              {CASE_OPPORTUNITY_LIMITS.map((l, i) => (
+                <li key={i} className="text-[11px] text-slate-500 flex gap-1.5">
+                  <span className="text-slate-300 shrink-0">・</span><span>{l}</span>
                 </li>
               ))}
             </ul>
@@ -609,6 +684,10 @@ function CompanyCard({ item, accent, bar }: { item: BoardItem; accent: string; b
           </div>
         )}
 
+        {/* 事例機会。**赤いフラグの上に置く。** 「話しかける理由」なので、
+            片付けるべきこと（ブロッカー）より先に目に入る位置に出す */}
+        {item.caseOpportunity && <CaseOpportunityRow brief={item.caseOpportunity} />}
+
         {/* ブロッカー */}
         {item.blockers.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-2.5">
@@ -647,5 +726,60 @@ function CompanyCard({ item, accent, bar }: { item: BoardItem; accent: string; b
         )}
       </div>
     </Link>
+  );
+}
+
+// ── 事例機会 ──────────────────────────────────────────────────────────────────
+//
+// **「施策が何本あるか」ではなく「何を確かめようとしているか」を出す。**
+// カードには1行だけ載せ、根拠の現物（施策名）は個社ページの
+// 「施策から読む組織の動き」で確認する。
+
+const CASE_TONE: Record<string, { box: string; chip: string }> = {
+  emerald: { box: "border-emerald-200 bg-emerald-50/60", chip: "bg-emerald-600 text-white" },
+  violet:  { box: "border-violet-200 bg-violet-50/60",   chip: "bg-violet-600 text-white" },
+  amber:   { box: "border-amber-200 bg-amber-50/60",     chip: "bg-amber-500 text-white" },
+};
+
+function CaseOpportunityRow({ brief }: { brief: NonNullable<BoardItem["caseOpportunity"]> }) {
+  const meta = CASE_STRENGTH_META[brief.strength];
+  const tone = CASE_TONE[meta.tone] ?? CASE_TONE.violet;
+
+  return (
+    <div
+      className={`mt-2.5 rounded-[8px] border px-2.5 py-2 ${tone.box}`}
+      title={[
+        brief.reading,
+        brief.partial
+          ? "※ 保存済みの「最近の施策」からの暫定判定です。本数は実際より少なく出ます（翌朝のバッチで全件判定に置き換わります）。"
+          : null,
+        "",
+        ...CASE_OPPORTUNITY_LIMITS,
+      ].filter(Boolean).join("\n")}
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-0.5 ${tone.chip}`}>
+          <FlaskConical className="w-2.5 h-2.5" />事例機会
+        </span>
+        <span className="text-[11.5px] font-bold text-slate-900">{brief.label}</span>
+        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/80 text-slate-600">
+          {meta.label}
+        </span>
+        <span className="text-[10.5px] text-slate-500 tabular-nums">
+          AB {brief.abCount}
+          {brief.partial ? "本以上" : "本"}
+          {brief.runningCount > 0 && `（配信中 ${brief.runningCount}）`}
+          {brief.parallel >= 3 && ` ・ ${brief.parallel}対象で並行`}
+        </span>
+      </div>
+      {/* 顧客が確かめようとしていること。ここが提案の入口になる */}
+      <p className="text-[11px] text-slate-700 mt-1 leading-relaxed">
+        {brief.surfaces.length > 0 && <span className="font-semibold">{brief.surfaces.join("・")}で</span>}
+        「{brief.question}」を
+        {/* 配信中が無ければ過去形。「検証済み」に「検証中」と書くと読み手が混乱する */}
+        {brief.runningCount > 0 ? "検証中" : "検証していました"}
+        {brief.withGoal === 0 && <span className="text-amber-700 font-semibold">（ゴール未設定で効果は測れていない）</span>}
+      </p>
+    </div>
   );
 }

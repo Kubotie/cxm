@@ -79,6 +79,51 @@ export async function fetchCampaignOrgRowIds(): Promise<Map<string, number>> {
   return out;
 }
 
+/**
+ * 全社分の「事例機会」だけを一括で読む。**一覧（提案準備ボード）用。**
+ *
+ * 事例機会の判定には施策名が必要で、施策名は明細CSV（13.8MB）にしかない。
+ * 一覧から明細は引けない（本番コールドで28.8秒）ため、
+ * **日次バッチが保存した payload から該当部分だけを取り出す。**
+ *
+ * ⚠️ payload_json は1社あたり十数KBある。**パースしたら必要な枝だけ残して捨てる**
+ *   （全体を保持すると102社分がメモリに残る）。
+ *   実測（2026-09-08 / dev）: この読み取りを含めてボード API 全体が 1.0〜2.5秒。
+ * ⚠️ NocoDB は列を指定して JSON の中を絞れないので、行の絞り込みもしない
+ *   （company_uid を100件並べた where はクエリが長くなりすぎる）。
+ *   このテーブルは Tier1-3 しか入っていないので、全行読んで索引する。
+ */
+export async function fetchCaseOpportunityBriefs<T>(
+  extract: (payload: unknown) => T | null,
+): Promise<Map<string, { value: T; computedAt: string | null }>> {
+  const tableId = TABLE_IDS.company_campaign_org;
+  const out = new Map<string, { value: T; computedAt: string | null }>();
+  if (!tableId) return out;
+
+  // limit は最大2000で黙って切り詰められる。1000ずつ回す
+  for (let page = 0; page < 3; page++) {
+    const rows = await nocoFetch<CampaignOrgRow>(tableId, {
+      fields: 'company_uid,payload_json,computed_at_jst',
+      limit:  '1000',
+      offset: String(page * 1000),
+    }, false).catch(() => [] as CampaignOrgRow[]);
+
+    for (const r of rows) {
+      if (!r.company_uid || !r.payload_json || out.has(r.company_uid)) continue;
+      try {
+        // extract が null を返した = この行では判定できない（形式が古い等）。
+        // 「判定したが該当なし」は extract 側が値で表現する（キーの有無で区別する）
+        const value = extract(JSON.parse(r.payload_json));
+        if (value !== null) out.set(r.company_uid, { value, computedAt: r.computed_at_jst });
+      } catch {
+        // 壊れた行は黙って飛ばす（1社の欠損で一覧を落とさない）
+      }
+    }
+    if (rows.length < 1000) break;
+  }
+  return out;
+}
+
 export async function saveCampaignOrg(input: {
   companyUid:    string;
   companyName:   string | null;

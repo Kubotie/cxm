@@ -25,6 +25,7 @@ import {
   composeCompanyCampaigns, paidProjectsOf, CAMPAIGN_LIMITATIONS,
   type CompanyCampaignsResponse,
 } from '@/lib/company/company-campaigns';
+import { buildCaseOpportunity, caseOpportunityFromRecent } from '@/lib/company/case-opportunity';
 import { fetchStoredCampaignOrg } from '@/lib/nocodb/campaign-org-cache';
 
 export const maxDuration = 120;
@@ -47,12 +48,17 @@ export async function GET(
       .catch(() => ({ payload: null, computedAt: null, ageHours: null }));
     if (cached.payload) {
       // 日次バッチが古い形式で保存している間も壊れないようにする。
-      // （`direction` は 2026-08-25 に追加。次のバッチで埋まる）
+      // （`direction` は 2026-08-25 / `caseOpportunity` は 2026-09-08 に追加。
+      //   いずれも次のバッチで埋まる）
       const payload = cached.payload;
       return NextResponse.json({
         ...payload,
         org: { ...payload.org, direction: payload.org?.direction ?? EMPTY_DIRECTION,
                summaries: { direction: '', ...(payload.org?.summaries ?? {}) } },
+        // 判定を持たない保存（2026-09-08 より前）は、同じ payload の施策名から
+        // 暫定判定する（本数は実際より少なく出るので partial を立てる）
+        caseOpportunity: payload.caseOpportunity
+          ?? caseOpportunityFromRecent(payload.org?.recent ?? []),
         fromCache:  true,
         computedAt: cached.computedAt,
       } satisfies CompanyCampaignsResponse);
@@ -73,6 +79,7 @@ export async function GET(
       companyUid, companyName: company.name, projects: [],
       activity: aggregateCampaignSignals([]),
       org: buildCampaignOrg([] as CampaignDetailRow[]),
+      caseOpportunity: buildCaseOpportunity([] as CampaignDetailRow[]),
       limitations: CAMPAIGN_LIMITATIONS, cacheAgeSec: null, fromCache: false,
     } satisfies CompanyCampaignsResponse);
   }

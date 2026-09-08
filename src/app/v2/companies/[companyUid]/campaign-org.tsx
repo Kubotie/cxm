@@ -13,15 +13,22 @@
 //   - 無題を除いた件数（24%は無題）
 //   - 削除の内訳（DELETEDの70%は一度も公開されていない）
 //   - このデータで答えられないこと（停止時刻・成果が無い）
+//
+// 「誰が動いているか」の下に **「何を確かめようとしているか」** を出す（2026-09-08）。
+// 同じ題材のABテストが並んでいるとき、それは施策の本数ではなく一つの検証プログラムで、
+// 顧客の部署が今期何に賭けているかがそこに出る。事例・共同発信の打診先にもなる。
 
 import { useEffect, useState } from "react";
 import {
   Loader2, AlertCircle, Users, Sparkles, ChevronDown, Info,
-  UserPlus, UserMinus, Clock,
+  UserPlus, UserMinus, Clock, FlaskConical,
 } from "lucide-react";
 import { InfoTip } from "@/components/ui/info-tip";
 import type { CompanyCampaignsResponse } from "@/app/api/company/[companyUid]/campaigns/route";
 import { ACTIVITY_META } from "@/lib/company/campaign-signals";
+import {
+  STRENGTH_META as CASE_STRENGTH_META, type CaseOpportunityVM,
+} from "@/lib/company/case-opportunity";
 
 const TONE: Record<string, string> = {
   red:   "bg-red-50 text-red-700",
@@ -193,6 +200,10 @@ export function CampaignOrgSection({ companyUid }: { companyUid: string }) {
         </div>
       )}
 
+      {/* **何を確かめようとしているか。** 方針の変化の直後に置く。
+          「どこへ向かっているか」の次に来る問いが「何を検証しているか」なので */}
+      <CaseOpportunityBlock vm={data.caseOpportunity} />
+
       {/* 内訳（数字の裏づけ） */}
       <details className="mt-2">
         <summary className="text-[11.5px] text-slate-500 cursor-pointer hover:text-slate-900">
@@ -360,6 +371,137 @@ function Stat({ label, value, hint, warn = false }: {
       <div className={`text-[15px] font-bold tabular-nums mt-0.5 ${warn ? "text-amber-700" : "text-slate-900"}`}>
         {value}
       </div>
+    </div>
+  );
+}
+
+// ── 事例機会 ──────────────────────────────────────────────────────────────────
+//
+// **「施策を6本作った」と「動画が売上に効くかを6対象で検証している」は別の情報。**
+// 後者は顧客の部署がいま何に賭けているかで、提案の文脈になり、
+// 検証が終われば事例・共同発信の相談ができる。
+//
+// 出すのは「事実 → 読み取り → 根拠の現物（施策名）」の順。
+// 成果はこのデータに無いので、**結果は本人に聞く**ことを画面に書く。
+
+const CASE_TONE: Record<string, { box: string; chip: string }> = {
+  emerald: { box: "border-emerald-200 bg-emerald-50/60", chip: "bg-emerald-600 text-white" },
+  violet:  { box: "border-violet-200 bg-violet-50/60",   chip: "bg-violet-600 text-white" },
+  amber:   { box: "border-amber-200 bg-amber-50/60",     chip: "bg-amber-500 text-white" },
+};
+
+function CaseOpportunityBlock({ vm }: { vm: CaseOpportunityVM | undefined }) {
+  const [openKey, setOpenKey] = useState<string | null>(null);
+
+  // 事前計算が古い形式（この項目が無い）ときは、何も言わずに出さない。
+  // 「該当なし」と表示すると、判定していないことを判定結果と読まれる
+  if (!vm) return null;
+
+  if (vm.themes.length === 0) {
+    return (
+      <div className="mt-3 border-t border-slate-100 pt-3">
+        <div className="flex items-center gap-1.5">
+          <FlaskConical className="w-3.5 h-3.5 text-slate-400" />
+          <h4 className="text-[12px] font-bold text-slate-800">何を検証しているか</h4>
+          <InfoTip text="同じ題材（動画・レビュー・クーポンなど）のABテストが2本以上、実際に配信されているときに立ちます。施策名からの推定です。" />
+        </div>
+        <p className="text-[12px] text-slate-500 mt-1.5">{vm.summary || "検証の題材は読み取れませんでした。"}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <FlaskConical className="w-3.5 h-3.5 text-violet-500" />
+        <h4 className="text-[12px] font-bold text-slate-800">何を検証しているか（事例機会）</h4>
+        <InfoTip text="同じ題材のABテストが2本以上、実際に配信されているものを拾っています。顧客が自分で効果を確かめている状態なので、結果は相手が持っています。判定は施策名からの推定で、成果の数値は含まれません。" />
+      </div>
+
+      <p className="text-[12.5px] text-slate-900 mt-1.5 leading-relaxed border-l-[3px] border-violet-500 pl-3">
+        {vm.summary}
+      </p>
+
+      {/* 暫定判定であることを隠さない。本数が実際より少なく出る */}
+      {vm.partial && (
+        <p className="text-[11px] text-amber-700 mt-1.5">
+          保存済みの「最近の施策」（最大40件）だけから出した暫定判定です。本数は実際より少なく出ます。
+          全件で判定するには右上の「更新」を押してください（翌朝のバッチでも置き換わります）。
+        </p>
+      )}
+
+      <div className="mt-2 space-y-2">
+        {vm.themes.map(t => {
+          const meta = CASE_STRENGTH_META[t.strength];
+          const tone = CASE_TONE[meta.tone] ?? CASE_TONE.violet;
+          const open = openKey === t.key;
+          return (
+            <div key={t.key} className={`rounded-[8px] border px-3 py-2.5 ${tone.box}`}>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded ${tone.chip}`} title={meta.hint}>
+                  {meta.label}
+                </span>
+                <span className="text-[12.5px] font-bold text-slate-900">{t.label}</span>
+                {t.surfaces.map(sf => (
+                  <span key={sf} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-white/80 text-slate-600"
+                    title="施策名からの推定です（実際のURLはデータに含まれません）">
+                    {sf}
+                  </span>
+                ))}
+                {t.parallel >= 3 && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/80 text-violet-700"
+                    title="施策名の末尾だけが違うもの。対象（店舗・ブランド・枠）を分けて同じ型を並行させています">
+                    {t.parallel}対象で並行
+                  </span>
+                )}
+              </div>
+
+              {/* 読み取り。推定は文中で推定と言う */}
+              <p className="text-[12px] text-slate-800 mt-1.5 leading-relaxed">{t.reading}</p>
+
+              {/* 事実（数字）。読み取りの裏づけ */}
+              <p className="text-[10.5px] text-slate-500 mt-1 tabular-nums">
+                {t.fact}{vm.partial && "（暫定・実際はこれ以上）"}
+              </p>
+
+              {/* 根拠の現物。施策名を見れば読み取りが妥当か判断できる */}
+              <button onClick={() => setOpenKey(open ? null : t.key)}
+                className="mt-1.5 text-[11px] text-slate-600 hover:text-slate-900 inline-flex items-center gap-0.5">
+                {open ? "施策名を隠す" : `根拠の施策名を見る（${t.samples.length}件）`}
+                <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} />
+              </button>
+              {open && (
+                <div className="mt-1 space-y-0.5">
+                  {t.samples.map((sp, i) => (
+                    <div key={i} className="flex flex-wrap items-baseline gap-x-2 text-[11px]">
+                      <span className="text-[10px] text-slate-400 tabular-nums shrink-0 w-[4.5rem]">
+                        {sp.createdAt?.slice(0, 10) ?? "—"}
+                      </span>
+                      <span className={`text-[9.5px] font-bold px-1 py-px rounded shrink-0 ${STATUS_TONE[sp.status] ?? "bg-slate-100 text-slate-500"}`}>
+                        {sp.status}
+                      </span>
+                      {!sp.hasGoal && (
+                        <span className="text-[9.5px] font-bold px-1 py-px rounded bg-amber-50 text-amber-700 shrink-0"
+                          title="ゴールが設定されていないため、この施策では効果を測れません">ゴール無</span>
+                      )}
+                      <span className="text-slate-800 min-w-0 flex-1">{sp.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* **成果が無いことを必ず書く。** ここを省くと「効いた」と読まれる */}
+      <ul className="mt-2 space-y-0.5">
+        {vm.limits.map((l, i) => (
+          <li key={i} className="text-[10.5px] text-slate-400 flex gap-1.5">
+            <span className="text-slate-300 shrink-0">・</span><span>{l}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

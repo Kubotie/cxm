@@ -9,6 +9,9 @@
 import type { CampaignDetailRow, CampaignSummary } from '@/lib/metabase/project-campaigns';
 import { buildCampaignOrg, type CampaignOrgVM } from '@/lib/company/campaign-org-signals';
 import { aggregateCampaignSignals, type CampaignSignalVM } from '@/lib/company/campaign-signals';
+import {
+  buildCaseOpportunity, EMPTY_CASE_OPPORTUNITY, type CaseOpportunityVM,
+} from '@/lib/company/case-opportunity';
 import type { AppProjectInfo } from '@/lib/nocodb/types';
 
 export interface CompanyCampaignsResponse {
@@ -20,6 +23,13 @@ export interface CompanyCampaignsResponse {
   activity: CampaignSignalVM;
   /** 組織の動き（明細由来） */
   org: CampaignOrgVM;
+  /**
+   * 事例機会。**「運用が回っているか」とは別の軸。**
+   * 同じ題材のABテストが並んでいれば、それは施策の本数ではなく
+   * 「顧客がいま何を確かめようとしているか」で、事例の打診先になる。
+   * 古い保存済みには入っていないので、読む側は既定値を用意する。
+   */
+  caseOpportunity?: CaseOpportunityVM;
   /** このデータで答えられないこと。画面に明記する */
   limitations: string[];
   cacheAgeSec: number | null;
@@ -28,6 +38,8 @@ export interface CompanyCampaignsResponse {
   /** 事前計算の時刻（JST）。fromCache のときだけ入る */
   computedAt?: string | null;
 }
+
+export { EMPTY_CASE_OPPORTUNITY };
 
 export const CAMPAIGN_LIMITATIONS = [
   '施策をいつ停止したかは分かりません（停止時刻の列がありません）。PAUSED は現在の状態であって履歴ではありません。',
@@ -66,6 +78,7 @@ export function composeCompanyCampaigns(input: {
     projects:    projectRows,
     activity:    aggregateCampaignSignals(input.paid.map(p => input.summary.get(p.id) ?? null)),
     org:         buildCampaignOrg(rows),
+    caseOpportunity: buildCaseOpportunity(rows),
     limitations: CAMPAIGN_LIMITATIONS,
     cacheAgeSec: input.cacheAgeSec,
   };

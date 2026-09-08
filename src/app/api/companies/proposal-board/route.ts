@@ -10,6 +10,10 @@
 //   議事録本文からのキーワード抽出は102社分読むと重いため、個社ページ側で行う。
 //   テーブル未設定なら全社「機会なし」となり、従来と同じ挙動になる（安全側）。
 //
+// 事例機会（§11 の外部機会とは別軸）: 施策名から「顧客がいま何をAB検証しているか」を読む。
+//   施策名は明細CSV（13.8MB）にしかないため、**日次バッチが保存した判定結果だけを読む**。
+//   保存が無い企業は「事例機会なし」ではなく「未評価」として扱う（notEvaluated に明記）。
+//
 // **このボードは「今週どこを見るか」の一覧に徹する。**
 //   当てるWHATの候補・状況チップ・カタログの状態は個社ページの「提案準備」タブへ移した
 //   （2026-08-22）。一覧で両方やるとカードが縦に伸び、絞り込みができなくなる。
@@ -44,6 +48,12 @@ import { aggregateModuleSignals, type ModuleSignalVM } from '@/lib/company/modul
 import { fetchLatestCommunicationDatesByUids } from '@/lib/nocodb/communication-logs';
 import { fetchExternalIntelByUids } from '@/lib/nocodb/external-intel';
 import { buildExternalOpportunity, type ExternalSignalItem } from '@/lib/company/external-signal';
+import { fetchCaseOpportunityBriefs } from '@/lib/nocodb/campaign-org-cache';
+import {
+  caseOpportunityFromRecent,
+  type CaseOpportunityBrief, type CaseOpportunityVM,
+} from '@/lib/company/case-opportunity';
+import type { CampaignOrgVM } from '@/lib/company/campaign-org-signals';
 import {
   calcProposalReadiness,
   decideProposalPlay,
@@ -95,6 +105,16 @@ export interface BoardItem {
   externalSignalCount: number;
   /** 最新の外部事象の日付 */
   externalLatestDate: string | null;
+
+  /**
+   * 事例機会。**同じ題材のABテストが並んでいる = 顧客が何かを確かめている。**
+   * 「施策が何本あるか」ではなく「何を検証しているか」なので、
+   * 提案の文脈合わせと事例・共同発信の打診先の判断に使う。
+   * null = 該当なし、または明細の事前計算がまだ無い（区別は caseEvaluated で示す）。
+   */
+  caseOpportunity: CaseOpportunityBrief | null;
+  /** この企業の施策名を評価できたか。false = 事前計算が無いので「なし」と読ませない */
+  caseEvaluated:   boolean;
 
   /** 企業内の有料プロジェクトを合算した利用実態 */
   usage: {
@@ -170,6 +190,10 @@ export interface ProposalBoardResponse {
   };
   /** owner フィルタ用の候補 */
   owners: string[];
+  /** 事例機会の判定に使った事前計算の時刻（JST）。null = 事前計算が無い */
+  caseAsOf: string | null;
+  /** 事例機会を評価できた社数（分母は items.length） */
+  caseEvaluatedCount: number;
   /** WHAT カタログの状態（候補が0件のとき理由を UI に出す） */
 
   /**
@@ -199,7 +223,7 @@ export async function GET(req: NextRequest) {
   const pastDate = nDaysAgoDateStr(TREND_WINDOW_DAYS);
 
   const [
-    latestSnaps, pastSnaps, projectsByUid, commDates, intelByUid,
+    latestSnaps, pastSnaps, projectsByUid, commDates, intelByUid, caseByUid,
   ] = await Promise.all([
     fetchLatestSnapshotsByUids(uids).catch(() => new Map()),
     fetchSnapshotsByDate(uids, pastDate).catch(() => new Map()),
@@ -207,6 +231,19 @@ export async function GET(req: NextRequest) {
     // companies.last_contact は SF sync 由来で古いことがあるため、実ログの最終日を使う
     fetchLatestCommunicationDatesByUids(uids).catch(() => new Map()),
     fetchExternalIntelByUids(uids).catch(() => new Map<string, ExternalSignalItem[]>()),
+    // 事例機会は日次バッチの保存済みから「最も強い1本」だけを取り出す。
+    // 明細（13.8MB）はここでは絶対に引かない
+    // 「判定して該当なし」と「まだ判定していない」を混ぜないため、
+    // 該当なしは `{ top: null }` を値として持たせ、未評価はキーを作らない
+    fetchCaseOpportunityBriefs<{ top: CaseOpportunityBrief | null }>(payload => {
+      const p = payload as
+        { caseOpportunity?: CaseOpportunityVM; org?: CampaignOrgVM } | null;
+      if (p?.caseOpportunity) return { top: p.caseOpportunity.top ?? null };
+      // 判定を持たない保存（2026-09-08 より前）は、同じ payload の施策名から暫定判定する。
+      // 次のバッチで全件判定に置き換わる
+      if (p?.org?.recent) return { top: caseOpportunityFromRecent(p.org.recent).top };
+      return null;
+    }).catch(() => new Map<string, { value: { top: CaseOpportunityBrief | null }; computedAt: string | null }>()),
   ]);
 
   // 事前計算（朝のバッチ）を優先し、揃っていなければ CSV に落ちる。
@@ -276,6 +313,8 @@ export async function GET(req: NextRequest) {
       renewalBucket,
     });
 
+    const caseRow = caseByUid.get(company.id);
+
     // 外部機会は企業ごとに自動判定する（保存済みシグナルのみ / §11）
     const external = buildExternalOpportunity(intelByUid.get(company.id) ?? []);
     const hasOpportunity = forceOpportunity || external.hasOpportunity;
@@ -303,6 +342,9 @@ export async function GET(req: NextRequest) {
       hasExternalOpportunity: hasOpportunity,
       externalSignalCount:   external.activeSignals.length,
       externalLatestDate:    external.latestDate,
+
+      caseOpportunity: caseRow?.value.top ?? null,
+      caseEvaluated:   caseRow !== undefined,
 
       usage: agg
         ? {
@@ -357,6 +399,8 @@ export async function GET(req: NextRequest) {
       hold:        items.filter(i => i.lane === 'hold').length,
     },
     owners,
+    caseAsOf: [...caseByUid.values()].map(v => v.computedAt).filter(Boolean).sort().at(-1) ?? null,
+    caseEvaluatedCount: items.filter(i => i.caseEvaluated).length,
     items,
     notEvaluated: [
       '「他ツールで代替可能」の認知（議事録の読解が必要 — 個社ページで評価）',
@@ -364,6 +408,7 @@ export async function GET(req: NextRequest) {
       '部門別の準備度（一覧は会社単位の粗い指標 — 部門差は個社ページで確認）',
       '議事録からの外部シグナル抽出（一覧は登録済みの外部情報のみ — 個社ページで議事録も走査）',
       'アクティブユーザー数の推移（H4）— ユーザー数の履歴を保持していないため未実装',
+      '事例機会は施策名からの推定です（日次バッチの保存済みを読むため前日時点）。施策の成果とゴールの中身は含まれないので、結果は本人に確認してください。',
     ],
   };
 
@@ -581,6 +626,8 @@ function emptyResponse(): ProposalBoardResponse {
     trendFromDate: null,
     counts: { all: 0, renewal: 0, ready: 0, conditional: 0, hold: 0 },
     owners: [],
+    caseAsOf: null,
+    caseEvaluatedCount: 0,
     items:  [],
     notEvaluated: [],
   };
