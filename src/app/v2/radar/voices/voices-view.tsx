@@ -124,15 +124,24 @@ export default function VoicesView() {
     }
   };
 
-  /** 担当ごとの件数。押す前に何件になるか分かるようにする */
+  /**
+   * 担当ごとの件数。押す前に何件になるか分かるようにする。
+   *
+   * ⚠️ 選択中の担当が候補に無いときも必ず出す。実測（2026-09-09）で、
+   *   要レビュー17件が全員 BB 担当だったため候補が1人になり、
+   *   「2人以上いるときだけ出す」条件でフィルタ行ごと消えていた。
+   *   別の担当を選んだまま候補から外れると、解除する手段が画面から無くなる。
+   */
   const ownerCounts = useMemo(() => {
     const m = new Map<string, number>();
     for (const v of data?.items ?? []) {
       const k = v.ownerName ?? "—";
       m.set(k, (m.get(k) ?? 0) + 1);
     }
-    return [...m.entries()].sort((a, b) => b[1] - a[1]);
-  }, [data]);
+    const list = [...m.entries()].sort((a, b) => b[1] - a[1]);
+    if (owner !== "all" && !list.some(([n]) => n === owner)) list.push([owner, 0]);
+    return list;
+  }, [data, owner]);
 
   const items = useMemo(
     () => (data?.items ?? []).filter(v => owner === "all" || (v.ownerName ?? "—") === owner),
@@ -221,32 +230,32 @@ export default function VoicesView() {
         </div>
       </header>
 
-      {/* ── 担当フィルタ ─────────────────────────────────────────────── */}
-      {ownerCounts.length > 1 && (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[10.5px] text-slate-400 font-mono mr-0.5">担当</span>
-          <button onClick={() => setOwner("all")}
+      {/* ── 担当フィルタ ───────────────────────────────────────────────
+          候補が1人でも出す。消すと「フィルタが無くなった」と誤解させるうえ、
+          選択中の担当が候補から外れたときに解除できなくなる */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-[10.5px] text-slate-400 font-mono mr-0.5">担当</span>
+        <button onClick={() => setOwner("all")}
+          className={`text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1.5
+            ${owner === "all"
+              ? "bg-slate-900 border-slate-900 text-white font-bold"
+              : "bg-white border-slate-300 text-slate-600 hover:border-slate-400"}`}>
+          全体
+          <span className={`font-mono ${owner === "all" ? "text-slate-300" : "text-slate-400"}`}>
+            {data?.items.length ?? 0}
+          </span>
+        </button>
+        {ownerCounts.map(([name, n]) => (
+          <button key={name} onClick={() => setOwner(name)}
             className={`text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1.5
-              ${owner === "all"
+              ${owner === name
                 ? "bg-slate-900 border-slate-900 text-white font-bold"
                 : "bg-white border-slate-300 text-slate-600 hover:border-slate-400"}`}>
-            全体
-            <span className={`font-mono ${owner === "all" ? "text-slate-300" : "text-slate-400"}`}>
-              {data?.items.length ?? 0}
-            </span>
+            {name}{viewer && name === viewer ? "（自分）" : ""}
+            <span className={`font-mono ${owner === name ? "text-slate-300" : "text-slate-400"}`}>{n}</span>
           </button>
-          {ownerCounts.map(([name, n]) => (
-            <button key={name} onClick={() => setOwner(name)}
-              className={`text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1.5
-                ${owner === name
-                  ? "bg-slate-900 border-slate-900 text-white font-bold"
-                  : "bg-white border-slate-300 text-slate-600 hover:border-slate-400"}`}>
-              {name}{viewer && name === viewer ? "（自分）" : ""}
-              <span className={`font-mono ${owner === name ? "text-slate-300" : "text-slate-400"}`}>{n}</span>
-            </button>
-          ))}
-        </div>
-      )}
+        ))}
+      </div>
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-800 text-[12px] rounded-lg px-3 py-2">

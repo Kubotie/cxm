@@ -126,15 +126,20 @@ export default function ScopeView() {
     return data.points.filter(p => (p.ownerName ?? "—") === owner);
   }, [data, owner]);
 
-  /** 担当ごとの件数。押す前に何件になるか分かるようにする */
+  /**
+   * 担当ごとの件数。押す前に何件になるか分かるようにする。
+   * 選択中の担当が候補に無いときも出す（でないと解除できなくなる）。
+   */
   const ownerCounts = useMemo(() => {
     const m = new Map<string, number>();
     for (const p of data?.points ?? []) {
       const k = p.ownerName ?? "—";
       m.set(k, (m.get(k) ?? 0) + 1);
     }
-    return [...m.entries()].sort((a, b) => b[1] - a[1]);
-  }, [data]);
+    const list = [...m.entries()].sort((a, b) => b[1] - a[1]);
+    if (owner !== "all" && !list.some(([n]) => n === owner)) list.push([owner, 0]);
+    return list;
+  }, [data, owner]);
 
   const lit = useMemo(() => points.filter(p => p.stage !== "clear"), [points]);
 
