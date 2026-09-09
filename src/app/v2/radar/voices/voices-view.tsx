@@ -37,7 +37,7 @@ const STAGE_CHIP: Record<RadarStage, string> = {
 
 const SCOPE_META: Record<Scope, { label: string; note: string; status: string; priority: string }> = {
   required:  { label: "要レビュー", note: "契約・競合に直接触れる発言。採用するとスコアに乗る", status: "pending",   priority: "required" },
-  reference: { label: "参考",       note: "利用・関係の層が既に捉えている状態の言い換え。判断は任意", status: "pending",   priority: "reference" },
+  reference: { label: "参考",       note: "読むだけ。スコアには入らない（利用・関係の層が既に数値で捉えている内容のため）", status: "pending",   priority: "reference" },
   done:      { label: "判断済み",   note: "採用または棄却したもの。取り消せる",                    status: "all",       priority: "all" },
 };
 
@@ -325,7 +325,8 @@ export default function VoicesView() {
                 })()}
               </div>
               {group.map(v => (
-                <VoiceItem key={v.voiceId} v={v} busy={busy === v.voiceId} onReview={review} />
+                <VoiceItem key={v.voiceId} v={v} busy={busy === v.voiceId} onReview={review}
+                  readOnly={scope === "reference"} />
               ))}
             </section>
           ))}
@@ -337,9 +338,16 @@ export default function VoicesView() {
 
 // ── 1件 ───────────────────────────────────────────────────────────────────────
 
-function VoiceItem({ v, busy, onReview }: {
+function VoiceItem({ v, busy, onReview, readOnly }: {
   v: RadarVoiceListItem; busy: boolean;
   onReview: (id: string, s: ReviewStatus) => void;
+  /**
+   * 参考は読むだけにする。
+   * V3/V4/V5 は D層・B層が既に数値で捉えている状態の言い換えなので、
+   * 採用するとスコアが二重に乗る。「レビュー不要」と書きながら押せる状態は
+   * 意図と実装がずれている。
+   */
+  readOnly?: boolean;
 }) {
   const done = v.reviewStatus !== "pending";
   return (
@@ -377,28 +385,32 @@ function VoiceItem({ v, busy, onReview }: {
         <p className="text-[11px] text-slate-500 leading-relaxed">なぜ拾ったか：{v.extractReason}</p>
       )}
 
-      <div className="flex gap-1.5 justify-end">
-        {done ? (
-          <button onClick={() => onReview(v.voiceId, "pending")} disabled={busy}
-            className="text-[10.5px] text-slate-400 hover:text-slate-700 underline
-              disabled:opacity-40 transition">
-            取り消す
-          </button>
-        ) : (
-          <>
-            <button onClick={() => onReview(v.voiceId, "confirmed")} disabled={busy}
-              className="text-[11px] px-3 py-1.5 rounded-md bg-slate-900 text-white font-bold
-                disabled:opacity-40 hover:bg-slate-700 transition">
-              言質として採用
+      {readOnly ? (
+        <p className="text-[10.5px] text-slate-400 text-right">スコアには入りません</p>
+      ) : (
+        <div className="flex gap-1.5 justify-end">
+          {done ? (
+            <button onClick={() => onReview(v.voiceId, "pending")} disabled={busy}
+              className="text-[10.5px] text-slate-400 hover:text-slate-700 underline
+                disabled:opacity-40 transition">
+              取り消す
             </button>
-            <button onClick={() => onReview(v.voiceId, "rejected")} disabled={busy}
-              className="text-[11px] px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-600
-                disabled:opacity-40 hover:border-slate-400 transition">
-              棄却
-            </button>
-          </>
-        )}
-      </div>
+          ) : (
+            <>
+              <button onClick={() => onReview(v.voiceId, "confirmed")} disabled={busy}
+                className="text-[11px] px-3 py-1.5 rounded-md bg-slate-900 text-white font-bold
+                  disabled:opacity-40 hover:bg-slate-700 transition">
+                言質として採用
+              </button>
+              <button onClick={() => onReview(v.voiceId, "rejected")} disabled={busy}
+                className="text-[11px] px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-600
+                  disabled:opacity-40 hover:border-slate-400 transition">
+                棄却
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

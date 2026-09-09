@@ -331,10 +331,11 @@ export default function DrillView({ companyUid }: { companyUid: string }) {
           {data.voices.some(v => v.priority === "reference") && (
             <details className="border-t border-slate-100">
               <summary className="px-3.5 py-2 text-[11px] text-slate-500 cursor-pointer hover:text-slate-900">
-                参考（レビュー不要）{data.voices.filter(v => v.priority === "reference").length}件
+                参考（読むだけ・スコアには入らない）{data.voices.filter(v => v.priority === "reference").length}件
               </summary>
               {data.voices.filter(v => v.priority === "reference").map(v => (
-                <VoiceRow key={v.voiceId} v={v} busy={busyVoice === v.voiceId} onReview={reviewVoice} />
+                <VoiceRow key={v.voiceId} v={v} busy={busyVoice === v.voiceId} onReview={reviewVoice}
+                  readOnly />
               ))}
             </details>
           )}
@@ -475,9 +476,11 @@ function EventRow({ e }: { e: RadarTimelineEvent }) {
   );
 }
 
-function VoiceRow({ v, busy, onReview }: {
+function VoiceRow({ v, busy, onReview, readOnly }: {
   v: RadarVoiceItem; busy: boolean;
   onReview: (id: string, s: "confirmed" | "rejected" | "pending") => void;
+  /** 参考は読むだけ。採用すると D層・B層と同じ事実が二重にスコアへ乗る */
+  readOnly?: boolean;
 }) {
   const done = v.reviewStatus !== "pending";
   return (
@@ -520,7 +523,10 @@ function VoiceRow({ v, busy, onReview }: {
       {v.extractReason && (
         <p className="text-[11px] text-slate-500 leading-relaxed">なぜ拾ったか：{v.extractReason}</p>
       )}
-      {!done && (
+      {readOnly && (
+        <p className="text-[10.5px] text-slate-400 text-right">スコアには入りません</p>
+      )}
+      {!readOnly && !done && (
         <div className="flex gap-1.5 justify-end">
           <button onClick={() => onReview(v.voiceId, "confirmed")} disabled={busy}
             className="text-[10.5px] px-3 py-1 rounded-md bg-slate-900 text-white font-bold
