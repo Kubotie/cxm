@@ -317,7 +317,15 @@ export async function nocoFetchAllByUids<T extends { company_uid?: string | null
   uids: string[],
   extraParams: Omit<Record<string, string>, 'where' | 'limit' | 'offset'> = {},
   ttl: number | false = false,
-  opts: { pageSize?: number; maxRows?: number; concurrency?: number; uidChunkSize?: number } = {},
+  opts: {
+    pageSize?: number; maxRows?: number; concurrency?: number; uidChunkSize?: number;
+    /**
+     * uid 条件に AND で足す where 断片（例 `~and(stat_date,gt,exactDate,2026-08-01)`）。
+     * 1企業あたりの行数が多いテーブル（crm_customer_phase は1社最大107PJ×週次）で
+     * 取得範囲を絞るために使う。先頭の `~and` まで含めて渡すこと。
+     */
+    andWhere?: string;
+  } = {},
 ): Promise<Map<string, T[]>> {
   const result = new Map<string, T[]>();
   for (const uid of uids) result.set(uid, []);
@@ -331,7 +339,7 @@ export async function nocoFetchAllByUids<T extends { company_uid?: string | null
     chunks.map(chunk =>
       nocoFetchAll<T>(
         tableId,
-        { ...extraParams, where: `(company_uid,in,${chunk.join(',')})` },
+        { ...extraParams, where: `(company_uid,in,${chunk.join(',')})${opts.andWhere ?? ''}` },
         ttl,
         opts,
       ),

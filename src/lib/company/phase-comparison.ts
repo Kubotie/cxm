@@ -110,6 +110,23 @@ function daysUntil(dateStr: string | null | undefined): number | null {
   return Math.floor(diffMs / (1000 * 60 * 60 * 24));
 }
 
+/**
+ * フェーズラベルを比較用のキーに正規化する。
+ *
+ * M-Phase（Notion 由来）と A-Phase（バッチ由来）で表記が揃っていない:
+ *   M-Phase: "6.Engagement" / "5.Activation" / "7.Optimization"
+ *   A-Phase: "6. Engagement" / "5. Activation" / "4. Setup" / "3. Active"
+ * 先頭の段階番号は共通の意味を持つので、番号があればそれを比較キーにする。
+ * 番号が無いラベルは空白とドットを落として比較する。空文字は「値なし」扱い。
+ */
+function normalizePhaseKey(v: string | null | undefined): string | null {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (s === '') return null;
+  const m = /^(\d+)/.exec(s);
+  return m ? m[1] : s.replace(/[\s.]/g, '').toLowerCase();
+}
+
 // ── VM 構築 ───────────────────────────────────────────────────────────────────
 
 /**
@@ -142,11 +159,16 @@ export function buildPhaseComparisonVM(
   const mPhaseLabel = csmPhase?.mPhase ?? csmPhase?.phaseLabel ?? null;
   const aPhaseLabel = crmPhase?.aPhase ?? crmPhase?.phaseLabel ?? null;
 
-  // 両方のフェーズが取得できている場合のみ比較可能
-  const isComparable = mPhaseLabel !== null && aPhaseLabel !== null;
+  // 両方のフェーズが取得できている場合のみ比較可能。
+  // ⚠️ 素の文字列比較はできない。M-Phase は Notion 由来で "6.Engagement"、
+  //   A-Phase はバッチ（sync_a_phase.py）由来で "6. Engagement" と表記が揃っておらず、
+  //   同じフェーズでも必ず不整合と判定されて全社に誤警告が出ていた。
+  const mKey = normalizePhaseKey(mPhaseLabel);
+  const aKey = normalizePhaseKey(aPhaseLabel);
+  const isComparable = mKey !== null && aKey !== null;
 
-  // 比較可能かつ値が異なる場合のみ gap あり
-  const hasGap = isComparable && mPhaseLabel !== aPhaseLabel;
+  // 比較可能かつ段階が異なる場合のみ gap あり
+  const hasGap = isComparable && mKey !== aKey;
 
   const gapDescription = hasGap
     ? `${secondarySource}: ${secondaryPhaseLabel}`
