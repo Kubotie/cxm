@@ -390,28 +390,56 @@ export async function collectRadarFacts(
       if (!f) continue;
 
       // ⚠️ 1チケット = 複数行。source_record_id で畳まないと件数が2桁膨らむ。
-      //    行ごとに列が虫食いなので、非 null を優先してマージする。
-      const merged = new Map<string, RawTicketRow>();
+      //    畳み方は support-by-company.ts の rollupBySourceRecord と揃える:
+      //      status  … CreatedAt が最大の行（= 最後に同期した状態）から採る
+      //      起票時刻 … 非 null の created_at、無ければ CreatedAt の最小（初出）
+      //    ⚠️ 「列ごとに最初の非 null」で畳むと status が古い行から来る。
+      //      実測（2026-09-09 / S1 の根拠12件）: 再春館・村田・トライグループは
+      //      最新行が Closed なのに畳んだ結果が Waiting Confirm / To Do だった。
+      const folded = new Map<string, {
+        latest: RawTicketRow; firstSeen: string | null;
+        createdAt: string | null; closedAt: string | null; lastModified: string | null;
+      }>();
       for (const r of rows) {
         const sid = r.source_record_id?.trim();
         if (!sid) continue;
-        const cur = merged.get(sid) ?? {};
-        for (const [k, v] of Object.entries(r)) {
-          if (v !== null && v !== undefined && v !== '' && (cur as Record<string, unknown>)[k] == null) {
-            (cur as Record<string, unknown>)[k] = v;
-          }
+        const at = r.CreatedAt != null ? String(r.CreatedAt) : '';
+        const cur = folded.get(sid);
+        if (!cur) {
+          folded.set(sid, {
+            latest: r, firstSeen: at || null,
+            createdAt: ymd(r.created_at), closedAt: ymd(r.closed_at), lastModified: ymd(r.UpdatedAt),
+          });
+          continue;
         }
-        merged.set(sid, cur);
+        if (at && at > String(cur.latest.CreatedAt ?? '')) cur.latest = r;
+        if (at && (!cur.firstSeen || at < cur.firstSeen)) cur.firstSeen = at;
+        // 起票時刻は全行同じ値。null が多いので最初に見つかった値を採る
+        if (!cur.createdAt) cur.createdAt = ymd(r.created_at);
+        // クローズ日・更新日時は最大値
+        const cl = ymd(r.closed_at);
+        if (cl && (!cur.closedAt || cl > cur.closedAt)) cur.closedAt = cl;
+        const lm = ymd(r.UpdatedAt);
+        if (lm && (!cur.lastModified || lm > cur.lastModified)) cur.lastModified = lm;
       }
 
       const tickets: RadarFacts['highTickets'] = [];
-      for (const t of merged.values()) {
+      for (const g of folded.values()) {
+        const t = g.latest;
         // created_at が空の行がある（エレコムの PTX 不具合がまさにそれ）。
-        // 取り込み日 CreatedAt を代替に使う。捨てると一番重い事象が消える。
-        const openedAt = ymd(t.created_at) ?? ymd(t.CreatedAt);
+        // 取り込み初出（CreatedAt の最小）を代替に使う。捨てると一番重い事象が消える。
+        const openedAt = g.createdAt ?? ymd(g.firstSeen);
         if (!openedAt) continue;
         if (String(t.severity ?? '').toLowerCase() !== 'high') continue;
-        const closedAt = isCseOpen(t.status) ? null : (ymd(t.closed_at) ?? ymd(t.UpdatedAt));
+        // ⚠️ status が closed なのに closedAt を null にしてはいけない。
+        //   atDate() は closedAt === null を「未クローズ」と読むため、
+        //   closed_at も UpdatedAt も空のチケット（2026-07 以降の同期分は
+        //   3列すべて null）がクローズ済みでも永久に S1 を立て続けていた。
+        //   実測（2026-09-09）: S1 の根拠12件のうち7件がこれによる誤検知。
+        //   日付が無い場合は「最後にその状態で観測された時刻」で代替する。
+        const closedAt = isCseOpen(t.status)
+          ? null
+          : (g.closedAt ?? g.lastModified ?? ymd(t.CreatedAt) ?? openedAt);
         const sid = t.source_record_id?.trim() ?? null;
         tickets.push({ openedAt, closedAt, title: t.title?.trim() ?? null, recordId: sid });
         // チケット起票も接点として数える（サポート窓口経由でも接触は接触）
