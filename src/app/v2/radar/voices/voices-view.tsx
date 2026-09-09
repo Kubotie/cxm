@@ -36,9 +36,9 @@ const STAGE_CHIP: Record<RadarStage, string> = {
 };
 
 const SCOPE_META: Record<Scope, { label: string; note: string; status: string; priority: string }> = {
-  required:  { label: "要レビュー", note: "契約・競合に直接触れる発言。採用するとスコアに乗る", status: "pending",   priority: "required" },
+  required:  { label: "要レビュー", note: "契約・競合に直接触れる発言。計上すると解約リスクとしてスコアに乗る（重み4）", status: "pending",   priority: "required" },
   reference: { label: "参考",       note: "読むだけ。スコアには入らない（利用・関係の層が既に数値で捉えている内容のため）", status: "pending",   priority: "reference" },
-  done:      { label: "判断済み",   note: "採用または棄却したもの。取り消せる",                    status: "all",       priority: "all" },
+  done:      { label: "判断済み",   note: "計上または棄却したもの。取り消せる",                    status: "all",       priority: "all" },
 };
 
 function yen(n: number | null): string {
@@ -370,7 +370,7 @@ function VoiceItem({ v, busy, onReview, readOnly }: {
         <span className="font-mono">確信度 {v.confidence.toFixed(2)}</span>
         {done && (
           <span className={`font-bold ${v.reviewStatus === "confirmed" ? "text-emerald-700" : "text-slate-500"}`}>
-            {v.reviewStatus === "confirmed" ? "採用済み" : "棄却"}
+            {v.reviewStatus === "confirmed" ? "リスク計上済み" : "棄却"}
             {v.reviewedBy ? `（${v.reviewedBy}）` : ""}
           </span>
         )}
@@ -400,7 +400,7 @@ function VoiceItem({ v, busy, onReview, readOnly }: {
               <button onClick={() => onReview(v.voiceId, "confirmed")} disabled={busy}
                 className="text-[11px] px-3 py-1.5 rounded-md bg-slate-900 text-white font-bold
                   disabled:opacity-40 hover:bg-slate-700 transition">
-                言質として採用
+                リスクとして計上
               </button>
               <button onClick={() => onReview(v.voiceId, "rejected")} disabled={busy}
                 className="text-[11px] px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-600

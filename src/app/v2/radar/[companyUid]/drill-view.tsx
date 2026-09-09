@@ -317,7 +317,7 @@ export default function DrillView({ companyUid }: { companyUid: string }) {
           <div className="px-3.5 py-2.5 border-b border-slate-100 flex items-center gap-2 flex-wrap">
             <span className="text-[11.5px] font-bold text-slate-900">言質</span>
             <span className="text-[10.5px] text-slate-500">
-              議事録・問い合わせから抽出。採用するまでスコアには入らない
+              議事録・問い合わせから抽出。計上するまでスコアには入らない
             </span>
             <span className="ml-auto font-mono text-[11px] text-slate-400">
               要レビュー {data.voices.filter(v => v.reviewStatus === "pending" && v.priority === "required").length}
@@ -504,7 +504,7 @@ function VoiceRow({ v, busy, onReview, readOnly }: {
         {done && (
           <>
             <span className={`font-bold ${v.reviewStatus === "confirmed" ? "text-emerald-700" : "text-slate-500"}`}>
-              {v.reviewStatus === "confirmed" ? "採用済み" : "棄却"}
+              {v.reviewStatus === "confirmed" ? "リスク計上済み" : "棄却"}
               {v.reviewedBy ? `（${v.reviewedBy}）` : ""}
             </span>
             {/* 誤操作を戻せないと、人はボタンを押さなくなる */}
@@ -531,7 +531,7 @@ function VoiceRow({ v, busy, onReview, readOnly }: {
           <button onClick={() => onReview(v.voiceId, "confirmed")} disabled={busy}
             className="text-[10.5px] px-3 py-1 rounded-md bg-slate-900 text-white font-bold
               disabled:opacity-40 hover:bg-slate-700 transition">
-            言質として採用
+            リスクとして計上
           </button>
           <button onClick={() => onReview(v.voiceId, "rejected")} disabled={busy}
             className="text-[10.5px] px-3 py-1 rounded-md border border-slate-300 bg-white text-slate-600

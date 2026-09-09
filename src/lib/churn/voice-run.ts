@@ -40,6 +40,8 @@ export interface VoiceRunResult {
   durationMs:   number;
   /** 自社側の発言として捨てた数。プロンプトの効き具合はここで見る */
   droppedNonCustomer: number;
+  /** 前向き・中立として捨てた数。**言質は向きを問わずリスクとして加算されるため入口で落とす** */
+  droppedNonRisk: number;
   hits: Array<{
     companyName: string; intentType: string; confidence: number;
     occurredAt: string; quote: string; priority: 'required' | 'reference';
@@ -190,6 +192,7 @@ export async function runChurnVoice(opts: {
     companies: new Set(targets.map(d => d.companyUid)).size,
     extracted: 0, skippedExisting: docs.length - pending.length, failed: 0,
     droppedNonCustomer: 0,
+    droppedNonRisk: 0,
     /** まだ手を付けていない残り。0 になるまで繰り返し叩けばよい */
     remaining: Math.max(0, pending.length - targets.length),
     durationMs: 0, hits: [],
@@ -220,8 +223,8 @@ export async function runChurnVoice(opts: {
       const raw = completion.choices[0]?.message?.content ?? '{"hits":[]}';
       const parsed = JSON.parse(raw) as {
         hits: Array<{
-          intent_type: string; speaker: string; quoted_text: string;
-          reason: string; confidence: number;
+          intent_type: string; direction: string; speaker: string;
+          quoted_text: string; reason: string; confidence: number;
         }>;
       };
 
@@ -230,6 +233,10 @@ export async function runChurnVoice(opts: {
         // 顧客が言っていないものを言質として数えると critical が汚れる。
         // 実測: エレコムの誤検知は議事録のネクストアクション欄＝自社のタスクだった。
         if (hit.speaker !== 'customer') { result.droppedNonCustomer++; continue; }
+        // 前向きな発言をリスクとして加算しない。
+        // 実測: ブレインスリープの「今すごくイメージ湧きました」が V1 として採用され、
+        // voice=4 が乗って critical になった（この1件が無ければ watch）。
+        if (hit.direction !== 'risk') { result.droppedNonRisk++; continue; }
 
         const priority = voiceReviewPriority(hit.intent_type, hit.confidence);
         result.extracted++;
@@ -271,7 +278,7 @@ export async function runChurnVoice(opts: {
   console.log(
     `[churn-voice] 完了 docs=${result.scannedDocs} extracted=${result.extracted} ` +
     `(要レビュー ${result.hits.filter(h => h.priority === 'required').length}) ` +
-    `自社発言で除外=${result.droppedNonCustomer} ` +
+    `自社発言で除外=${result.droppedNonCustomer} 前向き・中立で除外=${result.droppedNonRisk} ` +
     `skipped=${result.skippedExisting} failed=${result.failed} ` +
     `remaining=${result.remaining} duration=${result.durationMs}ms`,
   );

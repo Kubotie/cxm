@@ -22,6 +22,14 @@
 //   3. V5（体制縮小）が21件中19件 0.7 で、「新任の担当が加わった」程度の人事まで
 //      拾っていた。推進体制が失われる場合に限定する。
 //
+// ── 2026-09-09 追加 ─────────────────────────────────────────────────────────
+//   4. **前向きな発言をリスクとして拾っていた。** ブレインスリープの
+//      「今すごくイメージ湧きました」が V1（自動更新の回避）として抽出され、
+//      採用された結果 voice=4 が乗って critical になった（この1件が無ければ watch）。
+//      言質は向きを問わず重み4のリスクとして加算されるため、前向きな発言が
+//      解約リスクを作ってしまう。
+//      → direction（risk / positive / neutral）を必ず判定させ、risk 以外は保存しない。
+//
 // 設計上の要:
 //   - **必ず原文を引用させる。** 要約だけを見せると判断の根拠を誤らせる。
 //   - **無ければ空で返させる。** 拾いたいバイアスがかかると全社に言質が立つ。
@@ -39,6 +47,14 @@ export const CHURN_VOICE_SYSTEM_PROMPT = [
   'V3 効果を説明できない — 導入効果を社内に説明・報告できない、ROI が示せない、成果の因果が特定できないと**顧客が困っている**',
   'V4 製品起因の不信   — 不具合や仕様上の制約でクレーム・業務影響が出た、頼れないので別の手段に切り替えると述べた',
   'V5 体制縮小        — 予算削減、推進役の離任で後任がいない、部署解体など**推進体制が失われる**変化',
+  '',
+  '# 向きを必ず判定する（direction）',
+  'risk     … 契約の継続を**危うくする**発言。解約・縮小・他社移行・不信・体制喪失',
+  'positive … 契約の継続に**前向きな**発言。活用が進む、価値を実感した、拡張したい',
+  'neutral  … どちらとも言えない事実確認',
+  '**risk 以外は採用されません。** 「今すごくイメージ湧きました」「導入して良かった」のような',
+  '前向きな発言を V1〜V5 として返してはいけません。それらは positive です。',
+  '判断に迷ったら、まず「この発言は解約に近づく方向か」を自問してください。',
   '',
   '# 誰の発言かを必ず判定する（speaker）',
   'customer … 顧客側の人物の発言・顧客の状況説明',
@@ -81,6 +97,11 @@ export const CHURN_VOICE_JSON_SCHEMA = {
               enum: ['V1', 'V2', 'V3', 'V4', 'V5'] as const,
               description: 'V1 自動更新の回避 / V2 他社比較 / V3 効果を説明できない / V4 製品起因の不信 / V5 体制縮小',
             },
+            direction: {
+              type: 'string' as const,
+              enum: ['risk', 'positive', 'neutral'] as const,
+              description: '契約継続にとっての向き。risk 以外は採用されない',
+            },
             speaker: {
               type: 'string' as const,
               enum: ['customer', 'us', 'unknown'] as const,
@@ -99,7 +120,7 @@ export const CHURN_VOICE_JSON_SCHEMA = {
               description: '0.95 / 0.80 / 0.60 のいずれか。他の値は使わない',
             },
           },
-          required: ['intent_type', 'speaker', 'quoted_text', 'reason', 'confidence'],
+          required: ['intent_type', 'direction', 'speaker', 'quoted_text', 'reason', 'confidence'],
           additionalProperties: false,
         },
       },
