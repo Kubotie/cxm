@@ -133,7 +133,8 @@ export const DATA_SOURCES: DataSourceSpec[] = [
   // ── プロジェクト ────────────────────────────────────────────────────────────
   {
     path: '/api/projects/module-usage',
-    description: 'プロジェクト分析ダッシュボードのデータ源。プロジェクト単位のモジュール利用状況（直近30日）。',
+    description: 'プロジェクト分析ダッシュボードのデータ源。プロジェクト単位のモジュール利用状況（直近30日）。'
+      + '1社で有料5件以上は旧プランと判断し、代表1件だけを counts に数える（rolledUp:true は集約した配下）。',
     query: { includeFree: '1 で無料プロジェクトも含む' },
     heavy: true,
   },

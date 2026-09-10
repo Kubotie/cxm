@@ -23,6 +23,9 @@ import {
   type ModuleVerdict, type PlanKind,
 } from '@/lib/company/module-signals';
 import { MODULE_DICTIONARY } from '@/lib/metabase/module-dictionary';
+import {
+  markLegacyRollup, LEGACY_MULTI_PROJECT_THRESHOLD,
+} from '@/lib/company/legacy-plan-rollup';
 
 export const maxDuration = 60;
 
@@ -55,15 +58,40 @@ export interface ProjectModuleRow {
 
   /** 上位モジュール（PV降順・最大6件） */
   topModules: Array<{ id: string; label: string; product: string; signalType: string; pv: number }>;
+
+  // ── 旧プランの集約（1社で有料5件以上＝旧プラン） ──────────────────────────
+  /** 同じ会社をまとめる鍵。null は会社未紐付けで集約しない */
+  companyKey: string | null;
+  /** 旧プランと判断した会社のプロジェクトか */
+  legacyGroup: boolean;
+  /** 同じ会社の有料プロジェクト数 */
+  groupSize: number;
+  /** 判定に数えず代表プロジェクトの配下に畳むか */
+  rolledUp: boolean;
+  /** 集約先の代表プロジェクトID（自分が代表なら自分のID） */
+  representativeId: string | null;
 }
 
 export interface ModuleUsageResponse {
   period: { start: string | null; end: string | null };
-  /** 判定別の件数 */
+  /** 判定別の件数。旧プランの会社は代表プロジェクト1件だけを数える */
   counts: Record<ModuleVerdict, number>;
   /** プラン別 × 判定別 */
   byPlan: Array<{ plan: PlanKind; total: number; counts: Record<string, number> }>;
-  /** モジュールの採用状況（何プロジェクトが使っているか） */
+  /** 旧プラン集約の内訳。件数の読み方を画面に出すために返す */
+  rollup: {
+    /** 旧プランと判断する境目（有料プロジェクト数） */
+    threshold: number;
+    /** 旧プランと判断した会社数 */
+    legacyCompanies: number;
+    /** 代表に畳んで判定から外したプロジェクト数 */
+    rolledUpProjects: number;
+    /** 有料プロジェクトの総数（集約前） */
+    totalProjects: number;
+    /** 判定に数えたプロジェクト数（集約後） */
+    countedProjects: number;
+  };
+  /** モジュールの採用状況（何プロジェクトが使っているか）。集約した配下も含む */
   adoption: Array<{
     id: string; label: string; product: string; signalType: string;
     projects: number; pv: number; caution: string | null;
@@ -146,8 +174,37 @@ export async function GET(req: NextRequest) {
         id: m.moduleId, label: m.def.labelJa, product: m.def.product,
         signalType: m.def.signalType, pv: m.pageviews,
       })),
+      // 集約はこの下でまとめて決める（会社ごとの件数が必要なため）
+      companyKey: sig.masterCompanySfId || company?.id || null,
+      legacyGroup: false,
+      groupSize: 1,
+      rolledUp: false,
+      representativeId: null,
     });
   }
+
+  // ── 旧プランの集約 ─────────────────────────────────────────────────────────
+  // 1社で有料5件以上は旧プラン（1契約で複数PJ）。代表1件だけを判定に数える。
+  const marks = markLegacyRollup(rows.map(r => ({
+    projectId: r.projectId,
+    companyKey: r.companyKey,
+    paid: ['PTI', 'PTX', 'BUNDLE'].includes(r.plan),
+    activePv: r.activePv,
+    activeModuleCount: r.activeModuleCount,
+    l30Active: r.l30Active,
+  })));
+  for (const r of rows) {
+    const m = marks.get(r.projectId);
+    if (!m) continue;
+    r.legacyGroup = m.legacyGroup;
+    r.groupSize = m.groupSize;
+    r.rolledUp = m.rolledUp;
+    r.representativeId = m.representativeId;
+  }
+  const legacyCompanies = new Set(
+    rows.filter(r => r.legacyGroup && r.companyKey).map(r => r.companyKey!),
+  ).size;
+  const rolledUpProjects = rows.filter(r => r.rolledUp).length;
 
   // 危険なものを上に: 休眠 → 未使用 → 一部未使用 → 浅い → 未評価 → 活用中
   const ORDER: ModuleVerdict[] = ['dormant', 'unused', 'partial', 'shallow', 'unevaluated', 'healthy'];
@@ -159,6 +216,8 @@ export async function GET(req: NextRequest) {
   const counts = Object.fromEntries(ORDER.map(v => [v, 0])) as Record<ModuleVerdict, number>;
   const planAgg = new Map<PlanKind, Record<string, number>>();
   for (const r of rows) {
+    // 集約した配下は判定に数えない（一覧ではトグルで見える）
+    if (r.rolledUp) continue;
     counts[r.verdict]++;
     const p = planAgg.get(r.plan) ?? {};
     p[r.verdict] = (p[r.verdict] ?? 0) + 1;
@@ -182,6 +241,13 @@ export async function GET(req: NextRequest) {
     byPlan: [...planAgg.entries()]
       .map(([plan, c]) => ({ plan, total: Object.values(c).reduce((x, y) => x + y, 0), counts: c }))
       .sort((a, b) => b.total - a.total),
+    rollup: {
+      threshold: LEGACY_MULTI_PROJECT_THRESHOLD,
+      legacyCompanies,
+      rolledUpProjects,
+      totalProjects: rows.length,
+      countedProjects: rows.length - rolledUpProjects,
+    },
     adoption,
     rows,
     droppedPv,

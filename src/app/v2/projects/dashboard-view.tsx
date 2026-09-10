@@ -62,21 +62,39 @@ export function ProjectModuleDashboard() {
     return () => { alive = false; };
   }, []);
 
+  // 旧プランと判断した会社（有料5件以上）の配下プロジェクト。
+  // 代表プロジェクトIDごとに束ね、一覧ではトグルで開く。
+  const childrenByRep = useMemo(() => {
+    const m = new Map<string, ProjectModuleRow[]>();
+    if (!data) return m;
+    for (const r of data.rows) {
+      if (!r.rolledUp || !r.representativeId) continue;
+      const g = m.get(r.representativeId) ?? [];
+      g.push(r);
+      m.set(r.representativeId, g);
+    }
+    return m;
+  }, [data]);
+
   const rows = useMemo(() => {
     if (!data) return [];
     const needle = q.trim().toLowerCase();
+    const hit = (r: ProjectModuleRow) =>
+      `${r.projectName} ${r.companyName ?? ""} ${r.projectId}`.toLowerCase().includes(needle);
     return data.rows.filter(r => {
+      // 集約した配下は代表の下にだけ出す（判定にも数えていない）
+      if (r.rolledUp) return false;
       if (verdict !== "all" && r.verdict !== verdict) return false;
       if (plan !== "all" && r.plan !== plan) return false;
       if (owner !== "all" && r.owner !== owner) return false;
       if (onlyManaged && !r.companyUid) return false;
       if (needle) {
-        const hay = `${r.projectName} ${r.companyName ?? ""} ${r.projectId}`.toLowerCase();
-        if (!hay.includes(needle)) return false;
+        // 配下のプロジェクト名で引いたときも代表を出す（探し物が畳まれている）
+        if (!hit(r) && !(childrenByRep.get(r.projectId) ?? []).some(hit)) return false;
       }
       return true;
     });
-  }, [data, verdict, plan, owner, q, onlyManaged]);
+  }, [data, verdict, plan, owner, q, onlyManaged, childrenByRep]);
 
   // ── AI パネルへの申告 ──────────────────────────────────────────────────────
   // 早期 return より前に置く（return の後ろではフックが呼ばれない）
@@ -86,11 +104,14 @@ export function ProjectModuleDashboard() {
     description:
       "過去30日の管理画面モジュール利用 × 契約プラン × L30アクティブ。"
       + "契約しているのに使われていないプロジェクト、管理画面に来ていないプロジェクト、"
-      + "実際に使われている機能を見る画面。回遊（着地画面）は利用として数えない。",
+      + "実際に使われている機能を見る画面。回遊（着地画面）は利用として数えない。"
+      + "1社で有料プロジェクトが5件以上ある会社は旧プラン（1契約で複数PJ）と判断し、"
+      + "代表プロジェクト1件だけを判定に数える（残りは代表の配下に集約）。",
     snapshot: {
       counts: data?.counts,
       totalRows: data?.rows.length ?? 0,
       shownRows: rows.length,
+      旧プラン集約: data?.rollup,
       rows,
     },
     hints: {
@@ -130,6 +151,7 @@ export function ProjectModuleDashboard() {
   }
 
   const total = Object.values(data.counts).reduce((a, b) => a + b, 0);
+  const rollup = data.rollup;
 
   return (
     <div className="px-4 py-4 space-y-3 max-w-[1600px] mx-auto">
@@ -138,8 +160,20 @@ export function ProjectModuleDashboard() {
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-[15px] font-bold text-slate-900">プロジェクト分析</h1>
           <span className="text-[11.5px] text-slate-400 tabular-nums">
-            有料プロジェクト {total.toLocaleString("ja-JP")}件
+            判定対象 {total.toLocaleString("ja-JP")}件
           </span>
+          {rollup && rollup.rolledUpProjects > 0 && (
+            <span className="inline-flex items-center gap-1 text-[11.5px] text-slate-400 tabular-nums">
+              有料プロジェクト {rollup.totalProjects.toLocaleString("ja-JP")}件
+              <InfoTip text={
+                `1社で有料プロジェクトが${rollup.threshold}件以上ある会社は旧プラン（1契約で複数プロジェクト）と判断し、`
+                + `代表プロジェクト1件だけを判定に数えています。`
+                + `該当 ${rollup.legacyCompanies}社 の ${rollup.rolledUpProjects}件を代表に集約しました。`
+                + `代表は、その会社でいちばん使われているプロジェクト（実利用PV→機能数→L30の順）です。`
+                + `集約した配下は一覧のトグルで開けます。`
+              } />
+            </span>
+          )}
           {data.period.start && (
             <span className="text-[11.5px] text-slate-400 tabular-nums">
               {data.period.start} 〜 {data.period.end}（30日）
@@ -318,7 +352,9 @@ export function ProjectModuleDashboard() {
             <tbody>
               {rows.length === 0 ? (
                 <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400 text-[12.5px]">該当なし</td></tr>
-              ) : rows.slice(0, 300).map(r => <Row key={r.projectId} r={r} />)}
+              ) : rows.slice(0, 300).map(r => (
+                <Row key={r.projectId} r={r} sub={childrenByRep.get(r.projectId) ?? []} />
+              ))}
             </tbody>
           </table>
         </div>
@@ -332,9 +368,11 @@ export function ProjectModuleDashboard() {
   );
 }
 
-function Row({ r }: { r: ProjectModuleRow }) {
+function Row({ r, sub }: { r: ProjectModuleRow; sub: ProjectModuleRow[] }) {
   const m = VERDICT_META[r.verdict];
+  const [open, setOpen] = useState(false);
   return (
+    <>
     <tr className="border-t border-slate-100 hover:bg-slate-50/60 align-top">
       <td className="px-4 py-2.5">
         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${TONE[m.tone].chip}`} title={m.hint}>
@@ -360,6 +398,23 @@ function Row({ r }: { r: ProjectModuleRow }) {
           {r.tier && <span>T{r.tier}</span>}
           {r.owner && <span>{r.owner}</span>}
         </div>
+        {sub.length > 0 && (
+          <div className="mt-1 flex items-center gap-1.5">
+            <span
+              className="text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700"
+              title={`1社で有料プロジェクトが${r.groupSize}件あります。旧プラン（1契約で複数プロジェクト）と判断し、この代表プロジェクトだけを判定に数えています。`}
+            >
+              旧プラン {r.groupSize}PJ
+            </span>
+            <button
+              onClick={() => setOpen(v => !v)}
+              className="inline-flex items-center gap-0.5 text-[10.5px] text-slate-500 hover:text-slate-800"
+            >
+              <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} />
+              同じ会社の他{sub.length}件
+            </button>
+          </div>
+        )}
       </td>
       <td className="px-3 py-2.5 text-slate-600">
         {r.plan}
@@ -387,6 +442,39 @@ function Row({ r }: { r: ProjectModuleRow }) {
             </span>
           ))}
         </div>
+      </td>
+    </tr>
+    {open && sub.map(c => <SubRow key={c.projectId} r={c} />)}
+    </>
+  );
+}
+
+// 旧プランの配下プロジェクト。判定に数えていないので、判定は薄く出す。
+function SubRow({ r }: { r: ProjectModuleRow }) {
+  const m = VERDICT_META[r.verdict];
+  return (
+    <tr className="border-t border-slate-100 bg-slate-50/50 align-top text-slate-500">
+      <td className="px-4 py-2 pl-8">
+        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded opacity-60 ${TONE[m.tone].chip}`} title={`${m.label}（集約しているため判定に数えていません）`}>
+          {m.label}
+        </span>
+      </td>
+      <td className="px-3 py-2 min-w-[14rem]">
+        <Link
+          href={`/v2/projects/${encodeURIComponent(r.projectId)}?from=list`}
+          className="text-slate-600 hover:text-blue-700 hover:underline"
+        >
+          {r.projectName}
+        </Link>
+        <div className="text-[10.5px] text-slate-400">代表に集約（判定に数えません）</div>
+      </td>
+      <td className="px-3 py-2">{r.plan}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{r.activePv.toLocaleString("ja-JP")}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{r.deepPv.toLocaleString("ja-JP")}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{r.activeModuleCount}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{r.l30Active.toLocaleString("ja-JP")}</td>
+      <td className="px-3 py-2 text-[11px]">
+        {r.reasons[0] ?? ""}
       </td>
     </tr>
   );
