@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useRegisterAiPageContext } from "@/components/ai";
 import { STAGE_COLOR } from "@/lib/churn/radar-scope";
+import { QuoteWithContext } from "../_components/quote-with-context";
 import type {
   RadarCompanyResponse, RadarTimelineEvent, RadarEventKind, RadarVoiceItem,
 } from "@/app/api/radar/company/[companyUid]/route";
@@ -518,39 +519,8 @@ function VoiceRow({ v, busy, onReview, readOnly }: {
           </>
         )}
       </div>
-      {/* 要約ではなく原文を出す。前後500文字はホバーで添える（一文では向きが読めない） */}
-      <div className="relative group">
-        <p className={`text-[13px] text-slate-900 leading-relaxed bg-red-50 border-l-2 border-red-700
-          px-3 py-2 rounded-r ${v.context ? "cursor-help" : ""}`}>
-          「{v.quotedText}」
-          {v.context && (
-            <span className="ml-1.5 text-[10px] text-red-800/60 align-middle whitespace-nowrap">
-              前後を見る
-            </span>
-          )}
-        </p>
-        {v.context && (
-          <div className="absolute left-0 right-0 top-full z-30 mt-1 hidden group-hover:block">
-            <div className="bg-white border border-slate-300 rounded-lg shadow-xl p-3 max-h-[280px]
-              overflow-y-auto text-[12px] leading-relaxed">
-              {v.context.approximate ? (
-                <>
-                  <p className="text-[10.5px] text-amber-700 mb-1.5">
-                    原文の中でこの引用を見つけられませんでした。文書の冒頭を出しています。
-                  </p>
-                  <p className="text-slate-500 whitespace-pre-wrap">{v.context.matched}</p>
-                </>
-              ) : (
-                <p className="whitespace-pre-wrap">
-                  <span className="text-slate-400">{v.context.before}</span>
-                  <mark className="bg-amber-100 text-slate-900 font-bold px-0.5">{v.context.matched}</mark>
-                  <span className="text-slate-400">{v.context.after}</span>
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
+      {/* 要約ではなく原文。前後500文字は「前後を見る」にカーソルを乗せると出る */}
+      <QuoteWithContext quote={v.quotedText} context={v.context} />
       {v.extractReason && (
         <p className="text-[11px] text-slate-500 leading-relaxed">なぜ拾ったか：{v.extractReason}</p>
       )}
