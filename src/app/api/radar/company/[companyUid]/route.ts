@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nocoFetch, TABLE_IDS } from '@/lib/nocodb/client';
 import { sourceUrl, SOURCE_LABEL } from '@/lib/churn/radar-source';
+import { fetchVoiceContexts, type VoiceContext } from '@/lib/churn/voice-context';
 import { collectRadarFacts, factsToInput } from '@/lib/churn/radar-input';
 import { evaluateRadar, SIGNAL_SOURCE, type RadarResult } from '@/lib/churn/radar-rules';
 import { fetchRadarState, fetchRadarEvents, parseReason, type AckStatus } from '@/lib/churn/radar-state';
@@ -66,6 +67,8 @@ export interface RadarVoiceItem {
   sourceLabel:  string;
   /** required = レビューを回すべきもの。reference = 参考どまり */
   priority:     'required' | 'reference';
+  /** 引用の前後。一文だけでは判断できない */
+  context:      VoiceContext | null;
   /** なぜ契約継続に影響すると判断したか（LLM の説明） */
   extractReason: string | null;
 }
@@ -119,7 +122,7 @@ async function fetchVoices(companyUid: string): Promise<RadarVoiceItem[]> {
     sort:  '-occurred_at',
     limit: '50',
   }, false).catch(() => []);
-  return rows.map(r => ({
+  const list = rows.map(r => ({
     voiceId:      String(r.voice_id ?? ''),
     intentType:   String(r.intent_type ?? ''),
     intentLabel:  String(r.intent_label ?? r.intent_type ?? ''),
@@ -133,7 +136,16 @@ async function fetchVoices(companyUid: string): Promise<RadarVoiceItem[]> {
     sourceLabel:  SOURCE_LABEL[String(r.source_type ?? '')] ?? String(r.source_type ?? ''),
     priority:     (String(r.review_priority ?? 'required') as RadarVoiceItem['priority']),
     extractReason: r.extract_reason ? String(r.extract_reason) : null,
+    context:      null,
+    _src:         { sourceType: String(r.source_type ?? ''), recordId: r.source_record_id ? String(r.source_record_id) : null },
   })).filter(v => v.voiceId && v.quotedText);
+
+  // 引用の前後を原文から切り出す。一文だけでは採用/棄却を判断できない
+  const contexts = await fetchVoiceContexts(list.map(v => ({
+    voiceId: v.voiceId, sourceType: v._src.sourceType,
+    recordId: v._src.recordId, quotedText: v.quotedText,
+  })));
+  return list.map(({ _src, ...v }) => ({ ...v, context: contexts.get(v.voiceId) ?? null }));
 }
 
 // ── ヘルパー ─────────────────────────────────────────────────────────────────

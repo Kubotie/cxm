@@ -22,6 +22,7 @@ import { useRegisterAiPageContext } from "@/components/ai";
 import type {
   RadarVoicesResponse, RadarVoiceListItem,
 } from "@/app/api/radar/voices/route";
+import type { VoiceContext } from "@/lib/churn/voice-context";
 import { daysToCancelDeadline, type RadarStage } from "@/lib/churn/radar-rules";
 import { readOwnerFilter, writeOwnerFilter } from "@/lib/churn/radar-prefs";
 
@@ -287,9 +288,12 @@ export default function VoicesView() {
         <div className="flex flex-col gap-2.5">
           {/* 会社ごとにまとめる。同じ会社の発言は続けて読むほうが判断しやすい */}
           {byCompany.map(group => (
+            // overflow-hidden にすると引用の「前後」ポップオーバーが切れる。
+            // 角の処理は先頭ヘッダーの rounded-t で足りる
             <section key={group[0].companyUid}
-              className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-              <div className="px-3.5 py-2.5 border-b border-slate-100 flex items-center gap-2 flex-wrap">
+              className="bg-white border border-slate-200 rounded-xl">
+              <div className="px-3.5 py-2.5 border-b border-slate-100 flex items-center gap-2 flex-wrap
+                rounded-t-xl bg-white">
                 <Link href={`/v2/radar/${group[0].companyUid}`}
                   className="text-[13.5px] font-bold text-slate-900 hover:text-blue-700 transition
                     flex items-center gap-1">
@@ -376,11 +380,8 @@ function VoiceItem({ v, busy, onReview, readOnly }: {
         )}
       </div>
 
-      {/* 要約ではなく原文。要約だけを見せると判断の根拠を誤らせる */}
-      <p className="text-[13px] text-slate-900 leading-relaxed bg-red-50 border-l-2 border-red-700
-        px-3 py-2 rounded-r">
-        「{v.quotedText}」
-      </p>
+      {/* 要約ではなく原文。一文だけでは向きが読めないので前後500文字をホバーで添える */}
+      <QuoteWithContext quote={v.quotedText} context={v.context} />
       {v.extractReason && (
         <p className="text-[11px] text-slate-500 leading-relaxed">なぜ拾ったか：{v.extractReason}</p>
       )}
@@ -409,6 +410,58 @@ function VoiceItem({ v, busy, onReview, readOnly }: {
               </button>
             </>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 引用と、その前後 ──────────────────────────────────────────────────────────
+
+/**
+ * 引用にカーソルを乗せると前後500文字を出す。
+ *
+ * **一文だけ見せられても判断できない。** 実測（2026-09-10）: LayerX の
+ * 「今後もサービス自体は増えていく」が V5（体制縮小）として出たが、この一文では
+ * 増員の話か縮小の話か読めず、レビューが止まった。
+ *
+ * ポップオーバー自体にもカーソルを乗せられるようにする（読んでいる途中で消えると使えない）。
+ */
+function QuoteWithContext({ quote, context }: {
+  quote: string; context: VoiceContext | null;
+}) {
+  const has = context !== null && (context.before || context.after || context.approximate);
+  return (
+    <div className="relative group">
+      <p className={`text-[13px] text-slate-900 leading-relaxed bg-red-50 border-l-2 border-red-700
+        px-3 py-2 rounded-r ${has ? "cursor-help" : ""}`}>
+        「{quote}」
+        {has && (
+          <span className="ml-1.5 text-[10px] text-red-800/60 align-middle whitespace-nowrap">
+            前後を見る
+          </span>
+        )}
+      </p>
+
+      {has && context && (
+        <div className="absolute left-0 right-0 top-full z-30 mt-1 hidden group-hover:block">
+          <div className="bg-white border border-slate-300 rounded-lg shadow-xl p-3 max-h-[280px]
+            overflow-y-auto text-[12px] leading-relaxed">
+            {context.approximate ? (
+              <>
+                <p className="text-[10.5px] text-amber-700 mb-1.5">
+                  原文の中でこの引用を見つけられませんでした（表記が変わっている可能性）。文書の冒頭を出しています。
+                </p>
+                <p className="text-slate-500 whitespace-pre-wrap">{context.matched}</p>
+              </>
+            ) : (
+              <p className="whitespace-pre-wrap">
+                <span className="text-slate-400">{context.before}</span>
+                <mark className="bg-amber-100 text-slate-900 font-bold px-0.5">{context.matched}</mark>
+                <span className="text-slate-400">{context.after}</span>
+              </p>
+            )}
+          </div>
         </div>
       )}
     </div>

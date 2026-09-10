@@ -312,9 +312,11 @@ export default function DrillView({ companyUid }: { companyUid: string }) {
       </section>
 
       {/* ── 言質 ─────────────────────────────────────────────────────── */}
+      {/* overflow-hidden にすると引用の「前後」ポップオーバーが切れる */}
       {data.voices.length > 0 && (
-        <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div className="px-3.5 py-2.5 border-b border-slate-100 flex items-center gap-2 flex-wrap">
+        <section className="bg-white border border-slate-200 rounded-xl">
+          <div className="px-3.5 py-2.5 border-b border-slate-100 flex items-center gap-2 flex-wrap
+            rounded-t-xl bg-white">
             <span className="text-[11.5px] font-bold text-slate-900">言質</span>
             <span className="text-[10.5px] text-slate-500">
               議事録・問い合わせから抽出。計上するまでスコアには入らない
@@ -516,10 +518,39 @@ function VoiceRow({ v, busy, onReview, readOnly }: {
           </>
         )}
       </div>
-      {/* 要約ではなく原文を出す。要約だけを見せると判断の根拠を誤らせる */}
-      <p className="text-[13px] text-slate-900 leading-relaxed bg-red-50 border-l-2 border-red-700 px-3 py-2 rounded-r">
-        「{v.quotedText}」
-      </p>
+      {/* 要約ではなく原文を出す。前後500文字はホバーで添える（一文では向きが読めない） */}
+      <div className="relative group">
+        <p className={`text-[13px] text-slate-900 leading-relaxed bg-red-50 border-l-2 border-red-700
+          px-3 py-2 rounded-r ${v.context ? "cursor-help" : ""}`}>
+          「{v.quotedText}」
+          {v.context && (
+            <span className="ml-1.5 text-[10px] text-red-800/60 align-middle whitespace-nowrap">
+              前後を見る
+            </span>
+          )}
+        </p>
+        {v.context && (
+          <div className="absolute left-0 right-0 top-full z-30 mt-1 hidden group-hover:block">
+            <div className="bg-white border border-slate-300 rounded-lg shadow-xl p-3 max-h-[280px]
+              overflow-y-auto text-[12px] leading-relaxed">
+              {v.context.approximate ? (
+                <>
+                  <p className="text-[10.5px] text-amber-700 mb-1.5">
+                    原文の中でこの引用を見つけられませんでした。文書の冒頭を出しています。
+                  </p>
+                  <p className="text-slate-500 whitespace-pre-wrap">{v.context.matched}</p>
+                </>
+              ) : (
+                <p className="whitespace-pre-wrap">
+                  <span className="text-slate-400">{v.context.before}</span>
+                  <mark className="bg-amber-100 text-slate-900 font-bold px-0.5">{v.context.matched}</mark>
+                  <span className="text-slate-400">{v.context.after}</span>
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
       {v.extractReason && (
         <p className="text-[11px] text-slate-500 leading-relaxed">なぜ拾ったか：{v.extractReason}</p>
       )}

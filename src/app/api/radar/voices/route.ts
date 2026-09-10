@@ -16,6 +16,7 @@ import { nocoFetchAll, TABLE_IDS } from '@/lib/nocodb/client';
 import { fetchAllRadarStates } from '@/lib/churn/radar-state';
 import { sourceUrl, SOURCE_LABEL } from '@/lib/churn/radar-source';
 import { daysToCancelDeadline, type RadarStage } from '@/lib/churn/radar-rules';
+import { fetchVoiceContexts, type VoiceContext } from '@/lib/churn/voice-context';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +42,8 @@ export interface RadarVoiceListItem {
   priority:      'required' | 'reference';
   reviewStatus:  'pending' | 'confirmed' | 'rejected';
   reviewedBy:    string | null;
+  /** 引用の前後。一文だけでは判断できないので原文から引き直して添える */
+  context:       VoiceContext | null;
 }
 
 export interface RadarVoicesResponse {
@@ -98,11 +101,17 @@ export async function GET(req: NextRequest): Promise<NextResponse<RadarVoicesRes
 
   const stateByUid = new Map(states.map(s => [s.company_uid, s]));
 
+  const recordIdByVoice = new Map<string, { sourceType: string; recordId: string | null }>();
+
   const all: RadarVoiceListItem[] = rows
     .filter(r => r.voice_id && r.company_uid && r.quoted_text)
     .map(r => {
       const st = stateByUid.get(String(r.company_uid).trim());
       const src = String(r.source_type ?? '');
+      recordIdByVoice.set(String(r.voice_id), {
+        sourceType: src,
+        recordId: r.source_record_id ? String(r.source_record_id) : null,
+      });
       return {
         voiceId:       String(r.voice_id),
         companyUid:    String(r.company_uid).trim(),
@@ -122,6 +131,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<RadarVoicesRes
         priority:      (String(r.review_priority ?? 'required') as RadarVoiceListItem['priority']),
         reviewStatus:  (String(r.review_status ?? 'pending') as RadarVoiceListItem['reviewStatus']),
         reviewedBy:    r.reviewed_by ? String(r.reviewed_by) : null,
+        context:       null,
       };
     });
 
@@ -145,6 +155,15 @@ export async function GET(req: NextRequest): Promise<NextResponse<RadarVoicesRes
       if (da !== db) return da - db;
       return b.confidence - a.confidence;
     });
+
+  // 表示する分だけ原文から前後を切り出す。全件ぶん引くと重いので絞ったあとに行う
+  const contexts = await fetchVoiceContexts(items.map(v => ({
+    voiceId:    v.voiceId,
+    sourceType: recordIdByVoice.get(v.voiceId)?.sourceType ?? '',
+    recordId:   recordIdByVoice.get(v.voiceId)?.recordId ?? null,
+    quotedText: v.quotedText,
+  })));
+  for (const v of items) v.context = contexts.get(v.voiceId) ?? null;
 
   return NextResponse.json({ ready: true, items, counts });
 }
