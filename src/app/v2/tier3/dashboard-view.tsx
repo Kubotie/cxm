@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Loader2, AlertCircle, ArrowUpRight, FileText, SlidersHorizontal } from "lucide-react";
+import { Loader2, AlertCircle, ArrowUpRight, FileText, SlidersHorizontal, ChevronDown, FileSpreadsheet, FileCode2 } from "lucide-react";
 import { ArrowUp, ArrowDown } from "lucide-react";
 import { InfoTip } from "@/components/ui/info-tip";
 import type {
@@ -16,6 +16,11 @@ import type {
 } from "@/app/api/companies/tier3-dashboard/route";
 import type { ActionListItem } from "@/app/api/actions/route";
 import { useRegisterAiPageContext } from "@/components/ai";
+import {
+  ALARM_LABEL, buildTier3Markdown, buildTier3Sheets, tier3ReportFileName,
+  type Tier3ReportMeta,
+} from "@/lib/report/tier3-report";
+import { downloadBlob } from "@/lib/report/download";
 
 // ── フォーマッタ ──────────────────────────────────────────────────────────────
 
@@ -180,6 +185,9 @@ export function Tier3DashboardView() {
   const [alarmFilter, setAlarmFilter] = useState<AlarmType | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("priority");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting]   = useState<null | "xlsx" | "md">(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -252,6 +260,65 @@ export function Tier3DashboardView() {
     [data],
   );
 
+  // ── レポート出力 ──────────────────────────────────────────────────────────
+  // 画面の絞り込み・並び順をそのまま持ち出す。押した時点で表に出ている企業が、
+  // そのままファイルの中身になる（条件はファイル先頭にも書く）。
+  const FILTER_LABEL: Record<FilterKey, string> = {
+    all: "すべて", urgent: "緊急", needAction: "要対応", proposal: "提案", normal: "異常なし",
+  };
+  const SORT_LABEL: Record<SortKey, string> = {
+    priority: "優先度", name: "企業名", mrr: "MRR", pvRate: "PV消費率",
+    l30: "L30", l7: "L7（今週）", wow: "前週比", severity: "重大度",
+  };
+
+  const filterLabel = [
+    `重大度: ${FILTER_LABEL[filter]}`,
+    alarmFilter ? `アラーム: ${ALARM_LABEL[alarmFilter]}` : null,
+    query.trim() ? `検索: ${query.trim()}` : null,
+  ].filter(Boolean).join(" / ");
+
+  function reportMeta(): Tier3ReportMeta {
+    return {
+      generatedAt:  new Date(),
+      updatedAt:    data?.updatedAt ?? null,
+      snapshotDate: data?.snapshotDate ?? null,
+      filterLabel,
+      sortLabel:    `${SORT_LABEL[sortKey]}（${sortDir === "asc" ? "昇順" : "降順"}）`,
+      totalCount:   data?.counts.all ?? sorted.length,
+      summary:      data?.summary ?? { pvOver: 0, renewalSoon: 0, opsDrop: 0, inactive30: 0, upsell: 0 },
+      counts:       data?.counts ?? { all: 0, urgent: 0, needAction: 0, proposal: 0, normal: 0 },
+      baseUrl:      typeof window === "undefined" ? "" : window.location.origin,
+    };
+  }
+
+  async function exportReport(kind: "xlsx" | "md") {
+    setExportOpen(false);
+    setExportError(null);
+    setExporting(kind);
+    try {
+      const meta = reportMeta();
+      const name = tier3ReportFileName(filter, meta.generatedAt, kind);
+      if (kind === "md") {
+        const text = buildTier3Markdown(sorted, done, meta);
+        downloadBlob(new Blob([text], { type: "text/markdown;charset=utf-8" }), name);
+      } else {
+        // zip 実装は押されたときだけ読み込む（初期表示を重くしない）
+        const { buildXlsx } = await import("@/lib/report/xlsx");
+        const bytes = await buildXlsx(buildTier3Sheets(sorted, done, meta));
+        downloadBlob(
+          new Blob([bytes as BlobPart], {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          }),
+          name,
+        );
+      }
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(null);
+    }
+  }
+
   const updatedLabel = data?.updatedAt
     ? new Date(data.updatedAt).toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
     : "—";
@@ -311,13 +378,64 @@ export function Tier3DashboardView() {
         <button className="inline-flex items-center gap-1.5 border border-slate-200 bg-white rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
           <SlidersHorizontal className="w-3.5 h-3.5" /> 表示設定
         </button>
-        <button className="inline-flex items-center gap-1.5 bg-blue-600 border border-blue-600 rounded-lg px-3 py-1.5 text-xs font-semibold text-white hover:brightness-105">
-          <FileText className="w-3.5 h-3.5" /> レポート出力
-        </button>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setExportOpen(v => !v)}
+            disabled={!data || loading || exporting !== null}
+            className="inline-flex items-center gap-1.5 bg-blue-600 border border-blue-600 rounded-lg px-3 py-1.5 text-xs font-semibold text-white hover:brightness-105 disabled:opacity-50"
+          >
+            {exporting
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <FileText className="w-3.5 h-3.5" />}
+            レポート出力
+            <ChevronDown className={`w-3 h-3 transition-transform ${exportOpen ? "rotate-180" : ""}`} />
+          </button>
+          {exportOpen && (
+            <>
+              {/* 外側クリックで閉じる */}
+              <div className="fixed inset-0 z-10" onClick={() => setExportOpen(false)} />
+              <div className="absolute right-0 top-full mt-1 z-20 w-[268px] rounded-lg border border-slate-200 bg-white shadow-lg overflow-hidden">
+                <div className="px-3 py-2 border-b border-slate-100">
+                  <div className="text-[11px] font-bold text-slate-700">いま表示中の {sorted.length} 社を出力</div>
+                  <div className="text-[10.5px] text-slate-400 mt-0.5 leading-snug">{filterLabel}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => exportReport("xlsx")}
+                  className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-slate-50"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600 mt-0.5 flex-none" />
+                  <span>
+                    <span className="block text-[12px] font-semibold text-slate-800">Excel（.xlsx）</span>
+                    <span className="block text-[10.5px] text-slate-400">企業一覧・出力条件・本日の対応済みの3シート</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => exportReport("md")}
+                  className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-slate-50 border-t border-slate-100"
+                >
+                  <FileCode2 className="w-4 h-4 text-slate-500 mt-0.5 flex-none" />
+                  <span>
+                    <span className="block text-[12px] font-semibold text-slate-800">Markdown（.md）</span>
+                    <span className="block text-[10.5px] text-slate-400">サマリー＋一覧＋企業ごとの詳細</span>
+                  </span>
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* ── コンテンツ ─────────────────────────────────────────────────────── */}
       <div className="p-4 md:p-5">
+        {exportError && (
+          <div className="flex items-center gap-2 text-red-600 mb-3 py-2 px-3 bg-red-50 rounded text-xs">
+            <AlertCircle className="w-4 h-4" />
+            レポート出力に失敗しました: {exportError}
+          </div>
+        )}
         {loading && (
           <div className="flex items-center justify-center gap-2 text-slate-500 py-16">
             <Loader2 className="w-4 h-4 animate-spin" /> 読み込み中...
@@ -339,15 +457,15 @@ export function Tier3DashboardView() {
                 <CardHeader title="アラームサマリー" tag={alarmFilter ? "絞込中" : "クリックで絞込"} />
                 <div>
                   {([
-                    { label: "PV 超過・超過予測",         source: "PTBI",       n: data.summary.pvOver,      sev: "red"   as Severity, alarm: "pv_over"     as AlarmType,
+                    { label: ALARM_LABEL.pv_over,         source: "PTBI",       n: data.summary.pvOver,      sev: "red"   as Severity, alarm: "pv_over"     as AlarmType,
                       tip: "当月のPV消費が上限の90%以上。超過リスクがある状態（緊急）。出典: PTBI" },
-                    { label: "更新 60 日以内",            source: "契約",       n: data.summary.renewalSoon, sev: "amber" as Severity, alarm: "renewal_soon" as AlarmType,
+                    { label: ALARM_LABEL.renewal_soon,            source: "契約",       n: data.summary.renewalSoon, sev: "amber" as Severity, alarm: "renewal_soon" as AlarmType,
                       tip: "契約更新日まで60日以内。0-30日=要観察（この期間は解約不可のため緊急ではない）／31-60日=要注意。要対応(amber)扱い" },
-                    { label: "操作数 急減（前週比 −50%↓）", source: "PTBI",      n: data.summary.opsDrop,     sev: "amber" as Severity, alarm: "ops_drop"     as AlarmType,
+                    { label: ALARM_LABEL.ops_drop, source: "PTBI",      n: data.summary.opsDrop,     sev: "amber" as Severity, alarm: "ops_drop"     as AlarmType,
                       tip: "今週のアクティブユーザー数(L7)が前週比 −50%以下。利用が急に落ちている。出典: PTBI" },
-                    { label: "30 日以上 無活動 / 休眠",    source: "PTBI",       n: data.summary.inactive30,  sev: "amber" as Severity, alarm: "inactive_30"  as AlarmType,
+                    { label: ALARM_LABEL.inactive_30,    source: "PTBI",       n: data.summary.inactive30,  sev: "amber" as Severity, alarm: "inactive_30"  as AlarmType,
                       tip: "最終活動から30日以上、またはPtengine持続休眠（2ヶ月以上操作が少なく直近30日アクティブ<3）。出典: PTBI" },
-                    { label: "アップセル機会",            source: "契約プラン", n: data.summary.upsell,      sev: "blue"  as Severity, alarm: "upsell"       as AlarmType,
+                    { label: ALARM_LABEL.upsell,            source: "契約プラン", n: data.summary.upsell,      sev: "blue"  as Severity, alarm: "upsell"       as AlarmType,
                       tip: "単一プラン契約（Insight または Experience のみ）で、ある程度稼働している企業。もう一方のプラン追加＝Bundle への拡張余地がある。出典: 契約プラン" },
                   ]).map((r, i) => {
                     const active = alarmFilter === r.alarm;
