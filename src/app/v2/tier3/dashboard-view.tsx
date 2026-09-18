@@ -83,6 +83,13 @@ const SEVERITY_META: Record<Severity, { label: string; chip: string; dot: string
   green: { label: "異常なし", chip: "bg-emerald-50 text-emerald-700", dot: "bg-emerald-500", num: "text-emerald-600" },
 };
 
+const CONTRACT_META: Record<DashboardItem["contractStatus"], { label: string; chip: string }> = {
+  active:  { label: "契約中",     chip: "bg-emerald-50 text-emerald-700 border-transparent" },
+  trial:   { label: "トライアル", chip: "bg-blue-50 text-blue-700 border-transparent" },
+  churned: { label: "解約",       chip: "bg-slate-100 text-slate-500 border-transparent" },
+  unknown: { label: "不明",       chip: "bg-white text-slate-400 border-slate-200" },
+};
+
 type FilterKey = "all" | "urgent" | "needAction" | "proposal" | "normal";
 const FILTER_TO_SEVERITY: Record<Exclude<FilterKey, "all">, Severity> = {
   urgent: "red", needAction: "amber", proposal: "blue", normal: "green",
@@ -143,6 +150,22 @@ function SortableTh({
         {tip && <InfoTip text={tip} />}
       </span>
     </th>
+  );
+}
+
+/**
+ * 契約状態。有料プロジェクトが1つでもあれば契約中、無料しか残っていなければ解約。
+ * 解約を赤にすると重大度（緊急）と見分けが付かなくなるのでグレーにする。
+ */
+function ContractChip({ item }: { item: DashboardItem }) {
+  const m = CONTRACT_META[item.contractStatus];
+  const detail = item.projectCount > 0
+    ? `有料 ${item.paidProjectCount} / 全 ${item.projectCount} プロジェクト`
+    : "配下プロジェクトを取得できません";
+  return (
+    <span className={`inline-block whitespace-nowrap text-[10.5px] font-bold px-2 py-0.5 rounded border ${m.chip}`} title={detail}>
+      {m.label}
+    </span>
   );
 }
 
@@ -615,6 +638,12 @@ export function Tier3DashboardView() {
                       <SortableTh label="企業名 / 担当"   sk="name"     sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                       <SortableTh label="MRR"             sk="mrr"      sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
                       <th className="px-3.5 py-2.5 font-bold">プラン</th>
+                      <th className="px-3.5 py-2.5 font-bold whitespace-nowrap">
+                        <span className="inline-flex items-center gap-0.5">
+                          契約状態
+                          <InfoTip text="配下に有料プロジェクトが1つでもあれば「契約中」、無料プロジェクトしか残っていなければ「解約」。トライアルのみは「トライアル」、プロジェクトを取得できない企業は「不明」。出典: project_info.paid_type" />
+                        </span>
+                      </th>
                       <SortableTh label="PV消費率"        sk="pvRate"   sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                       <SortableTh label="L30"             sk="l30"      sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right"
                         tip="過去30日にアクティブだったユーザー数（全プロジェクト合計）。継続的な利用ボリュームの目安" />
@@ -627,7 +656,7 @@ export function Tier3DashboardView() {
                   </thead>
                   <tbody>
                     {sorted.length === 0 && (
-                      <tr><td colSpan={8} className="text-center text-slate-400 py-8">該当する企業がありません</td></tr>
+                      <tr><td colSpan={9} className="text-center text-slate-400 py-8">該当する企業がありません</td></tr>
                     )}
                     {sorted.map(it => (
                       <tr key={it.companyUid} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
@@ -650,6 +679,7 @@ export function Tier3DashboardView() {
                               </span>
                             : <span className="text-slate-400">—</span>}
                         </td>
+                        <td className="px-3.5 py-2.5"><ContractChip item={it} /></td>
                         <td className="px-3.5 py-2.5"><PvBar rate={it.pvRate} /></td>
                         <td className="px-3.5 py-2.5 text-right tabular-nums">{it.l30Total ?? "—"}</td>
                         <td className="px-3.5 py-2.5 text-right">

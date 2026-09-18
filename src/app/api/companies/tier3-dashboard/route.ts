@@ -28,6 +28,8 @@ export const maxDuration = 60;
 // ── 型 ────────────────────────────────────────────────────────────────────────
 
 export type ContractPlan = 'insight' | 'experience' | 'bundle';
+/** 契約状態。有料プロジェクトの有無で決める */
+export type ContractStatus = 'active' | 'trial' | 'churned' | 'unknown';
 export type AlarmType = 'pv_over' | 'renewal_soon' | 'ops_drop' | 'inactive_30' | 'upsell';
 export type Severity = 'red' | 'amber' | 'blue' | 'green';
 
@@ -41,6 +43,12 @@ export interface DashboardItem {
   // ── 契約 / 収益 ─────────────────────────────────────────────────────────────
   mrr:              number | null;
   plan:             ContractPlan | null;
+  /** 契約中 / トライアル / 解約（＝無料プロジェクトしか残っていない） */
+  contractStatus:   ContractStatus;
+  /** 有料プロジェクト数 */
+  paidProjectCount: number;
+  /** 配下プロジェクト数（無料を含む） */
+  projectCount:     number;
   renewalBucket:    string | null;
   renewalDate:      string | null;
   openSupportCount: number | null;
@@ -109,14 +117,37 @@ function daysSince(dateStr: string | null): number | null {
   return Math.floor((today.getTime() - d.getTime()) / 86_400_000);
 }
 
-/** paidType 集合から契約プランを導出する */
+// paid_type の実データは6種類しかない（2026-09 時点・全13,852プロジェクトを実査）:
+//   FREE / PTI-PAID / PTX-PAID / BUNDLE-PAID / PTI-TRIAL / BUNDLE-TRIAL
+const isPaid  = (t: string): boolean => t.endsWith('-PAID');
+const isTrial = (t: string): boolean => t.endsWith('-TRIAL');
+
+/**
+ * paidType 集合から契約プランを導出する。
+ * 有料（-PAID）だけを見る。トライアルは契約ではないのでプランに数えない。
+ * BUNDLE-PAID を見落とすと Tier 3 の 28/33 社がプラン「—」になる（実測）。
+ */
 function derivePlan(paidTypes: Set<string>): ContractPlan | null {
-  const hasInsight    = paidTypes.has('PTI-PAID');
-  const hasExperience = paidTypes.has('PTX-PAID');
+  const paid = [...paidTypes].filter(isPaid);
+  if (paid.some(t => t.startsWith('BUNDLE'))) return 'bundle';
+  const hasInsight    = paid.some(t => t.startsWith('PTI'));
+  const hasExperience = paid.some(t => t.startsWith('PTX'));
   if (hasInsight && hasExperience) return 'bundle';
   if (hasInsight)    return 'insight';
   if (hasExperience) return 'experience';
   return null;
+}
+
+/**
+ * 契約状態。有料プロジェクトが1つでもあれば契約中、無料しか残っていなければ解約。
+ * トライアルしか無い場合は契約前なので「解約」とは呼ばず trial にする。
+ * プロジェクトが1件も引けないとき（SF未連携など）は unknown。判定できないことを
+ * 「解約」として出すと、実在する契約を失注扱いにしてしまうため。
+ */
+function deriveContractStatus(paidTypes: Set<string>, projectCount: number): ContractStatus {
+  if ([...paidTypes].some(isPaid))  return 'active';
+  if ([...paidTypes].some(isTrial)) return 'trial';
+  return projectCount > 0 ? 'churned' : 'unknown';
 }
 
 const SEVERITY_RANK: Record<Severity, number> = { red: 3, amber: 2, blue: 1, green: 0 };
@@ -177,6 +208,8 @@ export async function GET(
         if (pt) paidTypes.add(pt);
       }
       const plan = derivePlan(paidTypes);
+      const contractStatus   = deriveContractStatus(paidTypes, projList.length);
+      const paidProjectCount = projList.filter(p => isPaid((p.paidType ?? '').toUpperCase())).length;
 
       // ── PV 消費率（企業内プロジェクト最大）───────────────────────────────────
       let pvRate: number | null = null;
@@ -273,6 +306,9 @@ export async function GET(
         isPaidWatched: c.isPaidWatched,
         mrr,
         plan,
+        contractStatus,
+        paidProjectCount,
+        projectCount: projList.length,
         renewalBucket,
         renewalDate,
         openSupportCount,

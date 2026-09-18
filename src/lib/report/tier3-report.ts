@@ -32,6 +32,10 @@ const PLAN_LABEL: Record<string, string> = {
   bundle: "Bundle", insight: "Insight", experience: "Experience",
 };
 
+const CONTRACT_STATUS_LABEL: Record<DashboardItem["contractStatus"], string> = {
+  active: "契約中", trial: "トライアル", churned: "解約", unknown: "不明",
+};
+
 // ── 出力の前提（どの条件で切り出したか）──────────────────────────────────────
 
 export interface Tier3ReportMeta {
@@ -71,6 +75,9 @@ export const COLUMNS: ReportColumn[] = [
   { header: "主要理由",       width: 40,                 value: it => it.primaryReason },
   { header: "MRR",            width: 12, inTable: true,  value: it => it.mrr },
   { header: "プラン",         width: 11, inTable: true,  value: it => (it.plan ? PLAN_LABEL[it.plan] ?? it.plan : "—") },
+  { header: "契約状態",       width: 11, inTable: true,  value: it => CONTRACT_STATUS_LABEL[it.contractStatus] },
+  { header: "有料PJ数",       width: 10,                 value: it => it.paidProjectCount },
+  { header: "PJ数",           width: 8,                  value: it => it.projectCount },
   { header: "契約更新日",     width: 12,                 value: it => it.renewalDate },
   { header: "更新区分",       width: 14,                 value: it => it.renewalBucket },
   { header: "オープンSupport", width: 14,                value: it => it.openSupportCount },
