@@ -421,17 +421,48 @@ V5（体制縮小）として出たが、この一文では増員の話か縮小
 | 危険圏・新規点灯・未確認・最長放置の母数からも外す | 数字を見て動く人の判断を狂わせる |
 | 取り消せる（`cancel: true`） | 戻せない操作は、人が押さなくなる |
 
-保存先は `churn_radar_state` に追加した4列
-（`churn_reported_at` / `churn_reported_by` / `churn_effective_date` / `churn_note`）。
+#### 置き場所は companies（最初 churn_radar_state に置いて作り直した）
 
-⚠️ `upsertRadarState()` で**必ず引き継ぐ**こと。ack と違い、ステージが上がっても消さない
-（人が入れた事実なので）。引き継ぎを落とすと日次バッチが毎晩フラグを消す。
+当初は走査結果の `churn_radar_state` に4列を足した。**すぐ足りなくなった。**
+Tier3 の株式会社アーカーに立てたかったが、Tier1–2 しか走査していないので state に行が無い。
+
+そこで **`companies`（全社7315行の正本）の4列**に移した。
+
+| 列 | 型 |
+|---|---|
+| `churn_reported_at` | DateTime |
+| `churn_reported_by` | SingleLineText |
+| `churn_effective_date` | Date |
+| `churn_note` | LongText |
+
+`companies` への書き込みは tier-sync / paid-watched-sync ともフィールド単位の `nocoUpdate`
+なので、この4列が他のバッチに消されることはない。走査結果側（state）は一切触らないので、
+日次バッチとの引き継ぎも考えなくてよくなった。
+
+⚠️ **絞り込みは `churn_reported_by`（テキスト列）に掛ける。**
+NocoDB の `isnot,null` は DateTime 列では効かず全行が返る（実測）。
+`churn_reported_at` に掛けると7315社が全部返る。
+
+⚠️ **DateTime はオフセット付きの ISO で書く。**
+`2026-09-28 09:38:27` のような裸の文字列は NocoDB がサーバのタイムゾーン（JST）として
+解釈し、9時間ずれて保存される（実測）。読むときは JST に寄せてから日付を切る
+（そうしないと朝に報告した分が前日の日付になる）。
+
+#### 置き場所
+
+- レーダーの個社ページ（`/v2/radar/[companyUid]`）… 走査済みの Tier1–2
+- **通常の企業詳細（`/v2/companies/[companyUid]`）… 全社。レーダー未収録でも立てられる**
+
+レーダー未収録の企業に立てても、レーダーのリストには出ない（走査結果が無いため）。
+フラグはその企業のページで見る。
 
 操作は `churn_radar_events` にも残る（`churn_reported` / `churn_report_cleared`）。
-個社ページの出来事欄に「解約報告」として並ぶ。
+走査済みの企業なら、個社ページの出来事欄に「解約報告」として並ぶ。
 
-- API: `POST /api/radar/churn-report`
-- UI: `src/app/v2/radar/_components/churn-report-button.tsx`
+- API: `GET / POST /api/radar/churn-report`
+- ロジック: `src/lib/churn/churn-report.ts`
+- UI: `src/components/churn/churn-report-button.tsx`
+  （`ChurnReportButton` = 値を渡す版 / `ChurnReportInline` = 自分で引く版）
 
 ### 8.10 残件
 

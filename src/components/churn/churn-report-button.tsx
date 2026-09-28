@@ -9,12 +9,15 @@
 // ⚠️ スコアもステージも動かさない。レーダーの精度検証は「点灯していたか」を
 //   後から答え合わせするので、人が判定を書き換えると検証が壊れる。
 //
-// 置き場所は個社ページのヘッダー。主役ではないので小さく、ただし
+// 置き場所は企業ページのヘッダー。主役ではないので小さく、ただし
 // 報告済みの状態は取り違えると致命的なので、立った後ははっきり出す。
+//
+// レーダーの個社ページ（値を既に持っている）と、通常の企業詳細ページ
+// （持っていない）の両方から使う。後者は ChurnReportInline が自分で引く。
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Flag, Loader2, X } from "lucide-react";
-import type { ChurnReport } from "@/lib/churn/radar-state";
+import type { ChurnReport } from "@/lib/churn/churn-report";
 
 export function ChurnReportButton({ companyUid, report, onChange }: {
   companyUid: string;
@@ -124,4 +127,30 @@ export function ChurnReportButton({ companyUid, report, onChange }: {
       </div>
     </div>
   );
+}
+
+/**
+ * 自分で読み込む版。レーダーの走査結果を持たない画面（通常の企業詳細）用。
+ *
+ * **Tier3 の企業にも立てられる。** 解約報告は走査対象かどうかと関係ない事実で、
+ * 保存先も companies なので、レーダーに出てこない顧客でも記録できる。
+ */
+export function ChurnReportInline({ companyUid }: { companyUid: string }) {
+  const [report, setReport] = useState<ChurnReport | null>(null);
+  const [ready, setReady]   = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/radar/churn-report?companyUid=${encodeURIComponent(companyUid)}`)
+      .then(r => r.json())
+      .then(j => { if (alive) { setReport(j.churnReport ?? null); setReady(true); } })
+      // 読めなくても画面は壊さない。未報告として出す
+      .catch(() => { if (alive) setReady(true); });
+    return () => { alive = false; };
+  }, [companyUid]);
+
+  // 読み込み前にボタンを出すと、報告済みなのに「解約報告」と見えてしまう
+  if (!ready) return null;
+
+  return <ChurnReportButton companyUid={companyUid} report={report} onChange={setReport} />;
 }

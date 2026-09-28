@@ -25,6 +25,7 @@ import type { ReadinessFactorKey, ReadinessLevel, ProposalPlay, ReadinessFactor 
 import { FACTOR_META, USAGE_METRIC_META } from "@/lib/company/proposal-readiness";
 import { VERDICT_META, type ModuleSignalVM } from "@/lib/company/module-signals";
 import { InfoTip } from "@/components/ui/info-tip";
+import { ChurnReportInline } from "@/components/churn/churn-report-button";
 import { ProposalFlow } from "./proposal-flow";
 import { CampaignOrgSection } from "./campaign-org";
 import type { CampaignMonthPoint } from "@/lib/company/campaign-org-signals";
@@ -490,6 +491,12 @@ function HeaderCard({ data, sev }: { data: CompanyUsageResponse; sev: typeof SEV
           <div className="text-[11.5px] text-slate-400 mt-0.5">
             担当: {data.owner === "—" ? "担当なし" : data.owner}{data.tier != null && <span className="ml-2">· Tier {data.tier}</span>}
             <SuperLoginLinks targets={data.loginTargets ?? []} />
+          </div>
+          {/* 解約の連絡を受けた顧客に立てるフラグ。**Tier3 はレーダーに出てこない**ので、
+              解約レーダーの個社ページだけに置くと記録する場所が無い（株式会社アーカー）。
+              立てた後は「解約予定」としてはっきり出す */}
+          <div className="mt-2">
+            <ChurnReportInline companyUid={data.companyUid} />
           </div>
         </div>
         <div className="flex-1" />

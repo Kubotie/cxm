@@ -13,10 +13,8 @@ import { sourceUrl, SOURCE_LABEL } from '@/lib/churn/radar-source';
 import { fetchVoiceContexts, type VoiceContext } from '@/lib/churn/voice-context';
 import { collectRadarFacts, factsToInput } from '@/lib/churn/radar-input';
 import { evaluateRadar, SIGNAL_SOURCE, type RadarResult } from '@/lib/churn/radar-rules';
-import {
-  fetchRadarState, fetchRadarEvents, parseReason, toChurnReport,
-  type AckStatus, type ChurnReport,
-} from '@/lib/churn/radar-state';
+import { fetchRadarState, fetchRadarEvents, parseReason, type AckStatus } from '@/lib/churn/radar-state';
+import { fetchChurnReport, type ChurnReport } from '@/lib/churn/churn-report';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -329,7 +327,7 @@ export async function GET(
       firstDetectedAt,
       ackStatus: (state?.ack_status ?? 'none') as AckStatus,
       ackBy: state?.ack_by ?? null,
-      churnReport: toChurnReport(state),
+      churnReport: await fetchChurnReport(companyUid),
       topReason: state?.top_reason ?? current.topReason,
       current: (() => {
         const saved = state ? parseReason(state.reason_json).signals : [];

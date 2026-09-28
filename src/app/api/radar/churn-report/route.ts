@@ -10,21 +10,29 @@
 // 判定スコアには一切触らない。レーダーの精度検証（/v2/radar/accuracy）は
 // 「点灯していたか」を後から答え合わせするので、スコアを人が動かすと検証が壊れる。
 //
-// Body:
+// 保存先は companies の4列。**レーダー未収録（Tier3 など）の企業にも立てられる**
+// ようにするためで、走査結果の churn_radar_state には置かない（§8.11）。
+//
+// GET  ?companyUid=...   … 1社ぶんを読む（企業詳細ページが使う）
+// POST Body:
 //   { companyUid: string, effectiveDate?: string|null, note?: string|null }  … 報告する
 //   { companyUid: string, cancel: true }                                     … 取り消す
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUserProfile } from '@/lib/auth/session';
-import { saveChurnReport, radarTablesReady } from '@/lib/churn/radar-state';
+import { saveChurnReport, fetchChurnReport } from '@/lib/churn/churn-report';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(req: NextRequest): Promise<NextResponse> {
-  if (!radarTablesReady()) {
-    return NextResponse.json({ error: 'レーダーのテーブルが未設定です' }, { status: 503 });
+export async function GET(req: NextRequest): Promise<NextResponse> {
+  const companyUid = req.nextUrl.searchParams.get('companyUid')?.trim();
+  if (!companyUid) {
+    return NextResponse.json({ error: 'companyUid が必要です' }, { status: 400 });
   }
+  return NextResponse.json({ churnReport: await fetchChurnReport(companyUid) });
+}
 
+export async function POST(req: NextRequest): Promise<NextResponse> {
   const profile = await getCurrentUserProfile().catch(() => null);
   if (!profile?.name2) {
     return NextResponse.json({ error: 'ログインが必要です' }, { status: 401 });
@@ -43,24 +51,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: '解約日は YYYY-MM-DD で指定してください' }, { status: 400 });
   }
 
-  const ok = await saveChurnReport(
+  const saved = await saveChurnReport(
     companyUid,
     body.cancel ? null : { by: profile.name2, effectiveDate, note: body.note?.trim() || null },
   );
-  if (!ok) {
-    return NextResponse.json({ error: 'この企業の走査結果がまだありません' }, { status: 404 });
+  if (saved === false) {
+    return NextResponse.json({ error: 'この企業が companies に見つかりません' }, { status: 404 });
   }
 
-  if (body.cancel) {
-    return NextResponse.json({ status: 'ok', churnReport: null });
-  }
-  return NextResponse.json({
-    status: 'ok',
-    churnReport: {
-      reportedAt:    new Date().toISOString().slice(0, 10),
-      reportedBy:    profile.name2,
-      effectiveDate,
-      note:          body.note?.trim() || null,
-    },
-  });
+  return NextResponse.json({ status: 'ok', churnReport: saved });
 }

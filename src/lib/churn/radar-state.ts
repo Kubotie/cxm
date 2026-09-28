@@ -44,15 +44,6 @@ export interface RadarStateRow {
   ack_by:             string | null;
   ack_at:             string | null;
   ack_note:           string | null;
-  /**
-   * 解約の報告を受けた日時。**予兆ではなく確定した事実**なので、
-   * バッチの判定では絶対に触らない（人が入れ、人が取り消す）。
-   */
-  churn_reported_at:    string | null;
-  churn_reported_by:    string | null;
-  /** 解約が効く日（＝契約終了日）。分かっていれば。未定なら null */
-  churn_effective_date: string | null;
-  churn_note:           string | null;
 }
 
 export type RadarEventType =
@@ -126,14 +117,8 @@ export async function fetchRadarEvents(companyUid: string, limit = 60): Promise<
  *   - ack_*             … ステージが上がったときだけ none に戻す
  *     （悪化したのに「確認済み」のままだと、また4ヶ月放置が起きる）
  */
-/** バッチが組み立てる部分。解約報告の4列はバッチが触らないので受け取らない */
-export type RadarStateDraft = Omit<
-  RadarStateRow,
-  'Id' | 'churn_reported_at' | 'churn_reported_by' | 'churn_effective_date' | 'churn_note'
->;
-
 export async function upsertRadarState(
-  next: RadarStateDraft,
+  next: Omit<RadarStateRow, 'Id'>,
   prev: RadarStateRow | null,
 ): Promise<{ created: boolean; stageChanged: boolean } | null> {
   const tableId = TABLE_IDS.churn_radar_state;
@@ -154,12 +139,6 @@ export async function upsertRadarState(
     ack_by:     escalated ? null : prev?.ack_by ?? null,
     ack_at:     escalated ? null : prev?.ack_at ?? null,
     ack_note:   escalated ? null : prev?.ack_note ?? null,
-    // 解約報告は人が入れた事実。ack と違い、悪化しても消さない。
-    // ここを落とすと日次バッチが毎晩フラグを消してしまう
-    churn_reported_at:    prev?.churn_reported_at ?? null,
-    churn_reported_by:    prev?.churn_reported_by ?? null,
-    churn_effective_date: prev?.churn_effective_date ?? null,
-    churn_note:           prev?.churn_note ?? null,
   };
 
   if (prev?.Id != null) {
@@ -206,69 +185,6 @@ export async function saveRadarAck(
     signal_ids:  prev.signal_ids ?? null,
   });
   return true;
-}
-
-/**
- * 解約報告のフラグを立てる／取り消す。
- *
- * **予兆の検知と、確定した解約は別物。** 報告済みの顧客が「今週やる」に並び続けると、
- * 本当に手を打てる顧客が埋もれる。フラグは判定スコアを変えず、
- * リストの既定の絞り込みから外すためだけに使う（記録は残す）。
- */
-export async function saveChurnReport(
-  companyUid: string,
-  report: { by: string; effectiveDate?: string | null; note?: string | null } | null,
-): Promise<boolean> {
-  const tableId = TABLE_IDS.churn_radar_state;
-  if (!tableId) return false;
-  const prev = await fetchRadarState(companyUid);
-  if (!prev?.Id) return false;
-
-  const at = new Date().toISOString().slice(0, 19).replace('T', ' ');
-  const clearing = report === null;
-
-  await nocoUpdate(tableId, prev.Id, {
-    churn_reported_at:    clearing ? null : at,
-    churn_reported_by:    clearing ? null : report.by,
-    churn_effective_date: clearing ? null : report.effectiveDate ?? null,
-    churn_note:           clearing ? null : report.note ?? null,
-  });
-
-  await appendRadarEvent({
-    event_id:    `${companyUid}:churn:${at}`,
-    company_uid: companyUid,
-    occurred_at: at.slice(0, 10),
-    event_type:  clearing ? 'churn_report_cleared' : 'churn_reported',
-    from_stage:  prev.stage,
-    to_stage:    prev.stage,
-    score:       prev.score ?? null,
-    detail:      clearing
-      ? `${prev.churn_reported_by ?? '—'} の解約報告を取り消した`
-      : `${report.by} が解約報告を登録した`
-        + (report.effectiveDate ? `（解約日 ${report.effectiveDate}）` : '（解約日は未定）')
-        + (report.note ? `：${report.note}` : ''),
-    signal_ids:  prev.signal_ids ?? null,
-  });
-  return true;
-}
-
-/** 画面に渡す解約報告。state の4列を1つに畳んだもの */
-export interface ChurnReport {
-  reportedAt:    string;
-  reportedBy:    string | null;
-  /** 契約終了日。未定なら null */
-  effectiveDate: string | null;
-  note:          string | null;
-}
-
-export function toChurnReport(row: Partial<RadarStateRow> | null | undefined): ChurnReport | null {
-  if (!row?.churn_reported_at) return null;
-  return {
-    reportedAt:    String(row.churn_reported_at).slice(0, 10),
-    reportedBy:    row.churn_reported_by ?? null,
-    effectiveDate: row.churn_effective_date ? String(row.churn_effective_date).slice(0, 10) : null,
-    note:          row.churn_note ?? null,
-  };
 }
 
 export const ACK_LABEL: Record<AckStatus, string> = {

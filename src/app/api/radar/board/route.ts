@@ -10,9 +10,10 @@ import { NextResponse } from 'next/server';
 import { getCurrentUserProfile } from '@/lib/auth/session';
 import { TABLE_IDS, nocoFetch } from '@/lib/nocodb/client';
 import {
-  fetchAllRadarStates, parseReason, radarTablesReady, toChurnReport,
-  type RadarStateRow, type AckStatus, type ChurnReport,
+  fetchAllRadarStates, parseReason, radarTablesReady,
+  type RadarStateRow, type AckStatus,
 } from '@/lib/churn/radar-state';
+import { fetchChurnReportMap, type ChurnReport } from '@/lib/churn/churn-report';
 import { inDangerZone } from '@/lib/churn/radar-scope';
 import { sourceUrl, SOURCE_LABEL } from '@/lib/churn/radar-source';
 import type { RadarStage, RadarSignal, RadarLayer } from '@/lib/churn/radar-rules';
@@ -83,7 +84,9 @@ function daysSince(date: string | null | undefined, today: string): number | nul
   return Math.floor((b - a) / DAY_MS);
 }
 
-function toPoint(row: RadarStateRow, today: string): RadarBoardPoint {
+function toPoint(
+  row: RadarStateRow, today: string, churnReports: Map<string, ChurnReport>,
+): RadarBoardPoint {
   const aged = daysSince(row.first_detected_at, today);
   return {
     companyUid:    row.company_uid,
@@ -112,7 +115,7 @@ function toPoint(row: RadarStateRow, today: string): RadarBoardPoint {
     isNew:         aged !== null && aged <= 7,
     ackStatus:     (row.ack_status ?? 'none') as AckStatus,
     ackBy:         row.ack_by ?? null,
-    churnReport:   toChurnReport(row),
+    churnReport:   churnReports.get(row.company_uid) ?? null,
   };
 }
 
@@ -156,9 +159,11 @@ export async function GET(): Promise<NextResponse<RadarBoardResponse>> {
     });
   }
 
-  const [rows, profile] = await Promise.all([
+  const [rows, profile, churnReports] = await Promise.all([
     fetchAllRadarStates(),
     getCurrentUserProfile().catch(() => null),
+    // 解約報告は companies 側にある。立っている行だけを引く（全社読むと7315行）
+    fetchChurnReportMap(),
   ]);
 
   if (rows.length === 0) {
@@ -169,7 +174,7 @@ export async function GET(): Promise<NextResponse<RadarBoardResponse>> {
     });
   }
 
-  const points = rows.map(r => toPoint(r, today));
+  const points = rows.map(r => toPoint(r, today, churnReports));
 
   const counts = { critical: 0, warn: 0, watch: 0, clear: 0, total: points.length } as
     Record<RadarStage, number> & { total: number };

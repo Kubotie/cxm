@@ -17,7 +17,7 @@ import {
 import { useRegisterAiPageContext } from "@/components/ai";
 import { STAGE_COLOR } from "@/lib/churn/radar-scope";
 import { QuoteWithContext } from "../_components/quote-with-context";
-import { ChurnReportButton } from "../_components/churn-report-button";
+import { ChurnReportButton } from "@/components/churn/churn-report-button";
 import type {
   RadarCompanyResponse, RadarTimelineEvent, RadarEventKind, RadarVoiceItem,
 } from "@/app/api/radar/company/[companyUid]/route";
