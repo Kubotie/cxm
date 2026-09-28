@@ -13,7 +13,10 @@ import { sourceUrl, SOURCE_LABEL } from '@/lib/churn/radar-source';
 import { fetchVoiceContexts, type VoiceContext } from '@/lib/churn/voice-context';
 import { collectRadarFacts, factsToInput } from '@/lib/churn/radar-input';
 import { evaluateRadar, SIGNAL_SOURCE, type RadarResult } from '@/lib/churn/radar-rules';
-import { fetchRadarState, fetchRadarEvents, parseReason, type AckStatus } from '@/lib/churn/radar-state';
+import {
+  fetchRadarState, fetchRadarEvents, parseReason, toChurnReport,
+  type AckStatus, type ChurnReport,
+} from '@/lib/churn/radar-state';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -88,6 +91,8 @@ export interface RadarCompanyResponse {
   firstDetectedAt: string | null;
   ackStatus:     AckStatus;
   ackBy:         string | null;
+  /** 解約の報告を受けているか。予兆ではなく確定した事実 */
+  churnReport:   ChurnReport | null;
   topReason:     string;
   current:       RadarResult;
   series:        RadarSeriesPoint[];
@@ -215,7 +220,8 @@ export async function GET(
 
     for (const e of events) {
       if (!e.occurred_at || e.occurred_at < from) continue;
-      const isUp = e.event_type === 'detected' || e.event_type === 'escalated';
+      const isUp = e.event_type === 'detected' || e.event_type === 'escalated'
+        || e.event_type === 'churn_reported';
       // 判定は「何を見てそう言ったか」が無いと検算できない。
       // そのとき立っていたシグナルと、それぞれのデータ元を添える。
       const ids = (e.signal_ids ?? '').split(',').map(x => x.trim()).filter(Boolean);
@@ -230,6 +236,9 @@ export async function GET(
           : e.event_type === 'escalated' ? `悪化 ${e.from_stage} → ${e.to_stage}`
           : e.event_type === 'recovered' ? `回復 ${e.from_stage} → ${e.to_stage}`
           : e.event_type === 'cleared'   ? '消灯'
+          // 解約報告は判定ではなく人が入れた事実。「確認」に混ぜると後から読めない
+          : e.event_type === 'churn_reported'       ? '解約報告'
+          : e.event_type === 'churn_report_cleared' ? '解約報告の取り消し'
           : '確認',
         detail: e.detail ?? null,
         strong: isUp,
@@ -320,6 +329,7 @@ export async function GET(
       firstDetectedAt,
       ackStatus: (state?.ack_status ?? 'none') as AckStatus,
       ackBy: state?.ack_by ?? null,
+      churnReport: toChurnReport(state),
       topReason: state?.top_reason ?? current.topReason,
       current: (() => {
         const saved = state ? parseReason(state.reason_json).signals : [];

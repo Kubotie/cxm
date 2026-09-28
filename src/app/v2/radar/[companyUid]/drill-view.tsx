@@ -17,6 +17,7 @@ import {
 import { useRegisterAiPageContext } from "@/components/ai";
 import { STAGE_COLOR } from "@/lib/churn/radar-scope";
 import { QuoteWithContext } from "../_components/quote-with-context";
+import { ChurnReportButton } from "../_components/churn-report-button";
 import type {
   RadarCompanyResponse, RadarTimelineEvent, RadarEventKind, RadarVoiceItem,
 } from "@/app/api/radar/company/[companyUid]/route";
@@ -235,15 +236,25 @@ export default function DrillView({ companyUid }: { companyUid: string }) {
               {data.firstDetectedAt && ` ／ 初回点灯 ${data.firstDetectedAt}`}
             </p>
           </div>
-          <div className="text-right">
-            <div className={`font-mono text-[19px] font-semibold leading-none ${
-              (data.agedDays ?? 0) >= 60 ? "text-red-700"
-              : (data.agedDays ?? 0) >= 21 ? "text-amber-700" : "text-slate-700"}`}>
-              {data.agedDays ?? "—"}<span className="text-[11px] ml-0.5">日</span>
+          <div className="flex items-end gap-3">
+            {/* 解約の連絡を受けている顧客をリストから外すための小さな導線。
+                主役ではないので控えめに、ただし立った後ははっきり出す */}
+            <div className="flex flex-col items-end gap-1">
+              <ChurnReportButton
+                companyUid={companyUid}
+                report={data.churnReport}
+                onChange={next => setData(prev => prev && ({ ...prev, churnReport: next }))} />
             </div>
-            <div className="text-[10px] text-slate-400 tracking-wide">
-              鳴りっぱなし・{ACK_TEXT[data.ackStatus]}
-              {data.ackBy ? `（${data.ackBy}）` : ""}
+            <div className="text-right">
+              <div className={`font-mono text-[19px] font-semibold leading-none ${
+                (data.agedDays ?? 0) >= 60 ? "text-red-700"
+                : (data.agedDays ?? 0) >= 21 ? "text-amber-700" : "text-slate-700"}`}>
+                {data.agedDays ?? "—"}<span className="text-[11px] ml-0.5">日</span>
+              </div>
+              <div className="text-[10px] text-slate-400 tracking-wide">
+                鳴りっぱなし・{ACK_TEXT[data.ackStatus]}
+                {data.ackBy ? `（${data.ackBy}）` : ""}
+              </div>
             </div>
           </div>
         </div>

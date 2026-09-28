@@ -18,7 +18,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Loader2, AlertCircle, RefreshCw, ArrowUpRight, CheckCircle2, Gauge as GaugeIcon,
-  MessageSquareQuote, ExternalLink,
+  MessageSquareQuote, ExternalLink, Flag,
 } from "lucide-react";
 import { useRegisterAiPageContext } from "@/components/ai";
 import {
@@ -81,7 +81,7 @@ function yen(n: number | null): string {
 
 // ── 本体 ──────────────────────────────────────────────────────────────────────
 
-type ListScope  = "danger" | "lit" | "all";
+type ListScope  = "danger" | "lit" | "churn" | "all";
 type SortKey    = "renewal" | "score" | "aged";
 
 /**
@@ -141,20 +141,30 @@ export default function ScopeView() {
     return list;
   }, [data, owner]);
 
-  const lit = useMemo(() => points.filter(p => p.stage !== "clear"), [points]);
+  // **解約の連絡を受けた顧客は、もう予兆検知の仕事ではない。**
+  // 危険圏に並び続けると、まだ手を打てる顧客がその下に埋もれる。
+  // 行は消さず「解約予定」に回して、件数とフラグで追えるようにする
+  const lit = useMemo(
+    () => points.filter(p => p.stage !== "clear" && p.churnReport === null),
+    [points],
+  );
+  const churnPlanned = useMemo(() => points.filter(p => p.churnReport !== null), [points]);
 
   /** フィルタごとの母数。押す前に結果が分かるようボタンに出す */
   const scopeCounts = useMemo(() => ({
     danger: lit.filter(p => inDangerZone(p.daysToRenewal)).length,
     lit:    lit.length,
+    churn:  churnPlanned.length,
     all:    points.length,
-  }), [lit, points]);
+  }), [lit, points, churnPlanned]);
 
   const listed = useMemo(() => {
     const base =
       listScope === "danger"
         ? lit.filter(p => inDangerZone(p.daysToRenewal))
-        : listScope === "lit" ? lit : points;
+        : listScope === "lit"   ? lit
+        : listScope === "churn" ? churnPlanned
+        : points;
     return [...base].sort((a, b) => {
       if (sortKey === "score") return b.score - a.score;
       if (sortKey === "aged")  return (b.agedDays ?? -1) - (a.agedDays ?? -1);
@@ -167,7 +177,7 @@ export default function ScopeView() {
       const da = norm(a.daysToRenewal), db = norm(b.daysToRenewal);
       return da !== db ? da - db : b.score - a.score;
     });
-  }, [lit, points, listScope, sortKey]);
+  }, [lit, points, churnPlanned, listScope, sortKey]);
 
   const counts = useMemo(() => {
     const c: Record<RadarStage, number> = { critical: 0, warn: 0, watch: 0, clear: 0 };
@@ -198,6 +208,7 @@ export default function ScopeView() {
     hints: {
       担当フィルタ: owner,
       リスト範囲: listScope,
+      解約予定: churnPlanned.map(p => `${p.name}（${p.churnReport?.effectiveDate ?? "終了日未定"}）`),
       読込中: loading,
       エラー: error,
     },
@@ -451,6 +462,23 @@ export default function ScopeView() {
                 );
               })}
 
+              {/* 解約予定。判定の対象からは外れているが、盤から消すと
+                  「あの会社はどこへ行った」となる。輪郭だけの灰点で残す */}
+              {churnPlanned.map(p => {
+                const r = R * radiusRatio(p.daysToRenewal);
+                const [x, y] = polar(CX, CY, r, angleFor(p.sector, p.companyUid));
+                return (
+                  <g key={`churn-${p.companyUid}`}
+                    onClick={() => router.push(`/v2/radar/${p.companyUid}`)}
+                    className="cursor-pointer">
+                    <circle cx={x} cy={y} r={dotRadius(p.mrr) * 0.8} fill="none"
+                      stroke="#64748b" strokeWidth="1.2" opacity="0.7" />
+                    <title>{`${p.name}／解約予定${
+                      p.churnReport?.effectiveDate ? `（${p.churnReport.effectiveDate} 終了）` : ""}`}</title>
+                  </g>
+                );
+              })}
+
               {/* ── 目盛りは最前面。光点の下に潜ると読めなくなる ─────────── */}
               {RING_MARKS.map(([d, label]) => {
                 const r = R * ringRadiusRatio(d);
@@ -534,6 +562,13 @@ export default function ScopeView() {
               <span className="w-1.5 h-1.5 rounded-full flex-none bg-slate-500 opacity-40 ml-0.5 mr-1" />
               中心の薄い点＝申出締切を過ぎた顧客（今期は動かせない）
             </div>
+            {churnPlanned.length > 0 && (
+              <div className="flex items-center gap-2 text-[10.5px] text-slate-500">
+                <span className="w-2.5 h-2.5 rounded-full flex-none border border-slate-500" />
+                輪郭だけの点＝解約予定
+                <span className="ml-auto font-mono">{churnPlanned.length}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -544,7 +579,9 @@ export default function ScopeView() {
           <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-[11.5px] font-bold text-slate-900">
               {listScope === "danger" ? "危険圏（解約申出の期限まで30日以内＝更新31〜60日前）"
-                : listScope === "lit" ? "点灯中のすべて" : "全社"}
+                : listScope === "lit"   ? "点灯中のすべて"
+                : listScope === "churn" ? "解約予定（解約の報告を受けている顧客）"
+                : "全社"}
             </span>
             <span className="font-mono text-[11.5px] text-slate-500">
               {listed.length}<span className="text-slate-400">／{points.length}社</span>
@@ -552,9 +589,17 @@ export default function ScopeView() {
             <span className="text-[10.5px] text-slate-400">
               {SORT_META[sortKey].label}に並べています
             </span>
+            {/* 黙って消すと「なぜ居ないのか」が分からなくなる。除いた件数は必ず出す */}
+            {churnPlanned.length > 0 && (listScope === "danger" || listScope === "lit") && (
+              <button onClick={() => setListScope("churn")}
+                className="text-[10.5px] text-slate-500 hover:text-slate-900 underline underline-offset-2
+                  decoration-dotted flex items-center gap-1">
+                <Flag className="w-2.5 h-2.5" />解約予定の{churnPlanned.length}社は除いています
+              </button>
+            )}
           </div>
           <div className="flex gap-1.5 items-center flex-wrap">
-            {([["danger", "危険圏"], ["lit", "点灯中"], ["all", "全社"]] as [ListScope, string][]).map(([s, label]) => (
+            {([["danger", "危険圏"], ["lit", "点灯中"], ["churn", "解約予定"], ["all", "全社"]] as [ListScope, string][]).map(([s, label]) => (
               <button key={s} onClick={() => setListScope(s)}
                 className={`text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1.5
                   ${listScope === s
@@ -584,6 +629,8 @@ export default function ScopeView() {
             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
             {listScope === "danger"
               ? "解約申出の期限が近くて落ちている顧客はいません。今週はここを見なくてよい。"
+              : listScope === "churn"
+              ? "解約報告が立っている顧客はいません。個社ページの「解約報告」から立てられます。"
               : "該当する顧客はいません。"}
           </div>
         ) : listed.map(p => (
@@ -635,6 +682,19 @@ function RadarRow({ p, busy, onAck }: {
           )}
           <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">{yen(p.mrr)}</span>
           <span className={`text-[10.5px] font-bold px-2 py-0.5 rounded-full ${meta.chip}`}>{meta.label}</span>
+          {/* 解約報告済み。予兆より強い事実なので、ステージより目立たせる */}
+          {p.churnReport && (
+            <span
+              title={`${p.churnReport.reportedAt} ${p.churnReport.reportedBy ?? "—"} が報告`
+                + (p.churnReport.note ? `／${p.churnReport.note}` : "")}
+              className="inline-flex items-center gap-1 text-[10.5px] font-bold px-2 py-0.5
+                rounded-full bg-slate-900 text-white">
+              <Flag className="w-2.5 h-2.5" />解約予定
+              <span className="font-mono font-normal text-slate-300">
+                {p.churnReport.effectiveDate ? `${p.churnReport.effectiveDate} 終了` : "終了日未定"}
+              </span>
+            </span>
+          )}
           {/* 見るべきは更新日ではなく「解約を申し出られる期限」。
               締切を過ぎた顧客は今期もう動かせないので、そう表示する */}
           <span className="ml-auto text-right flex-none min-w-[76px]">

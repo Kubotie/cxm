@@ -10,8 +10,8 @@ import { NextResponse } from 'next/server';
 import { getCurrentUserProfile } from '@/lib/auth/session';
 import { TABLE_IDS, nocoFetch } from '@/lib/nocodb/client';
 import {
-  fetchAllRadarStates, parseReason, radarTablesReady,
-  type RadarStateRow, type AckStatus,
+  fetchAllRadarStates, parseReason, radarTablesReady, toChurnReport,
+  type RadarStateRow, type AckStatus, type ChurnReport,
 } from '@/lib/churn/radar-state';
 import { inDangerZone } from '@/lib/churn/radar-scope';
 import { sourceUrl, SOURCE_LABEL } from '@/lib/churn/radar-source';
@@ -41,6 +41,11 @@ export interface RadarBoardPoint {
   isNew:         boolean;
   ackStatus:     AckStatus;
   ackBy:         string | null;
+  /**
+   * 解約の報告を受けている顧客。**予兆ではなく確定した事実**なので、
+   * 既定の絞り込みからは外して「解約予定」として別に数える
+   */
+  churnReport:   ChurnReport | null;
 }
 
 export interface RadarBoardResponse {
@@ -59,6 +64,8 @@ export interface RadarBoardResponse {
   unacked:         number;
   /** 言質のレビュー待ち。溜まると critical に上がるはずの企業が上がらない */
   voiceReviewPending: number;
+  /** 解約報告済み。既定のリストからは外れているので、件数だけは必ず見せる */
+  churnReported:      number;
   points:          RadarBoardPoint[];
   /** セットアップが未完了のときの案内 */
   setupHint?:      string;
@@ -105,6 +112,7 @@ function toPoint(row: RadarStateRow, today: string): RadarBoardPoint {
     isNew:         aged !== null && aged <= 7,
     ackStatus:     (row.ack_status ?? 'none') as AckStatus,
     ackBy:         row.ack_by ?? null,
+    churnReport:   toChurnReport(row),
   };
 }
 
@@ -138,7 +146,7 @@ export async function GET(): Promise<NextResponse<RadarBoardResponse>> {
     ready: false, asOf: null, viewerOwnerName: null,
     counts: { critical: 0, warn: 0, watch: 0, clear: 0, total: 0 },
     dangerZone: 0, dangerZoneMrr: 0, newlyDetected: 0, recoveredThisWeek: 0,
-    longestAged: null, unacked: 0, voiceReviewPending: 0, points: [],
+    longestAged: null, unacked: 0, voiceReviewPending: 0, churnReported: 0, points: [],
   };
 
   if (!radarTablesReady()) {
@@ -167,7 +175,9 @@ export async function GET(): Promise<NextResponse<RadarBoardResponse>> {
     Record<RadarStage, number> & { total: number };
   for (const p of points) counts[p.stage]++;
 
-  const lit = points.filter(p => p.stage !== 'clear');
+  // 解約報告済みは「まだ手を打てる顧客」ではない。危険圏・新規点灯・未確認の
+  // 母数に混ぜると、数字を見て動く人の判断を狂わせる
+  const lit = points.filter(p => p.stage !== 'clear' && p.churnReport === null);
   // 危険圏＝解約申出の期限（更新30日前）まで30日以内
   const danger = lit.filter(p => inDangerZone(p.daysToRenewal));
 
@@ -187,6 +197,7 @@ export async function GET(): Promise<NextResponse<RadarBoardResponse>> {
     newlyDetected: lit.filter(p => p.isNew).length,
     recoveredThisWeek: await countRecovered(weekAgo),
     voiceReviewPending: await countVoiceReviewPending(),
+    churnReported: points.filter(p => p.churnReport !== null).length,
     longestAged: longest ? { name: longest.name, days: longest.agedDays as number } : null,
     unacked: lit.filter(p => p.ackStatus === 'none').length,
     // スコアの重い順。スコープは全点を描き、リストは上位だけを使う
