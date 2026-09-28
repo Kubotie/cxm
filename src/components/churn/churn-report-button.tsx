@@ -19,9 +19,28 @@ import { useEffect, useState } from "react";
 import { Flag, Loader2, X } from "lucide-react";
 import type { ChurnReport } from "@/lib/churn/churn-report";
 
-export function ChurnReportButton({ companyUid, report, onChange }: {
+/**
+ * 契約満了日 ＝ **更新日の前日**。
+ *
+ * 解約はほぼ「次の更新をしない」なので、終了日は毎回これになる。
+ * 手で打たせると、更新日そのものを入れてしまう（1日ずれる）。
+ *
+ * 更新日が過ぎている企業は入れない。`renewal_date` が古いまま残っている顧客に
+ * 過去日を黙って入れると、気づかず保存されてしまう。その場合は手入力に落とす。
+ */
+function defaultEffectiveDate(renewalDate: string | null | undefined): string {
+  if (!renewalDate) return "";
+  const t = Date.parse(`${String(renewalDate).slice(0, 10)}T00:00:00Z`);
+  if (isNaN(t)) return "";
+  const day = new Date(t - 86400_000).toISOString().slice(0, 10);
+  return day >= new Date().toISOString().slice(0, 10) ? day : "";
+}
+
+export function ChurnReportButton({ companyUid, report, renewalDate, onChange }: {
   companyUid: string;
   report: ChurnReport | null;
+  /** 次回の更新日（YYYY-MM-DD）。契約終了日の既定値をここから作る */
+  renewalDate?: string | null;
   onChange: (next: ChurnReport | null) => void;
 }) {
   const [open, setOpen]   = useState(false);
@@ -29,6 +48,10 @@ export function ChurnReportButton({ companyUid, report, onChange }: {
   const [error, setError] = useState<string | null>(null);
   const [effectiveDate, setEffectiveDate] = useState("");
   const [note, setNote]   = useState("");
+
+  const suggested = defaultEffectiveDate(renewalDate);
+  const openForm  = () => { setEffectiveDate(suggested); setNote(""); setOpen(true); };
+  const closeForm = () => { setOpen(false); setError(null); };
 
   const send = async (body: Record<string, unknown>) => {
     setBusy(true); setError(null);
@@ -79,7 +102,7 @@ export function ChurnReportButton({ companyUid, report, onChange }: {
   // ── 未報告 ─────────────────────────────────────────────────────────────────
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)}
+      <button onClick={openForm}
         title="解約の連絡を受けている場合に立てます。レーダーの既定のリストから外れます"
         className="text-[10.5px] px-2 py-1 rounded-md border border-slate-300 bg-white text-slate-500
           hover:border-slate-500 hover:text-slate-800 transition flex items-center gap-1">
@@ -93,7 +116,7 @@ export function ChurnReportButton({ companyUid, report, onChange }: {
       shadow-sm w-full max-w-[420px]">
       <div className="flex items-center gap-1.5 text-[11.5px] font-bold text-slate-900">
         <Flag className="w-3 h-3" />解約報告を登録する
-        <button onClick={() => { setOpen(false); setError(null); }}
+        <button onClick={closeForm}
           className="ml-auto text-slate-400 hover:text-slate-700"><X className="w-3.5 h-3.5" /></button>
       </div>
       <p className="text-[10.5px] text-slate-500 leading-relaxed">
@@ -106,6 +129,14 @@ export function ChurnReportButton({ companyUid, report, onChange }: {
           className="flex-1 border border-slate-300 rounded px-2 py-1 text-[11.5px] font-mono
             focus:outline-none focus:border-slate-500" />
       </label>
+      {/* 何を根拠に入れた値か書く。黙って入っていると、直すべきか判断できない */}
+      <span className="text-[10px] text-slate-400 ml-[80px] -mt-1">
+        {suggested
+          ? effectiveDate === suggested
+            ? `更新日 ${String(renewalDate).slice(0, 10)} の前日を入れています。違うときは直してください`
+            : `更新日は ${String(renewalDate).slice(0, 10)}（その前日は ${suggested}）`
+          : "更新日が分からないので空です。分かれば入れてください（未定でも登録できます）"}
+      </span>
       <label className="flex items-start gap-2 text-[11px] text-slate-600">
         <span className="flex-none w-[72px] pt-1.5">メモ</span>
         <input type="text" value={note} onChange={e => setNote(e.target.value)}
@@ -115,7 +146,7 @@ export function ChurnReportButton({ companyUid, report, onChange }: {
       </label>
       {error && <span className="text-[10.5px] text-red-700">{error}</span>}
       <div className="flex justify-end gap-1.5">
-        <button onClick={() => { setOpen(false); setError(null); }}
+        <button onClick={closeForm}
           className="text-[11px] px-2.5 py-1 rounded-md border border-slate-300 text-slate-600
             hover:border-slate-400">やめる</button>
         <button onClick={() => send({ effectiveDate: effectiveDate || null, note: note || null })}
@@ -135,7 +166,10 @@ export function ChurnReportButton({ companyUid, report, onChange }: {
  * **Tier3 の企業にも立てられる。** 解約報告は走査対象かどうかと関係ない事実で、
  * 保存先も companies なので、レーダーに出てこない顧客でも記録できる。
  */
-export function ChurnReportInline({ companyUid }: { companyUid: string }) {
+export function ChurnReportInline({ companyUid, renewalDate }: {
+  companyUid: string;
+  renewalDate?: string | null;
+}) {
   const [report, setReport] = useState<ChurnReport | null>(null);
   const [ready, setReady]   = useState(false);
 
@@ -152,5 +186,8 @@ export function ChurnReportInline({ companyUid }: { companyUid: string }) {
   // 読み込み前にボタンを出すと、報告済みなのに「解約報告」と見えてしまう
   if (!ready) return null;
 
-  return <ChurnReportButton companyUid={companyUid} report={report} onChange={setReport} />;
+  return (
+    <ChurnReportButton
+      companyUid={companyUid} report={report} renewalDate={renewalDate} onChange={setReport} />
+  );
 }

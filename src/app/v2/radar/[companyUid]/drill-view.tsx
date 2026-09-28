@@ -243,6 +243,7 @@ export default function DrillView({ companyUid }: { companyUid: string }) {
               <ChurnReportButton
                 companyUid={companyUid}
                 report={data.churnReport}
+                renewalDate={data.renewalDate}
                 onChange={next => setData(prev => prev && ({ ...prev, churnReport: next }))} />
             </div>
             <div className="text-right">
