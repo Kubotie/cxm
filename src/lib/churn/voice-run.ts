@@ -99,7 +99,7 @@ async function collectDocs(uids: string[], since: string): Promise<SourceDoc[]> 
 
   const docs: SourceDoc[] = [];
 
-  // ── 議事録。エレコムの決定打がここにあった ─────────────────────────────────
+  // ── 議事録。A社の決定打がここにあった ─────────────────────────────────
   if (TABLE_IDS.log_notion_minutes) {
     const map = await nocoFetchAllByUids<Record<string, unknown>>(
       TABLE_IDS.log_notion_minutes, uids,
@@ -231,7 +231,7 @@ export async function runChurnVoice(opts: {
       for (const hit of parsed.hits ?? []) {
         if (!hit.quoted_text?.trim() || hit.confidence < 0.5) continue;
         // 顧客が言っていないものを言質として数えると critical が汚れる。
-        // 実測: エレコムの誤検知は議事録のネクストアクション欄＝自社のタスクだった。
+        // 実測: A社の誤検知は議事録のネクストアクション欄＝自社のタスクだった。
         if (hit.speaker !== 'customer') { result.droppedNonCustomer++; continue; }
         // 前向きな発言をリスクとして加算しない。
         // 実測: ブレインスリープの「今すごくイメージ湧きました」が V1 として採用され、

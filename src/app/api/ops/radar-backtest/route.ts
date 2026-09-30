@@ -4,7 +4,7 @@
 // ためのもので、書き込みは一切しない。
 //
 // 設計: docs-src/cxm_v2/19_Churn_Radar_Design.md §6 Step 1
-//   完了条件 = エレコム（sf_001Q900000tHQjBIAW）が 2026-06 に点灯することを再現できる。
+//   完了条件 = A社（sf_XXXXXXXXXXXXXXXXXX）が 2026-06 に点灯することを再現できる。
 //
 // クエリ:
 //   uid=sf_xxx[,sf_yyy]  対象企業。省略時は Tier1/2 の active 全社
@@ -14,12 +14,13 @@
 //   detail=1             日ごとの内訳を全部返す（既定は変化点のみ）
 //
 // 使い方:
-//   curl 'http://localhost:3000/api/ops/radar-backtest?uid=sf_001Q900000tHQjBIAW'
+//   curl 'http://localhost:3000/api/ops/radar-backtest?uid=sf_XXXXXXXXXXXXXXXXXX'
 
 import { NextRequest, NextResponse } from 'next/server';
 import { nocoFetch, TABLE_IDS } from '@/lib/nocodb/client';
 import { collectRadarFacts, factsToInput, type RadarFacts } from '@/lib/churn/radar-input';
 import { evaluateRadar, type RadarResult, type RadarStage } from '@/lib/churn/radar-rules';
+import { requireOpsOrAdmin } from '@/lib/auth/guard';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -97,6 +98,10 @@ function earliestFactDate(facts: RadarFacts): string | null {
 // ── 本体 ─────────────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest): Promise<NextResponse<BacktestResponse | { error: string }>> {
+  // 運用系エンドポイント。サーバー側でロールを検証する（UI の出し分けは認可ではない）
+  const gate = await requireOpsOrAdmin();
+  if (!gate.ok) return gate.response;
+
   try {
     const sp   = req.nextUrl.searchParams;
     const step = Math.max(1, parseInt(sp.get('step') ?? '1', 10));

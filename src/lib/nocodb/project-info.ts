@@ -7,7 +7,7 @@
 //   代わりに master_company_sf_id (= companies.sf_account_id) で紐づく。
 //
 //   company_uid の形式:
-//     "sf_0017F00000TEOSMQA5" → sfAccountId = "0017F00000TEOSMQA5"  （SF 連携済み企業）
+//     "sf_001EXAMPLE0000003" → sfAccountId = "001EXAMPLE0000001"  （SF 連携済み企業）
 //     "cmp_xxx"               → SF 連携なし → project は 0 件（graceful fallback）
 
 import { nocoFetch, TABLE_IDS } from '@/lib/nocodb/client';
@@ -21,7 +21,7 @@ import {
 
 /**
  * company_uid から Salesforce Account ID を抽出する。
- * "sf_0017F00000TEOSMQA5" → "0017F00000TEOSMQA5"
+ * "sf_001EXAMPLE0000003" → "001EXAMPLE0000001"
  * "cmp_xxx" など sf_ 以外 → null（SF 未連携企業）
  */
 function sfIdFromCompanyUid(companyUid: string): string | null {

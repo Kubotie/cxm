@@ -426,7 +426,7 @@ export async function collectRadarFacts(
       const tickets: RadarFacts['highTickets'] = [];
       for (const g of folded.values()) {
         const t = g.latest;
-        // created_at が空の行がある（エレコムの PTX 不具合がまさにそれ）。
+        // created_at が空の行がある（A社の PTX 不具合がまさにそれ）。
         // 取り込み初出（CreatedAt の最小）を代替に使う。捨てると一番重い事象が消える。
         const openedAt = g.createdAt ?? ymd(g.firstSeen);
         if (!openedAt) continue;

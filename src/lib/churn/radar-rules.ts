@@ -8,7 +8,7 @@
 //   これができない（behavior-signals.ts と同じ理由）。
 //
 // なぜ単一スコアにしないか:
-//   overall_health はまさに単一ラベルで、エレコムでは at_risk が4ヶ月鳴り続けても
+//   overall_health はまさに単一ラベルで、A社では at_risk が4ヶ月鳴り続けても
 //   誰も動かなかった。性質の違う3層（利用 / 関係 / 言質）を別々に立て、
 //   更新までの残日数だけを乗数として掛ける。
 //
@@ -319,7 +319,7 @@ export function evaluateRadar(input: RadarInput): RadarResult {
   const habit = [...input.habituation].sort((a, b) => a.date.localeCompare(b.date));
 
   // ── D1: 席が空いている ───────────────────────────────────────────────────
-  // イベント数ではなく**人数**の稼働率で見る。エレコムの見逃しはここだった
+  // イベント数ではなく**人数**の稼働率で見る。A社の見逃しはここだった
   // （企業レベルの活動イベント数は12〜21で健全に見えたが、ログインは7人中1人）。
   const seatWindow = usage.filter(
     d => d.date >= shiftDays(today, -RADAR_THRESHOLD.seatIdleDays) &&
@@ -381,7 +381,7 @@ export function evaluateRadar(input: RadarInput): RadarResult {
 
   // ── D5: 施策がピークから半減したまま ─────────────────────────────────────
   // D2 は「減っている最中」しか捉えられない。**畳み終わると消える。**
-  // 実測（エレコム）: 5→2 の減少は 5〜7月に起き、9月時点では60日窓が全て 2件で平坦になり
+  // 実測（A社）: 5→2 の減少は 5〜7月に起き、9月時点では60日窓が全て 2件で平坦になり
   // D2 が消えた。畳まれた状態が続くこと自体がリスクなので、ピーク比で別に見る。
   const peakWindow = usage.filter(
     d => d.date >= shiftDays(today, -RADAR_THRESHOLD.campaignPeakWindowDays) && d.campaigns != null,

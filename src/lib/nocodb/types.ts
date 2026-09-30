@@ -1878,7 +1878,7 @@ export function toAppPersonFromCompanyPeople(raw: RawCompanyPerson): AppPerson {
 // company_channel_identify テーブル（TABLE_IDS.company_channel_identify）
 // 各企業の Slack / Chatwork 送信先チャンネルを管理する SSOT。
 // 実テーブルのスキーマ（2026-02-20 確認）:
-//   company_uid        : string (例: "sf_0017F00000UiwVgQAJ")
+//   company_uid        : string (例: "sf_001EXAMPLE0000004")
 //   slack_channel_id   : string | null  (SlackチャンネルID: C1234ABCD)
 //   chatwork_channel_id: string | null  (ChatworkルームID: 123456789)
 //   channel_name       : string | null  (チャンネル表示名)

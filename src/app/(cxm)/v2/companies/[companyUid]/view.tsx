@@ -493,7 +493,7 @@ function HeaderCard({ data, sev }: { data: CompanyUsageResponse; sev: typeof SEV
             <SuperLoginLinks targets={data.loginTargets ?? []} />
           </div>
           {/* 解約の連絡を受けた顧客に立てるフラグ。**Tier3 はレーダーに出てこない**ので、
-              解約レーダーの個社ページだけに置くと記録する場所が無い（株式会社アーカー）。
+              解約レーダーの個社ページだけに置くと記録する場所が無い（B社）。
               立てた後は「解約予定」としてはっきり出す */}
           <div className="mt-2">
             <ChurnReportInline companyUid={data.companyUid} renewalDate={data.renewalDate} />

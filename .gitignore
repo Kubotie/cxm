@@ -29,3 +29,9 @@ public/ptai-pipeline/raw.js
 
 # キー名だけのテンプレートは追跡する（値は入れない）
 !.env.example
+
+# 一括実行スクリプトの対象顧客 UID（実顧客の SF ID。公開リポジトリに入れない）
+scripts/.bulk-targets.json
+
+# 新しい秘密値の受け渡し用（1Password へ移したら削除すること）
+SECRETS-HANDOVER.local.md

@@ -27,42 +27,29 @@ const REQUEST_TIMEOUT = 120_000; // 1社あたり2分タイムアウト
 
 // ── 対象 UID（NocoDB is_csm_managed=true 全100社）────────────────────────────
 
-const ALL_UIDS = [
-  "sf_0017F00001hnsiXQAQ", "sf_0017F00001JMLA1QAP", "sf_0017F00000TEOWIQA5",
-  "sf_0017F00001X6D8mQAF", "sf_001Q900000amU8kIAE", "sf_0017F00002MUdGDQA1",
-  "sf_0017F00000WicuBQAR", "sf_0017F00001cXjDeQAK", "sf_0017F00001cY4FEQA0",
-  "sf_0017F00000TExdGQAT", "sf_0017F00002i1mpdQAA", "sf_001Q900000B0JE1IAN",
-  "sf_0017F00002MU2VrQAL", "sf_0017F00001hn9v1QAA", "sf_0017F00000TEOHAQA5",
-  "sf_0017F00000svlCIQAY", "sf_0017F00001ZtqLQQAZ", "sf_001Q9000009ZYw5IAG",
-  "sf_0017F000011mBBOQA2", "sf_001A7000002POsvIAG", "sf_0017F00000fdBIAQA2",
-  "sf_0017F00000TEOSoQAP", "sf_0017F00001GidRhQAJ", "sf_0017F00002cuwrRQAQ",
-  "sf_0017F00000TEOQ0QAP", "sf_0017F00000TEOXnQAP", "sf_0017F00000TF1IlQAL",
-  "sf_001Q900000OxFADIA3", "sf_001A7000005qEBEIA2", "sf_0017F00001KAaIXQA1",
-  "sf_0017F00000UitdXQAR", "sf_0017F00000fgIEBQA2", "sf_0017F00000UiwVgQAJ",
-  "sf_0017F00001iYGm2QAG", "sf_0017F00001kB0hpQAC", "sf_0017F00002PYxycQAD",
-  "sf_001A7000004ibcdIAA", "sf_0017F00000TEORaQAP", "sf_0017F00000q7JOsQAM",
-  "sf_0017F00001cXkJbQAK", "sf_0017F00001z435ZQAQ", "sf_001A7000002gNNYIA2",
-  "sf_0017F00001GkuqwQAB", "sf_0017F00000TEON9QAP", "sf_0017F00000mEvVrQAK",
-  "sf_0017F00000TEOXyQAP", "sf_0017F00000TEOMqQAP", "sf_0017F00000TEOJEQA5",
-  "sf_0017F00001KBxeGQAT", "sf_001Q900000n0adZIAQ", "sf_001A7000004J3nJIAS",
-  "sf_001Q900000yFa0cIAC", "sf_0017F00003DoliBQAR", "sf_0017F00002cwD2AQAU",
-  "sf_001Q900000eAv7dIAC", "sf_001Q900000C2CvpIAF", "sf_001A7000003Fp43IAC",
-  "sf_0017F00002cwBDsQAM", "sf_001Q9000006HYt6IAG", "sf_001Q900000GWSZSIA5",
-  "sf_0017F00002x7V3tQAE", "sf_0017F00000otHNtQAM", "sf_0017F00001sf7YjQAI",
-  "sf_0017F00000TEOQeQAP", "sf_001Q900000xlsnoIAA", "sf_0017F00003DqIh6QAF",
-  "sf_0017F00002wpR5xQAE", "sf_001Q900000CfohtIAB", "sf_001A7000006YuKjIAK",
-  "sf_001Q900000HkmCjIAJ", "sf_001Q9000008TWI1IAO", "sf_0017F00000TEOJ6QAP",
-  "sf_0017F00000TEOWLQA5", "sf_001A7000004AjOyIAK", "sf_001Q900000sa86bIAA",
-  "sf_0017F00000qD5fqQAC", "sf_001Q900001DVH1NIAX", "sf_001Q900000FsoNPIAZ",
-  "sf_001A7000002g7HxIAI", "sf_0017F00002PYzPEQA1", "sf_0017F00000qwfZHQAY",
-  "sf_001Q900000ibmVpIAI", "sf_001A7000002RNl9IAG", "sf_001Q9000004Bu7sIAC",
-  "sf_0017F00000TEOWSQA5", "sf_001Q900000pGhbVIAS", "sf_0017F00001mxbblQAA",
-  "sf_001A7000003ihpDIAQ", "sf_0017F00000TEONAQA5", "sf_001A7000004mhZgIAI",
-  "sf_0017F00002jqaEjQAI", "sf_0017F00002MUdCNQA1", "sf_001A7000002ruPWIAY",
-  "sf_001A7000003o98tIAA", "sf_001Q9000003XsG3IAK", "sf_001Q900000p2YEmIAM",
-  "sf_0017F00003DoIMhQAN", "sf_001Q900000gWXDaIAO", "sf_001A7000004y4L2IAI",
-  "sf_001Q900000tHQjBIAW",
-];
+// ── 対象 UID ──────────────────────────────────────────────────────────────────
+//
+// 2026-09-30 セキュリティ是正: 実顧客の Salesforce Account ID を
+// public リポジトリのソースに直書きしていたため、ローカルのファイルへ移した。
+//   scripts/.bulk-targets.json  … string[] 形式の UID 一覧（.gitignore 済み）
+// 別のファイルを使うときは --targets=<path> を指定する。
+
+const targetsPath = args.find(a => a.startsWith('--targets='))?.split('=')[1]
+  ?? join(__dir, '.bulk-targets.json');
+
+let ALL_UIDS;
+try {
+  ALL_UIDS = JSON.parse(readFileSync(targetsPath, 'utf8'));
+  if (!Array.isArray(ALL_UIDS) || !ALL_UIDS.length) throw new Error('配列が空です');
+} catch (err) {
+  console.error(
+    `対象 UID の一覧を読めませんでした: ${targetsPath}\n` +
+    `  ${err.message}\n` +
+    `  ["sf_xxxx", ...] 形式の JSON を置くか、--targets=<path> で指定してください。`,
+  );
+  process.exit(1);
+}
+
 
 // ── 1社処理 ───────────────────────────────────────────────────────────────────
 

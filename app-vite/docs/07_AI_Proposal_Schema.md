@@ -37,7 +37,7 @@ AIは minutes（議事録/ログ）を中心に、必要な補助情報（既存
 ```json
 {
   "request_id": "req_20260309_0001",
-  "company_uid": "sf_0017F00002cwBDsQAM",
+  "company_uid": "sf_001EXAMPLE0000001",
   "minutes_id": "31a6643a-9819-8052-8cdb-c3f93789c0e3",
   "minutes": {
     "title": "20260305_マッシュビューティーラボ様_引き継ぎ挨拶",
@@ -53,7 +53,7 @@ AIは minutes（議事録/ログ）を中心に、必要な補助情報（既存
         "conversation_id": "412844274_2026-03-06",
         "sent_at": "2026-03-06T19:41:53+09:00",
         "message_type": "mail",
-        "company_uid": "sf_001Q900000yFa0cIAC",
+        "company_uid": "sf_001EXAMPLE0000002",
         "project_id": null,
         "user_id": null,
         "actor_external": {
@@ -137,7 +137,7 @@ AI出力は、以下4カテゴリの提案を含む。
 ```json
 {
   "request_id": "req_20260309_0001",
-  "company_uid": "sf_0017F00002cwBDsQAM",
+  "company_uid": "sf_001EXAMPLE0000001",
   "minutes_id": "31a6643a-9819-8052-8cdb-c3f93789c0e3",
   "generated_at": "2026-03-09T15:00:00+09:00",
   "model_version": "kocoro-proposal-v1",
@@ -246,7 +246,7 @@ v1は reports_to を最優先。works_with / gatekeeps_for は任意。
   "op": "create",
   "action": {
     "scope": "company",
-    "scope_id": "sf_0017F00002cwBDsQAM",
+    "scope_id": "sf_001EXAMPLE0000001",
     "related_project_id": "1049531d",
     "owner_role": "CSM",
     "action_type": "meeting",
@@ -294,7 +294,7 @@ v1は reports_to を最優先。works_with / gatekeeps_for は任意。
   "op": "create",
   "action": {
     "scope": "company",
-    "scope_id": "sf_0017F00002cwBDsQAM",
+    "scope_id": "sf_001EXAMPLE0000001",
     "related_project_id": "1049531d",
     "owner_role": "CSM",
     "action_type": "sent",
@@ -450,7 +450,7 @@ content_jobs の purpose_tag ルール：
     "template_id": "CSM_EXEC_SUMMARY_V1",
     "title": "経営向け：サイト統合（モール化）×CRM強化の支援方針サマリー（1枚）",
     "inputs": {
-      "company_uid": "sf_0017F00002cwBDsQAM",
+      "company_uid": "sf_001EXAMPLE0000001",
       "minutes_id": "31a6643a-9819-8052-8cdb-c3f93789c0e3",
       "signals": ["O2_ProjectIncrease_Company"],
       "people_refs": ["pp_001", "pp_003"]
@@ -481,7 +481,7 @@ content_jobs の purpose_tag ルール：
     "template_id": "SENT_SLACK_INTERNAL_UPDATE_V1",
     "title": "社内共有：状況/論点/依頼（Slack）",
     "inputs": {
-      "company_uid": "sf_0017F00002cwBDsQAM",
+      "company_uid": "sf_001EXAMPLE0000001",
       "minutes_id": "31a6643a-9819-8052-8cdb-c3f93789c0e3",
       "signals": ["O2_ProjectIncrease_Company"],
       "people_refs": ["pp_001", "pp_003"],
