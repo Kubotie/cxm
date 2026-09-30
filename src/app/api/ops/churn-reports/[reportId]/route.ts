@@ -11,6 +11,7 @@ import {
   computeSilentChurnOverlap,
   type SilentChurnOverlap,
 } from '@/lib/nocodb/chronic-silent';
+import { requireManagerOrAbove } from '@/lib/auth/guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,6 +58,10 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ reportId: string }> },
 ): Promise<NextResponse<ChurnReportDetail | { error: string }>> {
+  // 運用系エンドポイント。サーバー側でロールを検証する（UI の出し分けは認可ではない）
+  const gate = await requireManagerOrAbove();
+  if (!gate.ok) return gate.response;
+
   try {
     const { reportId } = await params;
     const row = await fetchChurnReportById(reportId);

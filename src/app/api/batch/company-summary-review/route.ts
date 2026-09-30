@@ -70,7 +70,7 @@
 // - source tables（companies, evidence, alerts, people）は一切更新しない
 
 import { NextRequest, NextResponse }     from 'next/server';
-import { checkBatchAuth }                from '@/lib/batch/auth';
+import { requireBatchTokenOrOps }        from '@/lib/auth/guard';
 import { writeBatchRunLog, sanitizeRequestParams } from '@/lib/batch/logger';
 import { resolveCompanySummaryTargets }  from '@/lib/batch/company-summary-targets';
 import { TABLE_IDS, nocoFetch }          from '@/lib/nocodb/client';
@@ -259,8 +259,10 @@ function buildDryRunTarget(item: CompanySummaryTargetItem): DryRunTarget {
 
 export async function POST(req: NextRequest) {
   // ── 認証 ──────────────────────────────────────────────────────────────────
-  const authError = checkBatchAuth(req);
-  if (authError) return authError;
+  // 外部バッチの Bearer か、ops/admin のセッションのどちらかを要求する
+  // （ブラウザにバッチシークレットを渡さないため。2026-09-30 是正）
+  const gate = await requireBatchTokenOrOps(req);
+  if (!gate.ok) return gate.response;
 
   const startedAt = new Date();
   const body: RequestBody = await req.json().catch(() => ({}));

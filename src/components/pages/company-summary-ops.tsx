@@ -10,8 +10,9 @@
 //   POST /api/batch/company-summary-review — 一括レビュー済み更新
 //
 // ── 認証 ──────────────────────────────────────────────────────────────────────
-//   NEXT_PUBLIC_SUPPORT_BATCH_SECRET を設定した場合、Bearer として送信する。
-//   未設定の場合は Authorization ヘッダーなし（SUPPORT_BATCH_SECRET 未設定時は API 側がスキップ）。
+//   署名済みセッション Cookie（cxm_session）だけで認証する。
+//   サーバー側は requireBatchTokenOrOps が ops/admin ロールを検証する。
+//   バッチシークレットはブラウザへ渡さない。
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
@@ -99,7 +100,11 @@ type BatchMode = 'regenerate' | 'review';
 // ── 定数 ────────────────────────────────────────────────────────────────────
 
 const API_BASE    = '/api';
-const BATCH_TOKEN = process.env.NEXT_PUBLIC_SUPPORT_BATCH_SECRET ?? '';
+// ── 2026-09-30 セキュリティ是正 ──────────────────────────────────────────────
+//   旧実装は NEXT_PUBLIC_SUPPORT_BATCH_SECRET を Authorization ヘッダーに載せていた。
+//   NEXT_PUBLIC_* はクライアントバンドルに埋め込まれるため、バッチ用シークレットが
+//   ブラウザに露出する。ヘッダーは付けず、**署名済みセッション Cookie**で認証する
+//   （サーバー側は requireBatchTokenOrOps が ops/admin ロールを検証する）。
 
 const FRESHNESS_OPTIONS = [
   { value: 'missing', label: 'missing',  badgeClass: 'bg-slate-100 border-slate-300 text-slate-600' },
@@ -135,11 +140,12 @@ const REVIEW_BADGE: Record<string, string> = {
 // ── ヘルパー ─────────────────────────────────────────────────────────────────
 
 function apiFetch(path: string, init?: RequestInit) {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(BATCH_TOKEN ? { 'Authorization': `Bearer ${BATCH_TOKEN}` } : {}),
-  };
-  return fetch(`${API_BASE}${path}`, { ...init, headers: { ...headers, ...(init?.headers as Record<string,string> ?? {}) } });
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  return fetch(`${API_BASE}${path}`, {
+    ...init,
+    credentials: 'same-origin',
+    headers: { ...headers, ...(init?.headers as Record<string,string> ?? {}) },
+  });
 }
 
 function fmtDate(iso: string | null | undefined): string {

@@ -1,39 +1,22 @@
-// ─── POST /api/user/session ───────────────────────────────────────────────────
-// ユーザーを選択して Cookie を書き込む。
-// Body: { name2: string }  ← staff_identify.name2（Roman/nickname）
-//
 // ─── DELETE /api/user/session ────────────────────────────────────────────────
-// Cookie を削除してセッションをクリアする。
+// Cookie を削除してセッションをクリアする（/api/auth/logout と同じ結果）。
+//
+// ── 2026-09-30 セキュリティ是正 ──────────────────────────────────────────────
+//   **認証なしで Cookie を発行していた POST を廃止した。DELETE はセッション削除用として存続。**
+//   旧 `POST { name2 }` はパスワード照合なしに任意ユーザーの Cookie を発行でき、
+//   middleware が /api/* を素通ししていたため未認証で到達できた。
+//   画面からの参照も無かった（grep 済み）ため、POST ハンドラのみ取り除いた。
+//   ユーザー切り替えが必要になったら、admin 限定の「代理ログイン」として
+//   監査ログ付きで作り直すこと。
 
-import { NextRequest, NextResponse } from 'next/server';
-import { fetchUserProfileByName2 } from '@/lib/nocodb/user-profile';
-import {
-  buildSetCookieHeader, buildClearCookieHeader,
-  buildSetRoleCookieHeader, buildClearRoleCookieHeader,
-} from '@/lib/auth/session';
+import { NextResponse } from 'next/server';
+import { buildClearSessionCookieHeader, buildClearLegacyCookieHeaders } from '@/lib/auth/session';
 
-export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-  const name2 = typeof body.name2 === 'string' ? body.name2.trim() : '';
-
-  if (!name2) {
-    return NextResponse.json({ error: 'name2 is required' }, { status: 400 });
-  }
-
-  const profile = await fetchUserProfileByName2(name2);
-  if (!profile) {
-    return NextResponse.json({ error: 'User not found' }, { status: 404 });
-  }
-
-  const res = NextResponse.json(profile);
-  res.headers.set('Set-Cookie', buildSetCookieHeader(name2));
-  res.headers.append('Set-Cookie', buildSetRoleCookieHeader(profile.role ?? 'csm'));
-  return res;
-}
+export const dynamic = 'force-dynamic';
 
 export async function DELETE() {
   const res = NextResponse.json({ ok: true });
-  res.headers.set('Set-Cookie', buildClearCookieHeader());
-  res.headers.append('Set-Cookie', buildClearRoleCookieHeader());
+  res.headers.set('Set-Cookie', buildClearSessionCookieHeader());
+  for (const clear of buildClearLegacyCookieHeaders()) res.headers.append('Set-Cookie', clear);
   return res;
 }

@@ -39,6 +39,7 @@ import {
   buildExternalIntelUserPrompt,
   type ExternalIntelExtractResult,
 } from '@/lib/prompts/external-intel-extract';
+import { requireUser } from '@/lib/auth/guard';
 
 export const maxDuration = 60;
 
@@ -141,6 +142,10 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ companyUid: string }> },
 ) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { companyUid } = await params;
   if (!companyUid) {
     return NextResponse.json({ error: 'companyUid が指定されていません' }, { status: 400 });

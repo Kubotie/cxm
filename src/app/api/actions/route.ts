@@ -14,7 +14,7 @@
 //   0 overdue / 1 today / 2 high / 3 support / 4 risk / 5 expansion / 6 others
 
 import { NextResponse }                    from 'next/server';
-import { getCurrentUserProfile, getUserRoleFromCookie } from '@/lib/auth/session';
+import { getCurrentUserProfile } from '@/lib/auth/session';
 import { fetchActionsByCompanyUids, fetchAllActionsAdmin } from '@/lib/nocodb/company-actions';
 import { fetchAllCompanies }               from '@/lib/nocodb/companies';
 import { activeSalesforceTaskAdapter }     from '@/lib/salesforce/salesforce-task-adapter';
@@ -160,11 +160,10 @@ export async function GET(req: Request) {
   }
 
   // ── Admin: 全ユーザー分のアクションを返す ─────────────────────────────────
-  // NocoDB の role カラムが未設定の場合のフォールバックとして Cookie も確認する
-  const roleCookie = await getUserRoleFromCookie();
-  const effectiveRole = roleCookie ?? profile.role;
-
-  if (effectiveRole === 'admin') {
+  // ロールは staff_identify を唯一の根拠にする。
+  // 旧実装は cxm_user_role Cookie をフォールバックにしていたが、
+  // 署名の無い自己申告値だったので権限昇格に使えた（2026-09-30 是正で廃止）。
+  if (profile.role === 'admin') {
     const nocoActions = await fetchAllActionsAdmin(includeDone).catch(() => [] as AppCompanyAction[]);
 
     // SF Events は自分の分のみ（全ユーザー分の SF 取得は N×API コールになるため）

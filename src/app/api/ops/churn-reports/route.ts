@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchChurnReports, type ChurnReportRow } from '@/lib/nocodb/churn-reports';
+import { requireManagerOrAbove } from '@/lib/auth/guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,6 +39,10 @@ function toItem(r: ChurnReportRow): ChurnReportListItem {
 export async function GET(
   req: NextRequest,
 ): Promise<NextResponse<{ items: ChurnReportListItem[] } | { error: string }>> {
+  // 運用系エンドポイント。サーバー側でロールを検証する（UI の出し分けは認可ではない）
+  const gate = await requireManagerOrAbove();
+  if (!gate.ok) return gate.response;
+
   try {
     const limit = Math.min(parseInt(req.nextUrl.searchParams.get('limit') ?? '50', 10) || 50, 200);
     const rows  = await fetchChurnReports(limit);

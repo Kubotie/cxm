@@ -41,6 +41,7 @@ import {
 } from '@/lib/prompts/company-evidence-summary';
 import type { CompanyEvidenceSummaryResult } from '@/lib/prompts/company-evidence-summary';
 import { getPolicyById } from '@/lib/nocodb/policy-store';
+import { requireUser } from '@/lib/auth/guard';
 
 const AI_VERSION    = 'company-summary-v1';
 const DEFAULT_TYPE  = 'default';
@@ -49,6 +50,10 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ companyUid: string }> },
 ) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { companyUid } = await params;
 
   if (!companyUid) {

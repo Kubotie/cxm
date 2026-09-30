@@ -13,11 +13,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { updateHumanReviewStatus } from '@/lib/nocodb/support-ai-state-store';
 import type { SupportCaseAiSourceQueue, SupportCaseAiHumanReviewStatus } from '@/lib/nocodb/support-ai-state-types';
 import { SUPPORT_CASE_AI_HUMAN_REVIEW_STATUSES } from '@/lib/nocodb/support-ai-state-types';
+import { requireUser } from '@/lib/auth/guard';
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ caseId: string }> },
 ) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { caseId } = await params;
   const body = await req.json().catch(() => ({}));
 

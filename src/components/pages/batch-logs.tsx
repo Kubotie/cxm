@@ -25,7 +25,11 @@ import type { RawAuditLog } from "@/app/api/ops/batch-logs/route";
 // ── 定数 ─────────────────────────────────────────────────────────────────────
 
 const API_BASE    = '/api';
-const BATCH_TOKEN = process.env.NEXT_PUBLIC_SUPPORT_BATCH_SECRET ?? '';
+// ── 2026-09-30 セキュリティ是正 ──────────────────────────────────────────────
+//   旧実装は NEXT_PUBLIC_SUPPORT_BATCH_SECRET を Authorization ヘッダーに載せていた。
+//   NEXT_PUBLIC_* はクライアントバンドルに埋め込まれるため、バッチ用シークレットが
+//   ブラウザに露出する。ヘッダーは付けず、**署名済みセッション Cookie**で認証する
+//   （サーバー側は requireBatchTokenOrOps が ops/admin ロールを検証する）。
 
 const BATCH_TYPE_OPTIONS = [
   { value: 'all',                        label: '全種別' },
@@ -48,7 +52,7 @@ const BATCH_TYPE_BADGE: Record<string, string> = {
 
 function apiFetch(path: string) {
   return fetch(`${API_BASE}${path}`, {
-    headers: BATCH_TOKEN ? { 'Authorization': `Bearer ${BATCH_TOKEN}` } : {},
+    credentials: 'same-origin',
   });
 }
 

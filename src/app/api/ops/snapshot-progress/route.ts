@@ -8,11 +8,16 @@ import {
   generateSnapshotProgress,
   type SnapshotProgressReport,
 } from '@/lib/company/snapshot-progress';
+import { requireManagerOrAbove } from '@/lib/auth/guard';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 export async function GET(): Promise<NextResponse<SnapshotProgressReport | { error: string }>> {
+  // 運用系エンドポイント。サーバー側でロールを検証する（UI の出し分けは認可ではない）
+  const gate = await requireManagerOrAbove();
+  if (!gate.ok) return gate.response;
+
   try {
     const report = await generateSnapshotProgress();
     return NextResponse.json(report);

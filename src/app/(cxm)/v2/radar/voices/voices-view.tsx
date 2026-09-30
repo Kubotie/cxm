@@ -61,7 +61,7 @@ export default function VoicesView() {
   const [loading, setLoading] = useState(true);
 
   // 自分の担当を初期選択にはしない（他人の分も見えたほうが週次のトリアージは回る）。
-  // ただしボタンには出す。cxm_user_uid は HttpOnly なので profile を1回引くしかない
+  // ただしボタンには出す。セッション Cookie は HttpOnly なので profile を1回引くしかない
   useEffect(() => {
     setOwnerState(readOwnerFilter());
     fetch("/api/user/profile")

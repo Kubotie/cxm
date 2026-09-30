@@ -5,10 +5,15 @@
 import { NextResponse } from 'next/server';
 import { updateCompanyAction } from '@/lib/nocodb/company-actions';
 import type { CompanyActionPatchPayload } from '@/lib/nocodb/company-actions';
+import { requireUser } from '@/lib/auth/guard';
 
 type RouteContext = { params: Promise<{ actionId: string }> };
 
 export async function PATCH(req: Request, { params }: RouteContext) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { actionId } = await params;
   if (!actionId) {
     return NextResponse.json({ error: 'actionId is required' }, { status: 400 });

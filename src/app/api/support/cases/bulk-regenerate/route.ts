@@ -13,6 +13,7 @@
 // 内部的に /api/support/rebuild-ai-state を呼び出し、結果をサマリーして返す。
 
 import { NextRequest, NextResponse } from 'next/server';
+import { requireUser } from '@/lib/auth/guard';
 
 const MAX_CASES = 20;
 
@@ -26,6 +27,10 @@ interface RebuildResult {
 }
 
 export async function POST(req: NextRequest) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const body = await req.json().catch(() => ({}));
 
   const { case_ids, source_queue } = body as {

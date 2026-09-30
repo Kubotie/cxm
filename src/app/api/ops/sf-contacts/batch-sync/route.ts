@@ -18,6 +18,7 @@ import { isSalesforceConfigured } from '@/lib/salesforce/client';
 import { activeSalesforceContactAdapter } from '@/lib/salesforce/salesforce-contact-adapter';
 import { fetchAssignedCompanies } from '@/lib/nocodb/companies';
 import type { SalesforceContactSyncResult } from '@/lib/salesforce/salesforce-contact-adapter';
+import { requireOpsOrAdmin } from '@/lib/auth/guard';
 
 type CompanyResult = {
   companyUid:  string;
@@ -39,6 +40,10 @@ export interface BatchSfContactSyncResult {
 }
 
 export async function POST(): Promise<NextResponse<BatchSfContactSyncResult | { error: string }>> {
+  // 運用系エンドポイント。サーバー側でロールを検証する（UI の出し分けは認可ではない）
+  const gate = await requireOpsOrAdmin();
+  if (!gate.ok) return gate.response;
+
   if (!isSalesforceConfigured()) {
     return NextResponse.json({ error: 'Salesforce が設定されていません (SALESFORCE_* env vars)' }, { status: 503 });
   }

@@ -37,6 +37,7 @@ import {
 } from '@/lib/prompts/unified-log-signal';
 import type { UnifiedLogSignalResult } from '@/lib/prompts/unified-log-signal';
 import { saveUnifiedLogSignalState } from '@/lib/nocodb/unified-log-write';
+import { requireUser } from '@/lib/auth/guard';
 
 // ── リクエストボディ型 ────────────────────────────────────────────────────────
 
@@ -48,6 +49,10 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ companyUid: string }> },
 ) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { companyUid } = await params;
 
   if (!companyUid) {

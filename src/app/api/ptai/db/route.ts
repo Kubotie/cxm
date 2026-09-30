@@ -8,7 +8,7 @@
 //   POST   {collection, data}   collection.add（自動 ID）
 //   DELETE ?path=col/doc        doc.delete
 //
-// 認証は middleware の cxm_user_uid Cookie に乗る（ログイン済みなら書ける ＝ 原本と同じ）。
+// 認証は署名済みセッション（cxm_session）。ログイン済みなら書ける＝原本と同じ権限モデル。
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'crypto';

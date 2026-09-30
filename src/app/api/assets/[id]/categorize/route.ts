@@ -10,11 +10,16 @@ import {
   buildAssetAnalysisPrompt,
   type AssetAnalysisResult,
 } from '@/lib/prompts/asset-analysis';
+import { requireUser } from '@/lib/auth/guard';
 
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { id } = await params;
 
   const asset = await getAssetById(id).catch(() => null);

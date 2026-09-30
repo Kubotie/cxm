@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { runWeeklyReport } from '@/lib/company/churn-report-run';
+import { requireOpsOrAdmin } from '@/lib/auth/guard';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -18,6 +19,10 @@ interface RequestBody {
 }
 
 export async function POST(req: NextRequest) {
+  // 運用系エンドポイント。サーバー側でロールを検証する（UI の出し分けは認可ではない）
+  const gate = await requireOpsOrAdmin();
+  if (!gate.ok) return gate.response;
+
   const body: RequestBody = await req.json().catch(() => ({}));
   const windowDays = body.window_days ?? 90;
 

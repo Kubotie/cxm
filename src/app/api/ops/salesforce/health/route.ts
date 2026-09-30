@@ -20,6 +20,7 @@ import {
   sfFetch,
   SF_API_VERSION,
 } from '@/lib/salesforce/client';
+import { requireOpsOrAdmin } from '@/lib/auth/guard';
 
 // ── レスポンス型 ─────────────────────────────────────────────────────────────
 
@@ -51,6 +52,10 @@ export interface SalesforceHealthResult {
 // ── GET ───────────────────────────────────────────────────────────────────────
 
 export async function GET(): Promise<NextResponse<SalesforceHealthResult>> {
+  // 運用系エンドポイント。サーバー側でロールを検証する（UI の出し分けは認可ではない）
+  const gate = await requireOpsOrAdmin();
+  if (!gate.ok) return gate.response;
+
   const checkedAt = new Date().toISOString();
   const cfgStatus = getSalesforceConfigStatus();
 

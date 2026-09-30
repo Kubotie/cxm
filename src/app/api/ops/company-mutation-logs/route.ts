@@ -16,7 +16,7 @@
 //   NOCODB_COMPANY_MUTATION_LOGS_TABLE_ID 未設定時は available=false を返す
 
 import { NextRequest, NextResponse } from 'next/server';
-import { checkBatchAuth }            from '@/lib/batch/auth';
+import { requireBatchTokenOrOps }    from '@/lib/auth/guard';
 import { TABLE_IDS, nocoFetch }      from '@/lib/nocodb/client';
 
 const DEFAULT_LIMIT = 50;
@@ -35,8 +35,10 @@ export interface RawMutationLogItem {
 }
 
 export async function GET(req: NextRequest) {
-  const authError = checkBatchAuth(req);
-  if (authError) return authError;
+  // 外部バッチの Bearer か、ops/admin のセッションのどちらかを要求する
+  // （ブラウザにバッチシークレットを渡さないため。2026-09-30 是正）
+  const gate = await requireBatchTokenOrOps(req);
+  if (!gate.ok) return gate.response;
 
   const tableId = TABLE_IDS.company_mutation_logs;
   if (!tableId) {

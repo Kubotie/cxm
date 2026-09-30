@@ -8,9 +8,14 @@
 //
 // currentPassword の扱い:
 //   - 個別パスワード設定済み → 現在の個別パスワードと照合
-//   - 未設定（初回設定）      → 共有パスワード（APP_PASSWORD）と照合
+//   - 未設定（初回設定）      → 共有パスワード（環境変数 APP_PASSWORD）と照合
 //
 // パスワードはハッシュ化してから保存する。平文は保存もログ出力もしない。
+//
+// ── 2026-09-30 セキュリティ是正 ──────────────────────────────────────────────
+//   ソース直書きの共有パスワード既定値を撤去した。
+//   APP_PASSWORD が未設定のときは初回設定の経路を成立させず 503 を返す
+//   （個別パスワード設定済みのユーザーの変更は、APP_PASSWORD 無しでも従来どおり可能）。
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserUidFromCookie } from '@/lib/auth/session';
@@ -19,7 +24,19 @@ import {
   hashPassword, verifyPassword, hasPasswordHash, validatePassword,
 } from '@/lib/auth/password';
 
-const APP_PASSWORD = process.env.APP_PASSWORD ?? 'ptengine2026';
+/** 共有パスワード。既定値は持たない（public リポジトリに秘密を置かないため） */
+function sharedPassword(): string | null {
+  return process.env.APP_PASSWORD || null;
+}
+
+/** 設定不備。秘密値は含めない */
+function misconfigured() {
+  console.error('[user/password] 設定不備: APP_PASSWORD が未設定のため初回設定を受け付けられません');
+  return NextResponse.json(
+    { error: 'service_unavailable', message: 'パスワードの初回設定を受け付けられません。管理者に連絡してください。' },
+    { status: 503 },
+  );
+}
 
 export async function GET() {
   const name2 = await getUserUidFromCookie();
@@ -50,9 +67,12 @@ export async function PUT(req: NextRequest) {
 
   // 本人確認
   const alreadySet = hasPasswordHash(cred.passwordHash);
+  const shared = sharedPassword();
+  if (!alreadySet && !shared) return misconfigured();
+
   const verified = alreadySet
     ? await verifyPassword(current, cred.passwordHash)
-    : current === APP_PASSWORD;
+    : current === shared;
 
   if (!verified) {
     return NextResponse.json(
@@ -65,7 +85,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: '現在と同じパスワードです' }, { status: 400 });
   }
   // 共有パスワードのままにされると個別化の意味がない
-  if (next === APP_PASSWORD) {
+  if (shared && next === shared) {
     return NextResponse.json({ error: '共有パスワードと同じものは使えません' }, { status: 400 });
   }
 

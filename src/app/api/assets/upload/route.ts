@@ -18,8 +18,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAsset, type CsmAsset } from '@/lib/nocodb/assets';
 import { TABLE_IDS } from '@/lib/nocodb/client';
 import { randomUUID } from 'crypto';
+import { requireUser } from '@/lib/auth/guard';
 
 export async function POST(req: NextRequest) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   if (!TABLE_IDS.csm_assets) {
     return NextResponse.json(
       { error: 'NOCODB_CSM_ASSETS_TABLE_ID が未設定です。.env.local を確認してください。' },

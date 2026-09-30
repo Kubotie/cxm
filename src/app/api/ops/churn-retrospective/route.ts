@@ -12,6 +12,7 @@ import {
   generateChurnRetrospective,
   type ChurnRetrospectiveReport,
 } from '@/lib/company/churn-retrospective';
+import { requireManagerOrAbove } from '@/lib/auth/guard';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -19,6 +20,10 @@ export const maxDuration = 300;
 export async function GET(
   req: NextRequest,
 ): Promise<NextResponse<ChurnRetrospectiveReport | { error: string }>> {
+  // 運用系エンドポイント。サーバー側でロールを検証する（UI の出し分けは認可ではない）
+  const gate = await requireManagerOrAbove();
+  if (!gate.ok) return gate.response;
+
   try {
     const daysParam = req.nextUrl.searchParams.get('days');
     let days = daysParam ? parseInt(daysParam, 10) : 90;

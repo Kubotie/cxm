@@ -12,8 +12,9 @@
 //   checkBatchAuth           → 手動 ops のみ許可（既存バッチ系）
 //   checkCronOrBatchAuth     → Cron + 手動 ops の両方を許可（staleness 等 cron 化対象）
 //
-// ── ローカル開発時（両 secret 未設定）─────────────────────────────────────────
-//   両関数ともに認証をスキップして警告のみを出す。
+// ── secret 未設定のとき ──────────────────────────────────────────────────────
+//   ローカル開発（VERCEL_ENV が production 以外）: 認証をスキップして警告のみ。
+//   production: **必ず拒否する**（2026-09-30 是正。設定漏れで全公開になるのを防ぐ）。
 
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -22,6 +23,16 @@ import { NextRequest, NextResponse } from 'next/server';
 function extractBearerToken(req: NextRequest): string {
   const header = req.headers.get('Authorization') ?? '';
   return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+}
+
+/** production では secret 未設定を「開発モード」として素通ししない */
+function isProduction(): boolean {
+  return process.env.VERCEL_ENV === 'production';
+}
+
+function misconfigured(name: string): NextResponse {
+  console.error(`[batch-auth] 設定不備: ${name} が未設定のため拒否しました`);
+  return NextResponse.json({ error: 'service_unavailable' }, { status: 503 });
 }
 
 function logFailure(req: NextRequest, hint: string) {
@@ -41,7 +52,8 @@ export function checkBatchAuth(req: NextRequest): NextResponse | null {
   const secret = process.env.SUPPORT_BATCH_SECRET;
 
   if (!secret) {
-    console.warn('[batch-auth] SUPPORT_BATCH_SECRET が未設定です。認証をスキップしています。');
+    if (isProduction()) return misconfigured('SUPPORT_BATCH_SECRET');
+    console.warn('[batch-auth] SUPPORT_BATCH_SECRET が未設定です。認証をスキップしています（開発のみ）。');
     return null;
   }
 
@@ -71,11 +83,12 @@ export function checkCronOrBatchAuth(req: NextRequest): NextResponse | null {
   const cronSecret  = process.env.CRON_SECRET;
   const batchSecret = process.env.SUPPORT_BATCH_SECRET;
 
-  // 両方未設定 → 開発モード（スキップ + 警告）
+  // 両方未設定 → production は拒否、それ以外は開発モード（スキップ + 警告）
   if (!cronSecret && !batchSecret) {
+    if (isProduction()) return misconfigured('CRON_SECRET / SUPPORT_BATCH_SECRET');
     console.warn(
       '[batch-auth] CRON_SECRET / SUPPORT_BATCH_SECRET が未設定です。' +
-      '認証をスキップしています（本番環境では必ず設定してください）。',
+      '認証をスキップしています（開発のみ。本番では 503 になります）。',
     );
     return null;
   }

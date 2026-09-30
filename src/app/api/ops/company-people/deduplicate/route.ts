@@ -14,6 +14,7 @@ import { NextResponse } from 'next/server';
 import { TABLE_IDS, nocoFetch } from '@/lib/nocodb/client';
 import { nocoDelete } from '@/lib/nocodb/write';
 import type { RawCompanyPerson } from '@/lib/nocodb/types';
+import { requireOpsOrAdmin } from '@/lib/auth/guard';
 
 const FIELDS_TO_SCORE: (keyof RawCompanyPerson)[] = [
   'role', 'title', 'department', 'phone',
@@ -50,6 +51,10 @@ async function fetchAllCompanyPeople(): Promise<RawCompanyPerson[]> {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  // 運用系エンドポイント。サーバー側でロールを検証する（UI の出し分けは認可ではない）
+  const gate = await requireOpsOrAdmin();
+  if (!gate.ok) return gate.response;
+
   const { searchParams } = new URL(req.url);
   const dryRun = searchParams.get('confirm') !== 'true';
 

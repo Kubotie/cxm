@@ -10,6 +10,7 @@
 import { NextResponse } from 'next/server';
 import { upsertCaseState } from '@/lib/nocodb/case-state-store';
 import { getCurrentSupportOperator } from '@/lib/support/current-operator';
+import { requireUser } from '@/lib/auth/guard';
 
 type BulkOp = 'dismiss' | 'action' | 'cse-ticket';
 
@@ -20,6 +21,10 @@ interface BulkBody {
 }
 
 export async function POST(req: Request) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const body: BulkBody = await req.json().catch(() => ({ op: 'dismiss', ids: [] }));
   const { op, ids, payload = {} } = body;
 

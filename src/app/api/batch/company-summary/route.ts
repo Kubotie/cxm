@@ -55,7 +55,7 @@
 // 将来 queue を入れる場合も event-trigger.ts の差し替えで完結し、このエンドポイントは変更不要。
 
 import { NextRequest, NextResponse }     from 'next/server';
-import { checkBatchAuth }                from '@/lib/batch/auth';
+import { requireBatchTokenOrOps }        from '@/lib/auth/guard';
 import { writeBatchRunLog, sanitizeRequestParams } from '@/lib/batch/logger';
 import { resolveCompanySummaryTargets }  from '@/lib/batch/company-summary-targets';
 import { fetchEvidence }                 from '@/lib/nocodb/evidence';
@@ -219,8 +219,10 @@ async function processCompany(
 
 export async function POST(req: NextRequest) {
   // ── 認証 ──────────────────────────────────────────────────────────────────
-  const authError = checkBatchAuth(req);
-  if (authError) return authError;
+  // 外部バッチの Bearer か、ops/admin のセッションのどちらかを要求する
+  // （ブラウザにバッチシークレットを渡さないため。2026-09-30 是正）
+  const gate = await requireBatchTokenOrOps(req);
+  if (!gate.ok) return gate.response;
 
   const startedAt = new Date();
   const body: RequestBody = await req.json().catch(() => ({}));

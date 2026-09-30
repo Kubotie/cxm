@@ -13,6 +13,7 @@ import JSZip from 'jszip';
 import { BUILTIN_TEMPLATES } from '@/lib/deck-templates';
 import type { DeckTemplate } from '@/lib/deck-templates';
 import type { BrandColors } from '@/lib/deck-templates/types';
+import { requireUser } from '@/lib/auth/guard';
 
 const BLOB_PREFIX = 'deck-templates/';
 
@@ -196,6 +197,10 @@ async function convertSkillZip(buffer: ArrayBuffer): Promise<DeckTemplate | null
 // ─── DELETE ──────────────────────────────────────────────────────────────────
 
 export async function DELETE(req: NextRequest) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { searchParams } = new URL(req.url);
   const id = searchParams.get('id');
 
@@ -251,6 +256,10 @@ export async function GET() {
 // ─── POST ────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   let formData: FormData;
   try {
     formData = await req.formData();

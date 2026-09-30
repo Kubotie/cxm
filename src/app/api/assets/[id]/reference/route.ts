@@ -4,11 +4,16 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAssetById, incrementReferenceCount } from '@/lib/nocodb/assets';
+import { requireUser } from '@/lib/auth/guard';
 
 export async function PATCH(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { id } = await params;
 
   try {

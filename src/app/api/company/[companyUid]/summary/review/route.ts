@@ -21,6 +21,7 @@ import { TABLE_IDS, nocoFetch } from '@/lib/nocodb/client';
 import { nocoUpdate } from '@/lib/nocodb/write';
 import type { RawCompanySummaryState } from '@/lib/nocodb/types';
 import type { SummaryHumanReviewStatus } from '@/lib/company/company-summary-state-policy';
+import { requireUser } from '@/lib/auth/guard';
 
 const VALID_STATUSES = new Set<SummaryHumanReviewStatus>([
   'reviewed', 'corrected', 'approved',
@@ -38,6 +39,10 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ companyUid: string }> },
 ) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { companyUid } = await params;
 
   if (!companyUid) {

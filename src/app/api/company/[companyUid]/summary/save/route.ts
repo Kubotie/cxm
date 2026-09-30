@@ -24,6 +24,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { saveCompanySummaryState } from '@/lib/nocodb/company-summary-write';
 import type { RiskItem, OpportunityItem } from '@/lib/prompts/company-evidence-summary';
+import { requireUser } from '@/lib/auth/guard';
 
 const DEFAULT_AI_VERSION = 'company-summary-v1';
 
@@ -47,6 +48,10 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ companyUid: string }> },
 ) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { companyUid } = await params;
 
   if (!companyUid) {

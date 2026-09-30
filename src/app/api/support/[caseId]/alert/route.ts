@@ -29,6 +29,7 @@ import {
 import type { SupportAlertResult, SupportAlertApiResponse } from '@/lib/prompts/support-alert';
 import type { SupportAlertWritePayload } from '@/lib/support/ai-types';
 import { saveSupportAlert } from '@/lib/nocodb/support-write';
+import { requireUser } from '@/lib/auth/guard';
 
 // ── リクエストボディ型 ────────────────────────────────────────────────────────
 
@@ -42,6 +43,10 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ caseId: string }> },
 ) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { caseId } = await params;
   const body: AlertRequestBody = await req.json().catch(() => ({}));
   const ref = buildSourceRef(caseId, body.sourceTable);

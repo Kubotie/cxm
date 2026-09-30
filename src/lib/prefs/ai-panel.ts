@@ -7,7 +7,7 @@
 // ため。逆に「履歴」は Blob 側にユーザー単位で実体があるので、そちらは
 // /api/ai/chat/threads を直接叩く（この設定には含めない）。
 //
-// name2 は cxm_user_uid Cookie に入っているが HttpOnly なのでクライアントから
+// name2 は署名済みセッション Cookie に入っているが HttpOnly なのでクライアントから
 // 読めない。/api/user/profile を1回だけ引いてモジュール内でメモ化する。
 
 export interface AiPanelPrefs {

@@ -13,7 +13,7 @@
 //   { type: 'done',     message }           保存された assistant メッセージ
 //   { type: 'error',    message }
 //
-// 認証: 既存の Cookie セッション（cxm_user_uid）。未ログインは 401。
+// 認証: 署名済みセッション（cxm_session）。未ログインは 401。
 
 import { NextRequest } from 'next/server';
 import { getCurrentUserProfile } from '@/lib/auth/session';

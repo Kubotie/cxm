@@ -15,6 +15,7 @@ import {
   type SavedOutlineSummary, type SavedOutlineDetail,
 } from '@/lib/nocodb/proposal-outlines';
 import { TABLE_IDS } from '@/lib/nocodb/client';
+import { requireUser } from '@/lib/auth/guard';
 
 export interface ProposalRecordsResponse {
   records: SavedOutlineSummary[];
@@ -68,6 +69,10 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ companyUid: string }> },
 ) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { companyUid } = await params;
   if (!companyUid) {
     return NextResponse.json({ error: 'companyUid が指定されていません' }, { status: 400 });
@@ -96,7 +101,9 @@ export async function POST(
     outline:       payload.outline,
     contextIds:    payload.contextIds ?? [],
     customContext: payload.customContext ?? [],
-    createdBy:     req.cookies.get('cxm_user_uid')?.value ?? null,
+    // 作成者は POST 冒頭の requireUser() で検証済みのセッションから取る。
+    // 旧実装は平文 Cookie `cxm_user_uid` を直接読んでいた（2026-09-30 廃止）。
+    createdBy:     gate.profile.name2,
   });
 
   if (!res.ok) {
@@ -112,6 +119,10 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ companyUid: string }> },
 ) {
+  // 書き込み系。middleware に加えてハンドラ側でも認証する（多層防御・2026-09-30 是正）
+  const gate = await requireUser();
+  if (!gate.ok) return gate.response;
+
   const { companyUid } = await params;
   if (!companyUid) {
     return NextResponse.json({ error: 'companyUid が指定されていません' }, { status: 400 });

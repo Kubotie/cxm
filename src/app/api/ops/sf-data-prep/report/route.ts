@@ -8,8 +8,13 @@
 
 import { NextResponse } from 'next/server';
 import { generateSfDataPrepReport, type SfDataPrepReport } from '@/lib/salesforce/sf-data-prep-report';
+import { requireOpsOrAdmin } from '@/lib/auth/guard';
 
 export async function GET(): Promise<NextResponse<SfDataPrepReport | { error: string }>> {
+  // 運用系エンドポイント。サーバー側でロールを検証する（UI の出し分けは認可ではない）
+  const gate = await requireOpsOrAdmin();
+  if (!gate.ok) return gate.response;
+
   try {
     const report = await generateSfDataPrepReport();
     return NextResponse.json(report, { status: 200 });
