@@ -47,9 +47,24 @@ CXM ⇄ PGA の移動はフルリロードになる（別ドキュメントな�
 | 原本 | 置き換え先 | 備考 |
 |---|---|---|
 | `use('db')` | `/api/ptai/db` ＋ NocoDB `pga_docs` | `onSnapshot` は 6 秒ポーリング + rev（内容ハッシュ）比較。変化が無ければ `{unchanged:true}` だけ返す。書き込み後はローカル状態を先に反映してから再取得（Firestore と同じ楽観反映）。`set` は全置換・後勝ちのまま（原本の挙動を維持） |
-| `use('user')` | `/api/ptai/me`・`/api/ptai/profiles` | `id()` は CXM の `name2`。`isOwner()` は `name2 === 'Utty'`（`PGA_APPROVER_NAME2` / `PGA_APPROVER_EMAILS` で上書き可） |
+| `use('user')` | `/api/ptai/me`・`/api/ptai/profiles` | `id()` は CXM の `name2`（**署名済みセッションから取得**）。`isOwner()` は `staff_identify.name2 === 'Utty'`（`PGA_APPROVER_NAME2` / `PGA_APPROVER_EMAILS` で上書き可） |
 | `use('sample')` | `/api/ptai/ai` → OpenRouter (`anthropic/claude-sonnet-4-5`) | CXM の既存 AI 経路を再利用。新しいキーは不要。`json()` は応答から JSON を抽出して parse、失敗は `invalid_json` |
 | `use('mcp')` | `/api/ptai/mcp` | Notion（search / fetch / create-pages）と Intercom（search / get_conversation）を REST でコネクタ互換の payload に詰め替える。`host:twenty` は `twenty_key_missing` を返す |
+
+### 認証（2026-09-30 セキュリティ是正を反映）
+
+当初は CXM の平文 Cookie `cxm_user_uid` をそのまま読んでいたが、是正により次のようになった。
+
+- セッションは Cookie **`cxm_session`** の **HMAC 署名付きトークン**（署名鍵 `CXM_SESSION_SECRET`）。
+  **旧 `cxm_user_uid` / `cxm_user_role` は廃止済み**で、送っても未認証として扱う。
+- `/api/ptai/*` の 6 本はすべて署名済みセッションを検証し、未認証には **JSON 401** を返す。
+- **承認者判定（契約確定）は Cookie を信用しない。** セッションから `name2` を取り、
+  `staff_identify` を引いて照合する。Cookie を書き換えても承認者にはなれない。
+- `public/ptai-pipeline/board.js` などの静的ファイルも middleware の保護対象で、
+  未認証だと `/login` にリダイレクトされる。
+- ロールは `staff_identify` から引く（PGA 側では承認者判定にのみ使用）。
+
+詳細は [../../docs/v2-architecture/01-runtime-and-auth.md](../../docs/v2-architecture/01-runtime-and-auth.md) §5。
 
 ### 共有 DB のテーブル
 NocoDB `pga_docs`（`m0vfof8a1mwd75p`）1 枚。`collection / doc_id / data(JSON) / at / updated_at_s / deleted`。
@@ -78,7 +93,7 @@ CSS・HTML・その他の JS・計算式・プロンプト・文言は一切触�
 |---|---|---|
 | 1 | 共有 DB は Supabase ではなく **NocoDB** | CXM が既に使っていて、新規プロビジョニングが要らない。ドキュメント志向の `set` 全置換なので 1 テーブルで足りる |
 | 2 | リアルタイム購読は **6 秒ポーリング** | 利用者が 1 桁人数で、rev 比較のため差分が無い間はレスポンスが数十バイト。Realtime 基盤を足す必要がない |
-| 3 | 認証は **CXM の既存 Cookie セッション**（`cxm_user_uid`）をそのまま流用 | ユーザーの指定（入口だけ共通）。SSO は導入していない |
+| 3 | 認証は **CXM の既存セッション**をそのまま流用 | ユーザーの指定（入口だけ共通）。SSO は導入していない |
 | 4 | Claude は **OpenRouter 経由**（`OPENROUTER_API_KEY`） | CXM の既存経路。`ANTHROPIC_API_KEY` は未設定だった |
 | 5 | 承認者は `staff_identify.name2 === 'Utty'`（`PGA_APPROVER_NAME2` / `PGA_APPROVER_EMAILS` で上書き可） | 10-4-5「契約確定の承認は Utty」。公開リポジトリなので既定値にメールは書かない |
 | 6 | 営業系ロールは追加しない | ユーザーの指定。ログイン済みなら全員が閲覧・編集できる（原本と同じ） |

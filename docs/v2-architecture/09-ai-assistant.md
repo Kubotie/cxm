@@ -69,7 +69,9 @@ v2 の主要 5 画面すべてが申告している。
 
 カタログには横断一覧（proposal-board / tier3-dashboard / light-watch / company-summary-list など）と個社系（usage / timeseries / readiness / profile / communications / people / actions / external-intel / 企業原本）が登録され、件数の多いものには `heavy: true` を付けてプロンプト側で注意を促す。
 
-Cookie 転送が必須なのは、これらの API が `cxm_user_uid` でユーザーを解決するため（転送しないと「担当顧客」系が空を返す）。
+Cookie 転送が必須なのは、これらの API が**署名済みセッション（`cxm_session`）**でユーザーを解決するため。
+転送しないと middleware に 401 で弾かれる（旧実装では「担当顧客」系が空を返していた）。
+旧 `cxm_user_uid` / `cxm_user_role` は廃止済みで、転送しても認証には使われない。
 
 ---
 

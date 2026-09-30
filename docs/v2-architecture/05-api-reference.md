@@ -1,6 +1,24 @@
 # 05. API リファレンス（v2 が使うもの）
 
-`/api/**` は middleware を素通りし、各ハンドラが認証・エラーを返す。
+## 認証の前提（2026-09-30 改訂）
+
+`/api/**` は **middleware で署名済みセッション（`cxm_session`）を必須**にしている。
+未認証は `{"error":"unauthenticated"}` の **JSON 401**（HTML リダイレクトは返さない）。
+
+Cookie を要求しないのは次の 2 つだけで、どちらもハンドラ側に別の認証がある。
+
+| プレフィックス | 代わりの認証 |
+|---|---|
+| `/api/auth/*` | ハンドラでメール＋パスワードを照合 |
+| `/api/batch/*` | `Authorization: Bearer`（`CRON_SECRET` または `SUPPORT_BATCH_SECRET`） |
+
+書き込み系と運用系は、middleware に加えて**ハンドラ側でも** `src/lib/auth/guard.ts` の
+`requireUser()` / `requireOpsOrAdmin()` / `requireAdmin()` などで認可する（多層防御）。
+**ロールは `staff_identify` から引く。Cookie には入れない。**
+ルート単位の区分は [security-api-inventory.md](../security-api-inventory.md) が正本。
+
+旧 `cxm_user_uid` / `cxm_user_role` Cookie は**廃止済み**。送っても未認証として扱う。
+
 `maxDuration` 未記載は Next.js/Vercel の既定。
 
 ---
@@ -9,9 +27,10 @@
 
 | メソッド・パス | 用途 | 備考 |
 |---|---|---|
-| `POST /api/auth/login` | ログイン | `{email, password}`。個別ハッシュ優先 → 無ければ共有パスワード。成功で `cxm_user_uid` / `cxm_user_role` Cookie をセットしプロファイルを返す |
-| `POST /api/auth/logout` | ログアウト | Cookie 破棄 |
-| `GET /api/user/profile` | 自分のプロファイル | Cookie から `name2` を解決。**HttpOnly Cookie を読めないクライアントはこれを 1 回引く** |
+| `POST /api/auth/login` | ログイン | `{email, password}`。個別ハッシュ優先 → 無ければ共有パスワード（`APP_PASSWORD`。**未設定なら 503**）。成功で署名付き `cxm_session` Cookie をセットし、旧 Cookie を削除してプロファイルを返す |
+| `POST /api/auth/logout` | ログアウト | `cxm_session` と旧 Cookie を削除 |
+| `DELETE /api/user/session` | セッション削除 | ログアウトと同じ。**`POST` は廃止済み**（認証なしに任意ユーザーの Cookie を発行できたため） |
+| `GET /api/user/profile` | 自分のプロファイル | 検証済みセッションから `name2` を解決。**HttpOnly Cookie を読めないクライアントはこれを 1 回引く** |
 | `PATCH /api/user/profile` | 表示スコープ・重点領域の保存 | `staff_identify` を PATCH |
 | `GET /api/user/password` | 個別パスワードを設定済みか | `{hasPassword: boolean}` |
 | `PUT /api/user/password` | パスワード変更 | scrypt でハッシュ化して保存 |
@@ -108,7 +127,12 @@ v2 画面からは直接呼ばないが、AI アシスタントが深掘り先�
 
 ## 6. バッチ（v2 のデータを作るもの）
 
-すべて `checkCronOrBatchAuth`（`CRON_SECRET` または `SUPPORT_BATCH_SECRET` の Bearer）。GET/POST どちらでも起動する。
+すべて `Authorization: Bearer`（`CRON_SECRET` または `SUPPORT_BATCH_SECRET`）で認証する。GET/POST どちらでも起動する。
+**production では secret が未設定だと 503 で拒否**する（旧実装は素通ししていた）。
+
+ops 画面のボタンからも呼ぶもの（`/api/batch/company-summary`・`/api/batch/company-summary-review`）は
+`requireBatchTokenOrOps()` を使い、**Bearer か admin/ops セッションのどちらか**を受け付ける。
+ブラウザにはバッチシークレットを渡さない。
 
 | パス | maxDuration | 生成物 |
 |---|---|---|

@@ -28,11 +28,17 @@
 
 - NocoDB のホスト名とテーブル ID の既定値（`src/lib/nocodb/client.ts`）
 - Metabase の**認証不要 public question の CSV URL**（`src/lib/metabase/*.ts`）
-- 共有パスワードの既定値 `ptengine2026`（`src/app/api/auth/login/route.ts`）
-  → **`APP_PASSWORD` を Vercel 側で設定済みの値に変え、既定値をコードから外すのが望ましい**
-- **解約レーダーの設計書（`docs-src/cxm_v2/19_Churn_Radar_Design.md`）と `src/lib/churn/**` のコメントに、
-  実在企業名・SF ID・解約検討に関する発言の引用が含まれている**（2026-09 に push 済み / 対処検討中）
+- **共有パスワードの既定値がソースに直書きされていた**（`src/app/api/auth/login/route.ts`）。
+  2026-09-30 の是正で**既定値は撤去済み**だが、**Git 履歴には残っている**。
+  → 値そのものを変更し、`APP_PASSWORD` を Vercel 側で設定すること（`docs/security-manual-checklist.md` A-2）。
+  → **`APP_PASSWORD` は環境変数のみ。コードにもドキュメントにも実値を書かない。**
+- **実顧客 100 社の Salesforce Account ID**（`scripts/bulk-company-summary.mjs`）。
+  2026-09-30 に gitignore 済みファイルへ退避したが、**Git 履歴には残っている**。
+- 解約レーダーの設計書（`docs-src/cxm_v2/19_Churn_Radar_Design.md`）と `src/lib/churn/**` のコメントに
+  実在企業名・SF ID・発言の引用が含まれていた。**2026-09-30 に匿名化済み**（履歴には残る）。
   → 今後コメントに実例を書くときは、企業名を伏せるか社内ドキュメント側に置くこと
+
+対応状況と手順は [docs/public-repository-remediation.md](docs/public-repository-remediation.md) を参照。
 
 ### 残っている準備作業（窪田）
 
@@ -152,8 +158,28 @@ NocoDB のテーブル ID は**未設定でもエラーにならず、その機�
 最低限これが無いと `/v2` が動きません: `NOCODB_API_TOKEN` / `NOCODB_BASE_URL` / `OPENROUTER_API_KEY` / `BLOB_READ_WRITE_TOKEN` / 各 `NOCODB_*_TABLE_ID`（約 45 本）。
 `TOKEN_INTERCOM` と `SALESFORCE_*` は旧 UI 用で、無くても v2 は動きます。
 
-> ⚠️ `CRON_SECRET` と `SUPPORT_BATCH_SECRET` が**両方未設定だとバッチ認証がスキップされる**。
-> ローカルではそれで構わないが、環境を公開する場合は必ずどちらかを設定する。
+> ⚠️ **`CXM_SESSION_SECRET` が無いとログインできません**（ログインは 503 を返す）。
+> 32 バイト以上のランダム値を `.env.local` に入れてください。生成例:
+> `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`
+>
+> ⚠️ `APP_PASSWORD` が未設定だと、個別パスワード未設定のユーザーはログインできません
+> （共有パスワードの既定値は**持っていません**）。
+>
+> ⚠️ `CRON_SECRET` と `SUPPORT_BATCH_SECRET` が両方未設定だと、**ローカルでは**バッチ認証がスキップされます。
+> **production（`VERCEL_ENV=production`）では 503 で拒否**されるので、公開環境では必ず設定してください。
+
+### 認証のしくみ（2026-09-30 改訂）
+
+- セッションは Cookie **`cxm_session`** に入る **HMAC-SHA256 署名付きトークン**。
+  署名鍵は `CXM_SESSION_SECRET`。改ざん・期限切れ・鍵未設定はすべて未認証として扱う。
+- 旧 **`cxm_user_uid` / `cxm_user_role` は廃止済み**。送っても認証には使われない。
+- **ロールは Cookie に入れない。** 認可のたびに `staff_identify` から引く。
+- **`/api/*` は原則すべて署名済みセッションが必要。** 例外は `/api/auth/*` と `/api/batch/*` だけで、
+  後者は `Authorization: Bearer` で認証する。
+- 書き込み系・運用系は `src/lib/auth/guard.ts`（`requireUser` / `requireOpsOrAdmin` / `requireAdmin` ほか）で
+  ハンドラ側でも認可する。
+- 詳細は [docs/v2-architecture/01-runtime-and-auth.md](docs/v2-architecture/01-runtime-and-auth.md) §5、
+  ルート単位の区分は [docs/security-api-inventory.md](docs/security-api-inventory.md)。
 
 ---
 
@@ -286,8 +312,8 @@ git remote rename neworigin origin
 
 public リポジトリのままにするなら、あわせて検討:
 
-```bash
-# 共有パスワードの既定値をコードから外す（現在 'ptengine2026' がハードコード）
-# src/app/api/auth/login/route.ts の APP_PASSWORD フォールバックを削除し、
-# 未設定時は 500 を返すようにする
-```
+- 共有パスワードの既定値をコードから外す → **2026-09-30 に対応済み**（未設定なら 503）。
+  ただし**値そのものの変更**と `APP_PASSWORD` の Vercel 設定は未実施。
+- GitHub の **Secret scanning / Push protection** を有効にする（public リポジトリは無料）。
+
+残作業は [docs/security-manual-checklist.md](docs/security-manual-checklist.md) にまとめてある。

@@ -12,9 +12,17 @@ v2 の画面が速いのは、**重い計算を朝までに終わらせている
 | **DolphinScheduler**（社内スケジューラ） | `SUPPORT_BATCH_SECRET` または `CRON_SECRET` | Shell タスクで「`remaining` が 0 になるまで繰り返す」が書ける |
 
 認証は `checkCronOrBatchAuth()`（`src/lib/batch/auth.ts`）。
-**両 secret が未設定だと認証をスキップして通す**（開発用）。本番で未設定のまま公開すると、誰でも 98 秒のバッチや LLM 課金を伴う処理を叩けるので必ず設定する。
+**両 secret が未設定のとき、開発環境では認証をスキップするが、production（`VERCEL_ENV=production`）では 503 で拒否する**
+（2026-09-30 の是正。旧実装は production でも素通ししていた）。
 
-`/api/**` は middleware を素通りするため、バッチの保護はハンドラ側の責務。
+`/api/**` は既定でセッション必須だが、**`/api/batch/*` だけは middleware の allowlist に入れてある**
+（Cron と外部バッチは Cookie を持たず `Authorization: Bearer` で来るため）。
+そのぶん**バッチの保護はハンドラ側の責務**で、全 19 本が
+`checkCronOrBatchAuth` / `checkBatchAuth` / `requireBatchTokenOrOps` のいずれかを持つ。
+
+ops 画面のボタンからも呼ぶもの（`/api/batch/company-summary`・`/api/batch/company-summary-review`）は
+`requireBatchTokenOrOps()` を使い、**Bearer か admin/ops の署名済みセッション**のどちらかを受け付ける。
+ブラウザにバッチシークレットを渡さないための措置（旧実装は `NEXT_PUBLIC_SUPPORT_BATCH_SECRET` を使っていた）。
 
 ---
 
