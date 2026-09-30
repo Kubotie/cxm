@@ -52,7 +52,12 @@ CXM 側のグローバル CSS と混ぜられない。それぞれが独自の `
 
 | パス | 実装 | 内容 |
 |---|---|---|
+| `/apps` | `src/app/(cxm)/apps/page.tsx` | **ログイン後の着地点**。CXM と Ptengine AI パイプラインの入口 |
 | `/ptai-pipeline` | `src/app/(ptai)/ptai-pipeline/` | Ptengine AI パイプラインボード。原本をまるごと取り込んだもの |
+
+2 つのアプリは**入口（認証）だけを共有し、データは独立**している。
+`/api/ptai/*`（ai / db / mcp / me / profiles / raw）はすべて `cxm_user_uid` Cookie を検証し、
+未ログインには 401 を返す。
 
 サイドバーに出るのは **ホーム / 提案準備ボード / プロジェクト分析 / 解約レーダー / Tier 3 管理 / 設定** の 6 つ。
 個社ページは「提案準備ボードの子」として扱われ、開いている間だけボードの下に階層表示され、親（ボード）も active になる。
@@ -90,7 +95,8 @@ matcher: '/((?!_next/static|_next/image|favicon.ico).*)'
 ```
 
 - `/api/**` は**素通し**（fetch が HTML を受け取るのを防ぐため。各 API ハンドラが 401/404 を返す）。
-- `/login` は常に通過。ただし Cookie があれば `/v2` にリダイレクト（ログイン後のトップは `/v2`）。
+- `/login` は常に通過。ただし Cookie があれば **`/apps`**（プロダクト選択）にリダイレクト。
+  2026-09 に Ptengine AI パイプラインが加わり、ログイン後の着地が `/v2` から `/apps` に変わった。
 - それ以外のページリクエストは Cookie `cxm_user_uid` が無ければ `/login` へリダイレクト。
 
 ### セッション（`src/lib/auth/session.ts`）

@@ -52,9 +52,10 @@
 Ptengine の CSM 業務用 社内 Web アプリ（CXM / 「顧客前進 OS」）。
 中心の問いは 1 つ: **今この顧客に提案を持ち込んでよいか。ダメなら先に何を片付けるか。**
 
-主動線（`/v2` 配下のみが現行 UI）:
+主動線（`/v2` 配下が CSM 向けの現行 UI）:
 
 ```
+/apps          ログイン後の着地。CXM と Ptengine AI パイプラインの入口
 /v2            ホーム（今日どこから手をつけるか）
 /v2/readiness  提案準備ボード（誰に提案できるか / 4レーン）
 /v2/companies/[companyUid]  個社ページ（顧客理解 → 判定 → 提案骨子）
@@ -110,7 +111,7 @@ npm ci
 #    .env.local を置く
 
 # 4. 開発サーバー
-npm run dev        # http://localhost:3000 → /login → /v2
+npm run dev        # http://localhost:3000 → /login → /apps → /v2
 ```
 
 スクリプトは 4 つだけ。
