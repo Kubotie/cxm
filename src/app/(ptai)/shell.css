@@ -18,3 +18,26 @@
 .pshell .pshell-sp{ flex:1 1 auto; }
 .pshell span.pshell-user{ background:transparent; border-style:dashed; }
 @media (max-width:640px){ .pshell{ padding-inline:16px; } }
+
+/* ─── 整備中の告知 ────────────────────────────────────────────────────────────
+   移植直後で業務利用できる状態ではないことを、画面の先頭で明示する。
+   使えるようになったら .pwip と .pshell-wip の指定ごと削除してよい。 */
+
+.pshell .pshell-wip{
+  display:inline-flex; align-items:center; gap:4px;
+  padding:3px 9px; border-radius:999px;
+  background:var(--warn-soft); border:1px solid var(--warn);
+  color:var(--ink); font-weight:700; letter-spacing:.02em;
+}
+.pshell .pshell-wip::before{ content:"▲"; font-size:9px; }
+
+.pwip{
+  max-width:1360px; margin:10px auto 0; padding:11px 14px;
+  display:flex; flex-direction:column; gap:3px;
+  border:1px solid var(--warn); border-left-width:4px; border-radius:10px;
+  background:var(--warn-soft); color:var(--ink);
+  font-size:12.5px; line-height:1.6;
+}
+.pwip b{ font-size:13px; }
+.pwip span{ color:var(--ink-2); }
+@media (max-width:640px){ .pwip{ margin-inline:16px; } }
