@@ -14,9 +14,9 @@ export function middleware(req: NextRequest) {
 
   // ログイン画面は常に通過
   if (pathname.startsWith('/login')) {
-    // すでにログイン済みなら v2 ホームへ（ログイン後のトップは /v2）
+    // すでにログイン済みならプロダクト選択へ（ログイン後のトップは /apps）
     const uid = req.cookies.get(COOKIE_NAME)?.value;
-    if (uid) return NextResponse.redirect(new URL('/v2', req.url));
+    if (uid) return NextResponse.redirect(new URL('/apps', req.url));
     return NextResponse.next();
   }
 

@@ -1,0 +1,20 @@
+/* ─── プロダクト間の行き来だけを足す薄いバー ──────────────────────────────────
+   原本の画面（.wrap 以下）には一切手を入れない。ページ幅とデザイントークンは
+   board.css のものをそのまま使うので、見た目は原本と地続きになる。 */
+
+.pshell{
+  max-width:1360px; margin:0 auto; padding:10px 20px 0;
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  font-size:11.5px; color:var(--muted);
+}
+.pshell a,.pshell span.pshell-user{
+  display:inline-flex; align-items:center; gap:5px;
+  padding:3px 9px; border-radius:999px; border:1px solid var(--ring);
+  background:var(--surface); color:var(--ink-2); text-decoration:none;
+  transition:background .12s,color .12s,border-color .12s;
+}
+.pshell a:hover{ background:var(--accent-soft); color:var(--accent-ink); border-color:transparent; }
+.pshell .pshell-here{ background:var(--accent-soft); color:var(--accent-ink); border-color:transparent; font-weight:700; }
+.pshell .pshell-sp{ flex:1 1 auto; }
+.pshell span.pshell-user{ background:transparent; border-style:dashed; }
+@media (max-width:640px){ .pshell{ padding-inline:16px; } }

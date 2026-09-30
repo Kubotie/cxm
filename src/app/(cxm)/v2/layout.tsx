@@ -17,7 +17,7 @@ import { useState } from "react";
 import {
   Target, Layers, ChevronRight, Archive, ArrowLeftRight, Settings,
   Building2, ArrowLeft,
-  BarChart3, House, Radar,
+  BarChart3, House, Radar, LayoutGrid,
 } from "lucide-react";
 
 interface NavItem { title: string; icon: React.ElementType; href: string; note?: string; }
@@ -80,6 +80,19 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
             CXM
             <small className="block text-slate-400 font-medium text-[10px] tracking-wide">顧客前進 OS</small>
           </span>
+        </div>
+
+        {/* プロダクト切替。CXM と Ptengine AI パイプラインは入口だけを共有する */}
+        <div className="flex items-center gap-1 px-1 pb-3">
+          <Link href="/ptai-pipeline"
+            className="flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] text-slate-400 border border-slate-700/70 hover:text-white hover:bg-[#1d283a] hover:border-transparent transition">
+            <Target className="w-3 h-3 flex-none" />
+            <span className="truncate">PGA パイプライン</span>
+          </Link>
+          <Link href="/apps" title="アプリ一覧"
+            className="grid place-items-center w-[26px] h-[26px] rounded-md text-slate-500 border border-slate-700/70 hover:text-white hover:bg-[#1d283a] hover:border-transparent transition">
+            <LayoutGrid className="w-3 h-3" />
+          </Link>
         </div>
 
         {/* 主動線 */}
