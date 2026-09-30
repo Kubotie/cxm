@@ -69,6 +69,19 @@ v2 画面からは直接呼ばないが、AI アシスタントが深掘り先�
 
 ---
 
+## 3.5. 解約レーダー（→ [11](11-churn-radar.md)）
+
+| メソッド・パス | 用途 |
+|---|---|
+| `GET /api/radar/board` | スコープの全データ。**判定しない** — `churn_radar_state` を読んで整形するだけ |
+| `GET /api/radar/company/[companyUid]` | 個社ドリル。立ったシグナルと根拠レコードへのリンク |
+| `GET /api/radar/voices` | 言質のレビュー待ち一覧 |
+| `PATCH /api/radar/voice/[voiceId]` | 言質の採否（承認するとスコアに入る） |
+| `POST /api/radar/ack` | 対応状況の更新（`ack` / `working` / `watching` / `dismissed`） |
+| `GET /api/radar/accuracy` | 精度パネル（検知リードタイム / 誤検知率）。`maxDuration = 300` |
+| `POST /api/radar/churn-report` | 解約報告。確定した解約を危険圏から外す |
+| `GET /api/ops/radar-backtest` | バックテスト（閾値調整用） |
+
 ## 4. プロジェクト
 
 | メソッド・パス | maxDuration | 用途 |
@@ -104,6 +117,8 @@ v2 画面からは直接呼ばないが、AI アシスタントが深掘り先�
 | `/api/batch/industry-intel-weekly` | 300 | `industry_intel_cache`（業界ニュース） |
 | `/api/batch/company-profile-weekly` | 300 | `company_profile_cache`（顧客理解） |
 | `/api/batch/company-snapshot` / `company-snapshot-light` | 300 | `company_daily_snapshot` / `project_user_snapshots` |
+| `/api/batch/churn-radar` | 300 | `churn_radar_state`（全社を再判定して上書き） |
+| `/api/batch/churn-voice` | 300 | `churn_radar_voice`（言質抽出 / `dry_run`・`uid`・`window_days` で制御） |
 | `/api/batch/tier-sync`, `paid-watched-sync`, `intercom-reconcile`, `chronic-silent-sync`, `churn-analysis-weekly`, `company-summary-*`, `policy-alerts`, `unified-log-signals` | 各種 | 主に旧 UI 用。v2 は Tier / 有料監視 / スナップショット / 休眠に間接的に依存 |
 
 詳細は [08-batch-and-schedule.md](08-batch-and-schedule.md)。

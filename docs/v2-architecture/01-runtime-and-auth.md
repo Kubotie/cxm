@@ -9,26 +9,57 @@
 - `vercel.json` には Cron 定義のみ（→ [08-batch-and-schedule.md](08-batch-and-schedule.md)）。
 - API ハンドラは処理時間に応じて `export const maxDuration` を個別指定（60 / 120 / 180 / 300 秒）。Vercel の当プランの上限は 300 秒で、これを超えるものは「時間予算内で処理して残件数を返す」設計にしている。
 
-## 2. ルート一覧（`/v2` 配下）
+## 2. ルートグループ（2026-09 変更）
 
-| パス | 実装 | 種別 | 状態 |
+`src/app` 直下は**ルートグループ 2 つ**に分かれている。URL には現れない。
+
+```
+src/app/
+├── (cxm)/          CXM 本体。ルートレイアウトが AI サイドパネルを載せる
+│   ├── layout.tsx
+│   └── v2/...
+├── (ptai)/         Ptengine AI パイプラインボード（独立した別アプリ）
+│   ├── layout.tsx
+│   └── ptai-pipeline/
+├── api/            両者が共有
+└── globals.css
+```
+
+分けた理由は **CSS の分離**。`(ptai)` は取り込んだ原本のスタイルをそのまま使うため、
+CXM 側のグローバル CSS と混ぜられない。それぞれが独自の `layout.tsx`（`<html>` から書く）を持つ。
+
+> ⚠️ ファイルパスは `src/app/(cxm)/v2/...` だが、**URL は `/v2/...` のまま**。
+
+## 3. ルート一覧（`/v2` 配下）
+
+| パス | 実装（`src/app/(cxm)/` 配下） | 種別 | 状態 |
 |---|---|---|---|
-| `/v2` | `page.tsx` → `home-view.tsx` | Client | 稼働（ホーム） |
-| `/v2/readiness` | `readiness/page.tsx` → `board-view.tsx` | Client | 稼働（提案準備ボード） |
-| `/v2/companies` | `companies/page.tsx` | Server | `/v2/readiness` へ redirect |
+| `/v2` | `v2/page.tsx` → `home-view.tsx` | Client | 稼働（ホーム） |
+| `/v2/readiness` | `v2/readiness/page.tsx` → `board-view.tsx` | Client | 稼働（提案準備ボード） |
+| `/v2/companies` | `v2/companies/page.tsx` | Server | `/v2/readiness` へ redirect |
 | `/v2/companies/[companyUid]` | `page.tsx`（Server）→ `view.tsx`（Client）＋ `proposal-flow.tsx` / `campaign-org.tsx` | Server + Client | 稼働（個社ページ） |
-| `/v2/projects` | `projects/page.tsx` → `dashboard-view.tsx` | Client | 稼働（プロジェクト分析） |
+| `/v2/projects` | `v2/projects/page.tsx` → `dashboard-view.tsx` | Client | 稼働（プロジェクト分析） |
 | `/v2/projects/[projectId]` | `page.tsx`（Server）→ `detail-view.tsx`（Client） | Server + Client | 稼働（PJ 詳細） |
-| `/v2/tier3` | `tier3/page.tsx` → `dashboard-view.tsx` | Client | 稼働（Tier 3 管理） |
-| `/v2/settings` | `settings/page.tsx` → `settings-view.tsx` | Client | 稼働（設定） |
+| **`/v2/radar`** | `v2/radar/page.tsx` → `scope-view.tsx` | Client | 稼働（解約レーダー / → [11](11-churn-radar.md)） |
+| **`/v2/radar/[companyUid]`** | `page.tsx` → `drill-view.tsx` | Client | 稼働（個社ドリル） |
+| **`/v2/radar/voices`** | `page.tsx` → `voices-view.tsx` | Client | 稼働（言質レビュー） |
+| **`/v2/radar/accuracy`** | `page.tsx` → `accuracy-view.tsx` | Client | 稼働（精度パネル） |
+| `/v2/tier3` | `v2/tier3/page.tsx` → `dashboard-view.tsx` | Client | 稼働（Tier 3 管理） |
+| `/v2/settings` | `v2/settings/page.tsx` → `settings-view.tsx` | Client | 稼働（設定） |
 | `/v2/actions` `/v2/support` `/v2/ai` `/v2/assets` `/v2/churn` `/v2/documents` `/v2/outbound` | 各 `page.tsx` → `_components/coming-soon.tsx` | Server | プレースホルダ（サイドバー非掲載） |
 
-サイドバーに出るのは **ホーム / 提案準備ボード / プロジェクト分析 / Tier 3 管理 / 設定** の 5 つだけ。
+`/v2` 以外のルートグループ:
+
+| パス | 実装 | 内容 |
+|---|---|---|
+| `/ptai-pipeline` | `src/app/(ptai)/ptai-pipeline/` | Ptengine AI パイプラインボード。原本をまるごと取り込んだもの |
+
+サイドバーに出るのは **ホーム / 提案準備ボード / プロジェクト分析 / 解約レーダー / Tier 3 管理 / 設定** の 6 つ。
 個社ページは「提案準備ボードの子」として扱われ、開いている間だけボードの下に階層表示され、親（ボード）も active になる。
 
-## 3. レイアウト
+## 4. レイアウト
 
-### ルートレイアウト `src/app/layout.tsx`
+### ルートレイアウト `src/app/(cxm)/layout.tsx`
 
 ```
 <html lang="ja">
@@ -41,16 +72,16 @@
 `AiAssistantShell` はラッパー `div` の `padding-right` + `box-sizing: content-box` で本文を押し出す。
 （`html`/`body` の padding・margin ではスクロール可能領域が作られず、本文がパネルの下に潜って到達できなくなる問題を 3 回作り直した末の実装。詳細は `src/components/ai/index.tsx` のコメント）
 
-### v2 レイアウト `src/app/v2/layout.tsx`（Client Component）
+### v2 レイアウト `src/app/(cxm)/v2/layout.tsx`（Client Component）
 
 - グリッド `204px | 1fr`。左が固定サイドバー（`sticky top-0 h-screen`、背景 `#0b1220`）、右が本文（背景 `#f1f5f9`）。
-- `NAV` 配列に主動線 4 件（ホーム / 提案準備ボード `Tier 1–3` / プロジェクト分析 `30日` / Tier 3 管理）、下部に `設定`。
+- `NAV` 配列に主動線 5 件（ホーム / 提案準備ボード `Tier 1–3` / プロジェクト分析 `30日` / **解約レーダー `予兆`** / Tier 3 管理）、下部に `設定`。
 - `ARCHIVE` 配列（14 件）は折りたたみ。旧 UI と未整備画面へのリンクを残すが、動線からは外している。
 - active 判定: ホームのみ完全一致（前方一致にすると `/v2` 配下すべてが光る）。`/v2/readiness` は個社ページ滞在中も active。
 
 各画面のヘッダーは共通コンポーネント化されておらず、画面ごとに `sticky top-0 z-20 bg-white/95 backdrop-blur border-b` のヘッダーを持つ（ホーム・ボード・PJ 分析）か、`TopBar`（個社ページ内のローカル関数）を使う。
 
-## 4. 認証
+## 5. 認証
 
 ### middleware（`src/middleware.ts`）
 
@@ -84,7 +115,7 @@ matcher: '/((?!_next/static|_next/image|favicon.ico).*)'
 `admin` / `manager` / `ops` / `csm` / `viewer`。`canAccess(route, role)` で旧 UI の `/ops/**` 系を制御する。
 **v2 画面は現時点でロールによる出し分けをしていない**（設定画面がロールを表示するだけ）。
 
-## 5. レンダリング戦略
+## 6. レンダリング戦略
 
 | 画面 | 初期データの取り方 | 理由 |
 |---|---|---|
@@ -100,14 +131,19 @@ matcher: '/((?!_next/static|_next/image|favicon.ico).*)'
 - NocoDB フェッチは既定 TTL 300 秒（`NOCO_DEFAULT_TTL`）＋ Metabase CSV はプロセスメモリキャッシュ 1 時間。
 - 設定画面の読み取り系 fetch は `cache: "no-store"`。
 
-## 6. 環境変数（v2 の稼働に関わるもの）
+## 7. 環境変数（v2 の稼働に関わるもの）
+
+キー名の一覧は**リポジトリの `.env.example` が正本**。`cp .env.example .env.local` して値を埋める。
+キーを増やしたら `.env.example` にも追記してコミットすること（未設定でもエラーにならず静かに無効化されるため、
+書いておかないと他のメンバーは増えたことに気づけない）。
 
 | 変数 | 用途 |
 |---|---|
 | `NOCODB_API_TOKEN` / `NOCODB_BASE_URL` | NocoDB アクセス |
-| `NOCODB_*_TABLE_ID`（約 40 本） | テーブル ID。**未設定のテーブルは機能ごと graceful degradation**（例: `NOCODB_PROPOSAL_OUTLINES_TABLE_ID` 未設定なら骨子の保存ボタンを出さない） |
+| `NOCODB_*_TABLE_ID`（約 45 本） | テーブル ID。**未設定のテーブルは機能ごと graceful degradation**（例: `NOCODB_PROPOSAL_OUTLINES_TABLE_ID` 未設定なら骨子の保存ボタンを出さない） |
+| `NOCODB_CHURN_RADAR_{STATE,EVENTS,VOICE}_TABLE_ID` | 解約レーダー（2026-09 追加）。**未設定だと `/v2/radar` が静かに空になる** |
 | `OPENROUTER_API_KEY` / `ANTHROPIC_MODEL` | LLM（既定 `anthropic/claude-sonnet-4-5`） |
-| `OPENAI_API_KEY` | 旧サポート系（v2 は未使用） |
+| `OPENAI_API_KEY` | 解約レーダーの言質抽出（`voice-run.ts`）と旧サポート系 |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob（AI チャット履歴・AI 設定） |
 | `APP_PASSWORD` | 共有パスワード（経過措置） |
 | `CRON_SECRET` / `SUPPORT_BATCH_SECRET` | バッチ認証。**両方未設定だと認証をスキップして通す**（開発用。本番では必須） |

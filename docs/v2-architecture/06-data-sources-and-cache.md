@@ -51,6 +51,9 @@ v2 の性能設計はほぼ 1 つの事実から出ている:
 | `external_intel` | 外部 WHO 情報（IR / 組織 / 求人 / 競合） | 外部機会 |
 | `company_situations` | 手動登録の状況（自動検出できない語彙） | WHAT マッチング |
 | `proposal_outlines` | 提案骨子の記録 | 提案準備タブ |
+| `churn_radar_state` | **事前計算**（解約レーダーの判定結果 / 1 社 1 行） | `/v2/radar`（→ [11](11-churn-radar.md)） |
+| `churn_radar_events` | ステージ遷移の履歴 | 同上 |
+| `churn_radar_voice` | 言質（`review_status` で承認管理） | 言質レビュー |
 | `staff_identify` | ユーザー（`name2` / role / password_hash / 表示設定） | 認証・担当フィルタ |
 | `chronic_silent_snapshots` | Ptengine 側の持続休眠スナップショット | Tier 3 / 利用状況 |
 
@@ -139,6 +142,7 @@ v2 で LLM を使う箇所:
 ② NocoDB fetch キャッシュ       …  既定 TTL 300 秒（tag で無効化）
 ③ プロセスメモリ                …  Metabase CSV 各 1 時間 / スナップショット 5 分 / Notion 業界トレンド 24 時間
 ④ NocoDB 上の事前計算・キャッシュ …  project_metrics（日次）/ company_campaign_org（日次）
+                                   churn_radar_state（日次）/ churn_radar_voice（週次）
                                    industry_intel_cache（週次）/ company_profile_cache（週次）
 ⑤ ブラウザ localStorage         …  AI パネルの幅と既定挙動、表示スコープ・重点領域
 ```

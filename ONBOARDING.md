@@ -1,7 +1,7 @@
 # CXM 共同開発オンボーディング
 
 対象: 新しく参加するメンバー（Leo）と、受け入れる側（窪田）
-最終更新: 2026-09-02
+最終更新: 2026-09-30
 
 このファイルは「参加初日に必要な情報」だけを置く。
 アプリの中身の設計は [docs/v2-architecture/](docs/v2-architecture/00-overview.md) を読むこと。
@@ -30,6 +30,9 @@
 - Metabase の**認証不要 public question の CSV URL**（`src/lib/metabase/*.ts`）
 - 共有パスワードの既定値 `ptengine2026`（`src/app/api/auth/login/route.ts`）
   → **`APP_PASSWORD` を Vercel 側で設定済みの値に変え、既定値をコードから外すのが望ましい**
+- **解約レーダーの設計書（`docs-src/cxm_v2/19_Churn_Radar_Design.md`）と `src/lib/churn/**` のコメントに、
+  実在企業名・SF ID・解約検討に関する発言の引用が含まれている**（2026-09 に push 済み / 対処検討中）
+  → 今後コメントに実例を書くときは、企業名を伏せるか社内ドキュメント側に置くこと
 
 ### 残っている準備作業（窪田）
 
@@ -56,11 +59,15 @@ Ptengine の CSM 業務用 社内 Web アプリ（CXM / 「顧客前進 OS」）
 /v2/readiness  提案準備ボード（誰に提案できるか / 4レーン）
 /v2/companies/[companyUid]  個社ページ（顧客理解 → 判定 → 提案骨子）
 /v2/projects   プロジェクト分析（契約と実利用のズレ）
+/v2/radar      解約レーダー（更新前に解約の予兆を名指しする）
 /v2/tier3      Tier 3 管理
 /v2/settings   設定
 ```
 
 `/v2` 以外（`/legacy`, `/console/**`, `/support/**`, `/ops/**` など）は旧 UI。動線からは外してあるが動く。**新規開発は `/v2` に対して行う。**
+
+> ⚠️ **ファイルの置き場所は `src/app/(cxm)/v2/...`**（ルートグループ。URL は `/v2/...` のまま）。
+> `src/app/(ptai)/` は Ptengine AI パイプラインボードで、CSS を分離するために別グループにしてある。
 
 ---
 
@@ -131,18 +138,18 @@ Vercel は Hobby プランでメンバー招待ができないため、**Leo は
 
 > 窪田側で最新を書き出す場合: `npx vercel env pull .env.local`
 
-必要なキー（値は共有しない。存在だけ列挙）:
+**キー名の一覧はリポジトリの `.env.example` が正本です。**
 
+```bash
+cp .env.example .env.local   # そのあと値を埋める
 ```
-NOCODB_API_TOKEN / NOCODB_BASE_URL
-NOCODB_*_TABLE_ID          （約 40 本。未設定のテーブルは機能単位で無効化される）
-OPENROUTER_API_KEY / ANTHROPIC_MODEL
-BLOB_READ_WRITE_TOKEN
-APP_PASSWORD               （共有パスワード。経過措置）
-CRON_SECRET / SUPPORT_BATCH_SECRET
-TOKEN_NOTION / TOKEN_NOTION_2
-TOKEN_INTERCOM / SALESFORCE_*  （旧 UI 用。無くても v2 は動く）
-```
+
+機能追加でキーが増えたときは `.env.example` にも追記してコミットしてください。
+NocoDB のテーブル ID は**未設定でもエラーにならず、その機能だけ静かに無効化される**ので、
+ここに書いておかないと他のメンバーは増えたことに気づけません（実際に解約レーダーで起きました）。
+
+最低限これが無いと `/v2` が動きません: `NOCODB_API_TOKEN` / `NOCODB_BASE_URL` / `OPENROUTER_API_KEY` / `BLOB_READ_WRITE_TOKEN` / 各 `NOCODB_*_TABLE_ID`（約 45 本）。
+`TOKEN_INTERCOM` と `SALESFORCE_*` は旧 UI 用で、無くても v2 は動きます。
 
 > ⚠️ `CRON_SECRET` と `SUPPORT_BATCH_SECRET` が**両方未設定だとバッチ認証がスキップされる**。
 > ローカルではそれで構わないが、環境を公開する場合は必ずどちらかを設定する。
@@ -194,7 +201,7 @@ scope は領域名（`readiness` `communications` `snapshot` `outbound` `cron` �
 ## 6. デプロイ
 
 - Vercel の Git 連携で、`main` への push が本番、ブランチ push がプレビュー。
-- 本番の cron は `vercel.json` に 6 本（UTC 指定）。**Hobby プランでは日次 cron のみ**。
+- 本番の cron は `vercel.json` に 8 本（UTC 指定）。**Hobby プランでは日次 cron のみ**。
 - 重いバッチ（`project-metrics` など）は社内 DolphinScheduler から叩く運用（[08-batch-and-schedule.md](docs/v2-architecture/08-batch-and-schedule.md)）。
 
 **デプロイは窪田だけが行う**（決定 / 2026-09-02）。Vercel が Hobby プランでメンバー招待ができないため。
@@ -218,7 +225,7 @@ npx vercel logs <deployment-url> --follow
 | 2 | [10-constraints.md](docs/v2-architecture/10-constraints.md) | **落とし穴と実測値。ここを読まずに数字を信じない** |
 | 3 | [06-data-sources-and-cache.md](docs/v2-architecture/06-data-sources-and-cache.md) | NocoDB / Metabase の癖とキャッシュ階層 |
 | 4 | [07-scoring-logic.md](docs/v2-architecture/07-scoring-logic.md) | 提案準備度などの計算式 |
-| 5 | 触る画面の章（02 / 03 / 04） | 画面仕様 |
+| 5 | 触る画面の章（02 / 03 / 04 / **11**） | 画面仕様。11 は解約レーダー |
 | 6 | [AGENTS.md](AGENTS.md) | データ主従（SF と CXM のどちらが正本か）と運用 SOP |
 
 特に効く 3 つの制約:
@@ -235,15 +242,16 @@ npx vercel logs <deployment-url> --follow
 
 | ファイル | 行数 | 内容 |
 |---|---|---|
-| `src/app/v2/companies/[companyUid]/view.tsx` | 2,263 | 個社ページ全タブ + チャート |
-| `src/app/v2/companies/[companyUid]/proposal-flow.tsx` | 1,875 | 提案骨子フロー |
-| `src/app/v2/settings/settings-view.tsx` | 715 | 設定 |
-| `src/app/v2/readiness/board-view.tsx` | 651 | 提案準備ボード |
+| `src/app/(cxm)/v2/companies/[companyUid]/view.tsx` | 2,263 | 個社ページ全タブ + チャート |
+| `src/app/(cxm)/v2/companies/[companyUid]/proposal-flow.tsx` | 1,875 | 提案骨子フロー |
+| `src/app/(cxm)/v2/settings/settings-view.tsx` | 715 | 設定 |
+| `src/app/(cxm)/v2/readiness/board-view.tsx` | 651 | 提案準備ボード |
 | `src/lib/company/proposal-readiness.ts` | 946 | 判定ロジックの正本 |
+| `src/lib/churn/radar-rules.ts` | 590 | 解約レーダーの判定（純粋関数） |
 
 分担の目安:
 
-- **画面担当と判定ロジック担当を分ける**（`src/app/v2/**` と `src/lib/company/**`）。
+- **画面担当と判定ロジック担当を分ける**（`src/app/(cxm)/v2/**` と `src/lib/{company,churn}/**`）。
 - 同じ画面を触るなら、先に「どのタブ・どのセクションか」を宣言する。
 - `src/lib/company/proposal-readiness.ts` と `what-matching.ts` は**判定の正本**。ここを触る PR は必ずレビューを通す。
 

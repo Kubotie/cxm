@@ -4,7 +4,7 @@
 
 ## A. ホーム `/v2`
 
-実装: `src/app/v2/page.tsx`（Server, metadata のみ）→ `src/app/v2/home-view.tsx`（Client, 590 行）
+実装: `src/app/(cxm)/v2/page.tsx`（Server, metadata のみ）→ `src/app/(cxm)/v2/home-view.tsx`（Client, 590 行）
 
 ### A-1. この画面の役割
 
@@ -66,7 +66,7 @@
 
 ## B. 提案準備ボード `/v2/readiness`
 
-実装: `src/app/v2/readiness/page.tsx` → `board-view.tsx`（Client, 651 行）
+実装: `src/app/(cxm)/v2/readiness/page.tsx` → `board-view.tsx`（Client, 651 行）
 データ: `GET /api/companies/proposal-board`（`maxDuration = 60`）
 
 ### B-1. この画面の役割

@@ -30,6 +30,8 @@ schedule は UTC。
 | `/api/batch/company-snapshot-light` | `30 18 * * *` | 毎日 03:30 | Tier 3 + Light watch の日次スナップショット |
 | `/api/batch/churn-analysis-weekly` | `0 19 * * 0` | 月曜 04:00 | 解約遡及分析（旧 UI） |
 | `/api/batch/intercom-reconcile` | `0 21 * * *` | 毎日 06:00 | Intercom 同期の突合（Hobby プランは日次 cron のみのため日次化） |
+| `/api/batch/churn-radar` | `0 20 * * *` | 毎日 05:00 | **解約レーダーの再判定**。全社の `churn_radar_state` を上書き |
+| `/api/batch/churn-voice` | `0 21 * * 0` | 月曜 06:00 | **言質抽出**。直近 30 日の議事録・Intercom・チケットを LLM で走査 |
 
 ---
 
@@ -97,5 +99,7 @@ GET /api/batch/xxx?budgetSec=280&limit=N
 | `campaign-org` | 個社の「施策から読む組織の動き」が空。`?refresh=1` で 28.8 秒かけて作れる | 「保存済みが無い」旨と再取得導線 |
 | `company-snapshot(-light)` | 実行体制の推移が比較不能（`execution = null`）、時系列チャートが伸びない | 準備度の理由文に「30日前との比較データなし」 |
 | `tier-sync` / `paid-watched-sync` | 対象企業の増減が反映されない | 母集合が古いまま |
+| `churn-radar` | レーダーの判定が止まる。`as_of` が古いまま残り、**更新が近づいても乗数が上がらない** | スコープ上の位置が動かない |
+| `churn-voice` | 言質が拾われない。利用と関係の 2 層だけで判定することになる | レビュー待ちが増えない |
 
 **バッチが落ちた日に画面が黙って古い数字を出すのがいちばん危ない**という判断から、ホームは鮮度チップをヘッダー直下に置いている。

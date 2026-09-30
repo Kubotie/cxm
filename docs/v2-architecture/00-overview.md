@@ -1,9 +1,10 @@
 # CXM v2 アーキテクチャ ─ 全体像と索引
 
-対象: `src/app/v2/**` で公開されている画面と、それが実際に使っている API・ライブラリ・データ源・バッチのみ。
+対象: `src/app/(cxm)/v2/**` で公開されている画面と、それが実際に使っている API・ライブラリ・データ源・バッチのみ。
 アーカイブ（旧 UI: `/legacy`, `/companies`, `/console/**`, `/support/**`, `/ops/**`, `/actions`, `/assets`, `/documents`, `/outbound`, `/settings`）は対象外。
 
-作成: 2026-09-02 / 出典: リポジトリ `cxm-next-app`（ブランチ `feat/v2-settings-and-account-prefs`）の実装
+作成: 2026-09-02 / 最終更新: 2026-09-30（解約レーダーとルートグループ化を反映）
+出典: リポジトリ `cxm-next-app` の実装
 
 ---
 
@@ -30,8 +31,11 @@ v2 の中心にある問いは 1 つだけ:
   この顧客をどう前進させるか（顧客理解 → 判定 → 提案骨子）
 ```
 
-これを横から支える 2 画面（プロジェクト分析 `/v2/projects`、Tier 3 管理 `/v2/tier3`）と、
+これを横から支える 3 画面（プロジェクト分析 `/v2/projects`、**解約レーダー `/v2/radar`**、Tier 3 管理 `/v2/tier3`）と、
 全画面に常駐する AI サイドパネルがある。
+
+提案準備ボードが「攻められるか」を見るのに対し、解約レーダーは「失いそうか」を見る。
+判断の締切が動かせないぶん、後者のほうが期限に厳しい（→ [11-churn-radar.md](11-churn-radar.md)）。
 
 ---
 
@@ -43,8 +47,8 @@ v2 の中心にある問いは 1 つだけ:
 | 言語 | TypeScript 5.8.3 | |
 | スタイル | Tailwind CSS v4.1.12（`@tailwindcss/postcss`）+ tw-animate-css + typography | v2 画面はほぼ Tailwind 直書き（shadcn/ui は旧 UI 由来で `src/components/ui/**` に残存） |
 | UI 部品 | Radix UI 各種、lucide-react（アイコン）、recharts（チャート）、sonner（トースト）、tiptap（旧 Outbound 用） | v2 が実際に使うのは lucide-react / recharts / 自前 `InfoTip` が中心 |
-| ホスティング | Vercel（プロジェクト `cxm_x`） | `vercel.json` に Cron 6 本 |
-| 業務データ | NocoDB（`https://odtable.ptmind.ai`） | 約 40 テーブルを ID 指定で読み書き |
+| ホスティング | Vercel（プロジェクト `cxm_x`） | `vercel.json` に Cron 8 本 |
+| 業務データ | NocoDB（`https://odtable.ptmind.ai`） | 約 45 テーブルを ID 指定で読み書き |
 | BI データ | Metabase 公開質問の CSV（`https://bi.ptmind.com/public/question/*.csv`） | 認証なしの public question を fetch してパース |
 | 提供物カタログ | Notion API（What管理 配下の 6 DB） | 読み取り専用。Notion が正本 |
 | LLM | OpenRouter（OpenAI SDK 形式）。既定 `anthropic/claude-sonnet-4-5` | 一部で Extended Thinking / Web 検索プラグイン |
@@ -86,10 +90,14 @@ v2 の中心にある問いは 1 つだけ:
         ▼
  ┌───────────────────────────────────────────────────────────────┐
  │ /v2 画面（Server Component で初期データ + Client で遅延取得）  │
- │  ホーム / 提案準備ボード / 個社 / PJ分析 / Tier3 / 設定        │
+ │  ホーム / 提案準備ボード / 個社 / PJ分析 / 解約レーダー         │
+ │  / Tier3 / 設定                                                │
  │  ＋ AI サイドパネル（画面が snapshot を申告し、AI が深掘り）   │
  └───────────────────────────────────────────────────────────────┘
 ```
+
+解約レーダーも同じ形に従う。日次バッチ `churn-radar` が `churn_radar_state` を
+1 社 1 行で上書きし、画面はそれを読むだけ（→ [11](11-churn-radar.md)）。
 
 ---
 
@@ -102,7 +110,7 @@ v2 の中心にある問いは 1 つだけ:
 3. **「立たなかった」と「見ていない」を区別する。** 算出できない要素は `null` のまま返し、`missing` / `notEvaluated` / `pvNote` として画面に理由を出す。推定で埋めない。
 4. **推定であることを隠さない。** 準備度は `reasons`（配点内訳）と `caps`（上限適用理由）を必ず持ち、UI がそのまま表示する。凡例の文言は `FACTOR_META` / `BLOCKER_META` などコード側の定数が正本で、画面には書き写さない。
 5. **AI は提案までで、採否は人が押す。** 外部情報の調査・議事録からの状況抽出は候補を返すだけで、保存は担当者が選んだものだけ（human in the loop）。
-6. **動線に乗らないものは運用されない。** サイドバーには実データで動く画面だけを置き、未実装・旧 UI は下部「アーカイブ」に畳む（`src/app/v2/layout.tsx`）。
+6. **動線に乗らないものは運用されない。** サイドバーには実データで動く画面だけを置き、未実装・旧 UI は下部「アーカイブ」に畳む（`src/app/(cxm)/v2/layout.tsx`）。
 
 ---
 
@@ -120,3 +128,4 @@ v2 の中心にある問いは 1 つだけ:
 | [08-batch-and-schedule.md](08-batch-and-schedule.md) | Vercel Cron と DolphinScheduler、各バッチの役割と時間予算 |
 | [09-ai-assistant.md](09-ai-assistant.md) | 画面内 AI アシスタント（申告 → 深掘り → 履歴）の仕組み |
 | [10-constraints.md](10-constraints.md) | 既知の制約・落とし穴・未実装（読む前に知っておくべきこと） |
+| [11-churn-radar.md](11-churn-radar.md) | 解約レーダー（3 層シグナル・契約時計・言質レビュー・精度パネル） |
