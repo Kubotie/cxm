@@ -22,8 +22,18 @@ Claude Code 側では実行していない作業。**上から順に**実施す�
 | E. 外部 API キーのローテーション | ⏳ 判断待ち |
 | F. Git 履歴・公開リポジトリ | ⏳ 判断待ち |
 
-新しい秘密値は **`SECRETS-HANDOVER.local.md`**（.gitignore 済み）に置いてある。
-**1Password へ移したら削除すること。**
+新しい秘密値の受け渡しに使った `SECRETS-HANDOVER.local.md` は **2026-09-30 に削除済み**。
+以後、サーバー専用の秘密値（`CXM_SESSION_SECRET` / `CRON_SECRET` / `SUPPORT_BATCH_SECRET`）は
+**控えを残さない**。人が知る必要がないため、値は Vercel にのみ置く。
+必要になったらローテーションする（削除を挟まない手順は下記）。
+
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))" \
+  | npx vercel env update CXM_SESSION_SECRET production --yes --sensitive
+npx vercel --prod --yes    # 反映には再デプロイが必要
+```
+
+`vercel env rm` → `vercel env add` は値が存在しない時間ができるので使わないこと。
 
 ---
 
@@ -51,7 +61,7 @@ Claude Code 側では実行していない作業。**上から順に**実施す�
       ```
       - [ ] 新しい値を 1Password に登録し、メンバーへ共有する ← **残作業**
       - [ ] チャットやメールに平文で貼らない
-      - [ ] `SECRETS-HANDOVER.local.md` を削除する ← **残作業**
+      - [x] `SECRETS-HANDOVER.local.md` を削除する（2026-09-30 完了）
 
 - [x] **3. `SUPPORT_BATCH_SECRET` / `CRON_SECRET` が Production に設定済みか確認する**
       ✅ 両方 Production に設定済み（既存値は**変更していない**ので DolphinScheduler 等はそのまま動く）。
