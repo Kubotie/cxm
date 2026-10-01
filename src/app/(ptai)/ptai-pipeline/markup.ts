@@ -125,7 +125,7 @@ export const BOARD_HTML = `
       </div>
     </div>
  <form class="ncform" id="ncForm" hidden novalidate>
-      <div class="nch"><b>企業を追加</b><span class="sub">新規問い合わせなど。保存するとダッシュボードに追加し、Notion 顧客DB と Twenty にも作成します</span></div>
+      <div class="nch"><b>企業を追加</b><span class="sub">新規問い合わせなど。保存するとダッシュボードに追加し、Notion 顧客DB にも作成します</span></div>
       <div class="ncg">
         <label><span>会社名<em>*</em></span><input id="ncName" type="text" required placeholder="例：株式会社サンプル"></label>
         <label>ドメイン<input id="ncDom" type="text" placeholder="例：sample.co.jp"></label>

@@ -557,6 +557,8 @@ export interface TargetRow {
   mrr:    number | null;
   /** YYYY-MM。チーム行だけ入る */
   due:    string | null;
+  /** Notion 側の最終更新。画面の「最終保存」に出す */
+  updatedAt: string | null;
   active: boolean;
 }
 
@@ -565,6 +567,8 @@ export interface TeamTargets {
   targetDue: string;
   /** name2 → 円 */
   targets:   Record<string, number>;
+  /** Notion 側の最終更新。原本はこれが無いと「まだ保存されていません」と出す */
+  updatedAt: string | null;
 }
 
 function requireTargetsDs(): string {
@@ -585,6 +589,7 @@ export async function listTargetRows(): Promise<TargetRow[]> {
       mrr:    (readProp(props, '目標MRR') as number | null) ?? null,
       due:    (readProp(props, '期限') as string | null) || null,
       active: readProp(props, '有効') === true,
+      updatedAt: String(p.last_edited_time ?? '') || null,
     };
   });
 }
@@ -598,10 +603,15 @@ export async function readTeamTargets(): Promise<TeamTargets> {
     if (r.kind !== 'メンバー' || !r.name2 || r.mrr == null) continue;
     targets[r.name2] = r.mrr;
   }
+  // いちばん新しい行の更新時刻を「最終保存」として出す。
+  // これが無いと原本は「まだ保存されていません（初期値）」と表示してしまう
+  // （Notion から読めているのに未保存に見える。2026-10-01 修正）
+  const updatedAt = rows.map(r => r.updatedAt).filter(Boolean).sort().pop() ?? null;
   return {
     targetMrr: team?.mrr ?? 0,
     targetDue: team?.due ?? '',
     targets,
+    updatedAt,
   };
 }
 

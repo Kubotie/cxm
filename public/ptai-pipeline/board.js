@@ -277,7 +277,7 @@ document.addEventListener('click', e=>{
   s2.addEventListener('keydown', ev=>{ if(ev.key==='Escape'){ ev.stopPropagation(); done=true; renderDeals(); if(openId!==null) renderDrawer(); } });
 }, true);
 
-/* ---- 受注済み（契約締結済み）の商談：変更・削除は承認者（Utty）の承認が必要 ---- */
+/* ---- 受注済みの商談：変更・削除は承認者（Utty）の承認が必要 ---- */
 const wonLocked = x => !!x && x.ph==='CLOSED_WON' && !IS_APPROVER;
 function rawDeal(d,key){ const e=EDITS[d.cid]||{}; return key==='main' ? (e.opp||{}) : ((e.deals||[]).find(y=>y.key===key)||{}); }
 const PE_F=[['name','商談名'],['phase','フェーズ',v=>PH_JP[v]],['addMrr','追加MRR',v=>v?man(v):''],['applyDate','申込完了日',v=>mdj(v)],['billingDate','課金開始日',v=>mdj(v)],['closeMonth','課金開始月',v=>v?v.replace('-','/'):''],['term','契約期間',v=>v?v+'か月':''],['barrier','障壁'],['need','ニーズ'],['na','ネクストアクション'],['naDate','アクション期日',v=>mdj(v)],['lostReason','失注理由'],['lostDetail','失注理由の詳細'],['ms','到達予定',v=>msText(v)]];
@@ -344,7 +344,7 @@ function rulesHtml(){
   return `<div class="rtip"><b>計上ルール</b><ol>
     <li><b>数える額</b>：合算MRR ＝ 現在MRR（Notion 顧客DB の最新値）＋（見込）追加MRR（Ptengine AI の商談）</li>
     <li><b>足切り</b>：会社ごとの追加MRR が <b>10万円以上</b> の会社だけ算入。10万円未満の会社は合算MRR ごと数えない</li>
-    <li><b>確定</b>：フェーズが「契約締結済み」になった時点で計上（契約締結済みへの変更は Utty の承認が必要）。期限は <b>${dueTxt}</b></li>
+    <li><b>確定</b>：フェーズが「Won」または「受注 (Closed Won)」になった時点で計上（受注への変更は Utty の承認が必要）。期限は <b>${dueTxt}</b></li>
     <li><b>担当</b>：主担当は Notion の「担当3」。共同担当は人数で均等に按分</li>
     <li><b>支給率</b>：目標の ${pct(st[0].at)} で ${st[0].rate}、${pct(st[1].at)} で ${st[1].rate}、${pct(st[2].at)} で ${st[2].rate}（それ未満は0%）</li>
     <li><b>期待値MRR</b>：足切り（10万円以上）を通った会社の合算MRR × フェーズの確率（${probs}）</li>
@@ -503,9 +503,9 @@ function renderKpis(){
   const stage=CONFIG.stages.filter(s=>w>=s.at).length; const next=CONFIG.stages[Math.min(stage,3)];
   document.getElementById('kpis').innerHTML=`
    <div class="card kpi hero"><div class="label">目標 合算MRR <span class="qi rq" data-tip="${esc(rulesHtml())}" tabindex="0" aria-label="計上ルール">?</span></div><div class="val num">${tgt?man(tgt):'—'}<small>円</small></div><div class="foot">${view==='team'?(allocGap()>0?'<b style="color:var(--plane)">⚠ 配分不足 '+man(allocGap())+'</b>':''):tgt?'全体の '+Math.round(tgt/CONFIG.targetMrr*100)+'%':'目標配分なし'}</div><button type="button" class="editbtn" data-edit>目標を編集</button></div>
-   ${kpiCard('var(--gold)','確定MRR', `<b>確定MRR</b>フェーズ「契約締結済み」で、確定した追加MRR が会社で10万円以上の会社の合算MRR。${view==='team'?`<br>次のステージ（支給率 ${next.rate}）まで ${man(Math.max(0,next.at-w))}円`:''}`, man(w), '円', `${cnt(ds,d=>d.ph==='CLOSED_WON')}社${view==='team'&&next.at>w?`・次ステージまで ${man(next.at-w)}`:''}`)}
+   ${kpiCard('var(--gold)','確定MRR', `<b>確定MRR</b>フェーズが「Won」「受注 (Closed Won)」で、確定した追加MRR が会社で10万円以上の会社の合算MRR。${view==='team'?`<br>次のステージ（支給率 ${next.rate}）まで ${man(Math.max(0,next.at-w))}円`:''}`, man(w), '円', `${cnt(ds,d=>d.ph==='CLOSED_WON')}社${view==='team'&&next.at>w?`・次ステージまで ${man(next.at-w)}`:''}`)}
    ${kpiCard('var(--accent)','期待値MRR', `<b>期待値MRR</b>（見込）追加MRR が10万円以上の会社の合算MRR × フェーズの確率。<br>追加MRR を入力済み：${cnt(ds,d=>d.add>0)}社`, man(e), '円', tgt?`目標の ${Math.round(e/tgt*100)}%`:'')}
-   ${kpiCard('var(--p1)','商談中の合算MRR', `<b>商談中の合算MRR</b>初回アポ実施済み〜申込用紙回収済みの会社のうち、（見込）追加MRR が10万円以上の会社の合算MRR（確率を掛けない額）。すべて契約になった場合の最大額です。<br>商談中 ${inDeal.length}社`, man(p), '円', `${inQ.length}社${tgt?`・目標の ${Math.round(p/tgt*100)}%`:''}`)}
+   ${kpiCard('var(--p1)','商談中の合算MRR', `<b>商談中の合算MRR</b>Active 〜 Verbal の会社のうち、（見込）追加MRR が10万円以上の会社の合算MRR（確率を掛けない額）。すべて契約になった場合の最大額です。<br>商談中 ${inDeal.length}社`, man(p), '円', `${inQ.length}社${tgt?`・目標の ${Math.round(p/tgt*100)}%`:''}`)}
    ${kpiCard('var(--crit)','ネクストアクション期限超過', `<b>ネクストアクション期限超過</b>商談（Opportunity）のネクストアクションで、期日が過ぎている件数。サクセスの Todo は含みません。<br>商談中でネクストアクションが未入力：${noNa}社`, overdue, '件', noNa?`ネクストアクション未入力 ${noNa}社`:'', overdue?'var(--crit)':'')}`;
 }
 
@@ -739,7 +739,7 @@ function renderDeals(){
       <td title="${nD>1?'いちばん進んでいる商談のフェーズ':''}"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}</td>
       <td class="r num">${(()=>{ const L=mrrLift(d);
         if(L.live) return `${man(L.now)}<span class="mrrup" title="AI 契約前 ${man(L.base)} ＋ Ptengine AI ${man(L.live)}">＋${man(L.live)}</span>`;
-        if(L.next) return `${man(d.m)}<span class="mrrnext" title="契約締結済み。課金開始で ${man(L.base+L.next)} になります">${L.nextDate?mdj(L.nextDate)+'〜':''} ${man(L.base+L.next)}</span>`;
+        if(L.next) return `${man(d.m)}<span class="mrrnext" title="受注済み。課金開始で ${man(L.base+L.next)} になります">${L.nextDate?mdj(L.nextDate)+'〜':''} ${man(L.base+L.next)}</span>`;
         return man(d.m); })()}</td>
       <td class="r num aimc">${aimCell(d)}</td>
       <td class="r num">${d.add?man(d.add):'<span class="dim">—</span>'}</td>
@@ -1515,7 +1515,7 @@ function selDealKey(d){
 }
 const PH_FLOW=['ACTIVE','GOAL_SHARED','QUALIFIED_CHAMPION','EVALUATING','PROBABLE','VERBAL','WON','CLOSED_WON'];
 /* ---- 到達予定（マイルストーン）：申込完了日 or 課金開始日から逆算して自動提案 ---- */
-const MS_PH=['TRIAL','QUOTE','VERBAL_COMMIT'];   // ゴールの「申込用紙回収済み」は申込完了日そのもの
+const MS_PH=['TRIAL','QUOTE','VERBAL_COMMIT'];   // ms の鍵。フェーズ名とは別（MS2PH で読み替える）。ゴールの「Won」は申込完了日そのもの
 const MS_OFF={TRIAL:49,QUOTE:35,VERBAL_COMMIT:10};   // 申込完了日の何日前か
 const MS_BILL_GAP=14;                                                  // 課金開始日を基準にするときは申込完了＝課金開始の14日前とみなす
 /* 【移植による変更 5/6】ms の鍵とフェーズ名の分離（2026-10-01）
