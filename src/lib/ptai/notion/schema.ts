@@ -24,6 +24,20 @@ export const NOTION_SOURCES = {
   customers: '25ef5c40-d968-45d7-9120-7f1878006682',
   /** JP_Docs DB。議事録（読むだけ） */
   docs:      '5f583654-f021-4bb9-8661-01a75fe818c7',
+  /**
+   * Company Database（CCM / 顧客リスト）。**現在MRR の出どころ**。読むだけ。
+   * `mrr` は「SFのMRRが自動反映」。約 8,960 行あるので、必ず mrr > 0 で絞ること。
+   * 同じ TOKEN_NOTION で読める（TOKEN_NOTION_2 では PtAI 側が 404 になる）。
+   */
+  companyDb: '7358bc25-cfde-44eb-8e7b-c24aa7088a92',
+} as const;
+
+/** Company Database 側のプロパティ名（2026-10-01 実測） */
+export const COMPANY_DB_PROP = {
+  name:  'company_name',   // title
+  /** Salesforce の Account ID。PtAI 側の「Salesforce Account ID」と突き合わせる鍵 */
+  sfId:  'company_id',     // rich_text
+  mrr:   'mrr',            // number（円）
 } as const;
 
 /** 目標DB（§9-1 で新設）。id は環境変数から取る */
@@ -49,7 +63,22 @@ export const CUSTOMER_PROP = {
   owner3:          '担当3',                             // multi_select（主担当）
   owner1:          '担当1',                             // multi_select（参照のみ）
   owner2:          '担当2',                             // select（参照のみ）
+  /**
+   * ⚠️MRR。**もう画面の「現在MRR」には使わない**（2026-10-01）。
+   * 人が入れた古い値が混ざっており、Company Database と 51 社で食い違っていた。
+   * 他のビューが参照しているので消さない。読むだけ。
+   */
   mrr:             '⚠️MRR',                             // number（読むだけ）
+  /**
+   * 現在MRR。Company Database の `mrr` を**毎朝 6 時に写したもの**。
+   * 画面の「現在MRR」はこれ。書くのは同期バッチだけ。
+   */
+  curMrr:          '現在MRR',                           // number（同期が書く）
+  /**
+   * 期初MRR。初回同期の値を**一度だけ**焼き付けたもの。以後動かさない。
+   * 画面の「現在MRR（＋◯◯）」の括弧内は 現在MRR − 期初MRR。
+   */
+  baseMrr:         '期初MRR',                           // number（初回のみ）
   aimMrr:          '想定追加MRR',                       // number（双方向。§9-2）
   billingMonth:    '課金開始予定月',                    // date（書く）
   billingStage:    '課金ステージ',                      // select（書く。§9-2）
@@ -136,6 +165,8 @@ export function formatMonthRange(v: [number, number] | 'none' | null): string | 
 export const CUSTOMER_READONLY_PROPS: readonly string[] = [
   '障壁状態(受注に対しての)', '🔒 最終更新日', ' sf_company_id',
   CUSTOMER_PROP.mrr, CUSTOMER_PROP.solutionStatus, CUSTOMER_PROP.companyDatabase,
+  // 同期バッチだけが書く。画面からは書かせない
+  CUSTOMER_PROP.curMrr, CUSTOMER_PROP.baseMrr,
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════

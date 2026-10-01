@@ -35,6 +35,10 @@
     {
       "path": "/api/batch/ptai-sf-sync",
       "schedule": "10 20 * * *"
+    },
+    {
+      "path": "/api/batch/ptai-mrr-sync",
+      "schedule": "0 21 * * *"
     }
   ]
 }

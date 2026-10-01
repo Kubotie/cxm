@@ -70,7 +70,8 @@ async function throttle(): Promise<void> {
   }
 }
 
-async function request(method: string, path: string, body?: unknown): Promise<Record<string, unknown>> {
+/** 同じ認証・レート制御を使い回すため、同じディレクトリの中からだけ呼ぶ */
+export async function request(method: string, path: string, body?: unknown): Promise<Record<string, unknown>> {
   const t = token();
   if (!t) throw new NotionError('config', 'Notion のトークンが未設定です');
 
@@ -183,7 +184,12 @@ export interface NotionCustomer {
   tier:           string | null;
   industry:       string | null;
   owners3:        string[];
+  /** ⚠️MRR。もう画面では使わない（古い手入力が混ざっている） */
   mrr:            number | null;
+  /** 現在MRR。Company Database から毎朝写した値 */
+  curMrr:         number | null;
+  /** 期初MRR。初回同期の値を一度だけ焼き付けたもの */
+  baseMrr:        number | null;
   aimMrr:         number | null;
   billingMonth:   string | null;
   billingStage:   string | null;
@@ -210,6 +216,8 @@ function toCustomer(page: Record<string, unknown>): NotionCustomer {
     industry:        (r(CUSTOMER_PROP.industry) as string | null) ?? null,
     owners3:         (r(CUSTOMER_PROP.owner3) as string[] | null) ?? [],
     mrr:             (r(CUSTOMER_PROP.mrr) as number | null) ?? null,
+    curMrr:          (r(CUSTOMER_PROP.curMrr) as number | null) ?? null,
+    baseMrr:         (r(CUSTOMER_PROP.baseMrr) as number | null) ?? null,
     aimMrr:          (r(CUSTOMER_PROP.aimMrr) as number | null) ?? null,
     billingMonth:    (r(CUSTOMER_PROP.billingMonth) as string | null) ?? null,
     billingStage:    (r(CUSTOMER_PROP.billingStage) as string | null) ?? null,
