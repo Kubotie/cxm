@@ -122,6 +122,42 @@ function cachePut(key: string, data: unknown, text: string): void {
 const SYSTEM_JSON_ONLY =
   'You must reply with a single valid JSON value and nothing else. No markdown fences, no commentary.';
 
+// ─── Extended thinking（2026-10-01 の決定）────────────────────────────────
+//
+// ═══════════════════════════════════════════════════════════════════════════
+//  原本の `modelTier:'default'` は **書き始める前に考える**（Utty 仕様 1-1）。
+//  board.js は 5 機能すべて default なので、**全部に thinking を効かせる**のが
+//  原本どおり。切ると、組織図とアカウントプランの構造が目に見えて落ちる。
+//
+//  ・`onText` は考えている間は呼ばれない（原本 1-4）。ここでも `delta.content`
+//    だけを流し、`delta.reasoning` は流さない。**思考内容は画面にも JSON にも出さない。**
+//  ・Anthropic は `max_tokens` に思考ぶんも含める。出力ぶんを削らないよう
+//    budget を足した値を渡す。
+//  ・thinking を解さないモデルに送ると 400 になるので、Claude のときだけ付ける。
+//  ・`PTAI_AI_THINKING_BUDGET=0` で切れる（切り分け用）。
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DEFAULT_THINKING_BUDGET = 8_000;
+
+function thinkingBudget(): number {
+  const raw = process.env.PTAI_AI_THINKING_BUDGET;
+  const v = raw === undefined ? DEFAULT_THINKING_BUDGET : Number(raw);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  if (!/claude/i.test(getAnthropicModel())) return 0;
+  return Math.floor(v);
+}
+
+/** chat.completions.create に渡す共通部分。thinking の有無で max_tokens が変わる */
+function baseParams(messages: unknown[]): Record<string, unknown> {
+  const budget = thinkingBudget();
+  return {
+    model: getAnthropicModel(),
+    messages: [{ role: 'system', content: SYSTEM_JSON_ONLY }, ...messages],
+    max_tokens: MAX_TOKENS + budget,
+    ...(budget ? { thinking: { type: 'enabled', budget_tokens: budget } } : {}),
+  };
+}
+
 type Turn = { role: 'user' | 'assistant'; content: string };
 
 export async function POST(req: NextRequest) {
@@ -190,14 +226,8 @@ export async function POST(req: NextRequest) {
   let text: string;
   try {
     const client = getAnthropicClient();
-    const res = await client.chat.completions.create({
-      model: getAnthropicModel(),
-      messages: [
-        { role: 'system', content: SYSTEM_JSON_ONLY },
-        ...messages,
-      ] as never,
-      max_tokens: MAX_TOKENS,
-    }, { signal: req.signal });
+    const res = await client.chat.completions.create(
+      baseParams(messages) as never, { signal: req.signal });
     text = res.choices?.[0]?.message?.content ?? '';
   } catch (e) {
     const code = codeOf(e);
@@ -252,13 +282,10 @@ function streamResponse(messages: unknown[], signal: AbortSignal | undefined, ca
       let text = '';
       try {
         const client = getAnthropicClient();
-        const res = await client.chat.completions.create({
-          model: getAnthropicModel(),
-          messages: [{ role: 'system', content: SYSTEM_JSON_ONLY }, ...messages] as never,
-          max_tokens: MAX_TOKENS,
-          stream: true,
-        }, { signal });
-        for await (const chunk of res as AsyncIterable<{ choices?: Array<{ delta?: { content?: string } }> }>) {
+        const res = await client.chat.completions.create(
+          { ...baseParams(messages), stream: true } as never, { signal });
+        // **reasoning は読まない。** 思考中は onText を呼ばないのが原本の挙動
+        for await (const chunk of res as unknown as AsyncIterable<{ choices?: Array<{ delta?: { content?: string } }> }>) {
           const v = chunk.choices?.[0]?.delta?.content;
           if (!v) continue;
           text += v;
