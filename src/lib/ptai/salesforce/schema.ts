@@ -59,6 +59,38 @@ export function isSfClosed(name: string | null | undefined): boolean {
   return sfStage(name)?.isClosed === true;
 }
 
+// ── Salesforce のステージ → ダッシュボードの 8 段階 ────────────────────────
+//
+// ⚠ **これは暫定の対応表。** フェーズを Salesforce の 12 段階に差し替えたら
+//    1 対 1 になるので、この表ごと消す（2026-10-01 時点では未着手）。
+//    いまは画面が 8 段階しか知らないため、いちばん近いところへ寄せている。
+//
+//  寄せ方の根拠:
+//    Active / Goal Shared / Qualified Champion … 商談化はしたが提案前 → 初回アポ実施済み
+//    POC / Evaluating                         … 試用・評価中           → トライアル開始済み
+//    Probable                                 … 60%・Best Case        → 最終見積もり提示済み
+//    Verbal                                   … 90%・Commit           → 口頭合意獲得済み
+//    Won                                      … 100% だが未クローズ    → 申込用紙回収済み
+//    受注 (Closed Won)                         … IsWon                 → 契約締結済み
+//    Admin Close                              … 閉じたが失注ではない    → **失注にはしない**
+//
+//  Admin Close は「初回アポ実施前」に落とす。失注に混ぜると失注数が狂う。
+
+export const SF_TO_DASHBOARD_STAGE: Record<string, string> = {
+  'Inactive':           'NOT_STARTED',
+  'Active':             'FIRST_MEETING',
+  'Goal Shared':        'FIRST_MEETING',
+  'Qualified Champion': 'FIRST_MEETING',
+  'POC':                'TRIAL',
+  'Evaluating':         'TRIAL',
+  'Probable':           'QUOTE',
+  'Verbal':             'VERBAL_COMMIT',
+  'Won':                'APPLICATION',
+  '受注 (Closed Won)':   'CLOSED_WON',
+  'Close Lost':         'CLOSED_LOST',
+  'Admin Close':        'NOT_STARTED',
+};
+
 // ── PtAI の商談を見分ける ───────────────────────────────────────────────────
 //
 // 2026-10-01 の決定: **商談名に次のどれかを入れる**運用にする。

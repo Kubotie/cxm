@@ -144,6 +144,11 @@ async function writeEdits(
   // 商談ごとに作成 or 更新
   const seen = new Set<string>();
   for (const { key, x, isMain } of incoming) {
+    // ── Salesforce 由来は読み取り専用 ───────────────────────────────────
+    //   正本は Salesforce。画面から送り返されても**書き戻さない**。
+    //   ここで弾かないと `edits:<cid>:sf:...` という複製ができる。
+    //   金額・フェーズ・完了予定日を直すときは Salesforce 側で。
+    if (key.startsWith('sf:')) continue;
     const ext = `edits:${cid}:${key}`;
     seen.add(ext);
     const r = await upsertByExternalId(OPP.plural, OPP.singular, ext, dealFields(x, cid, isMain, owner), who);

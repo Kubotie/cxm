@@ -156,9 +156,20 @@ export async function buildDbView(): Promise<DbViewResult> {
     group(rows, r => str(r.notionCompanyId));
 
   // ── edits ─────────────────────────────────────────────────────────────────
-  /** `edits:<cid>:<key>` の <key> を取り出す。原本はこれを deals[].key として往復させる */
+  /**
+   * 原本が deals[].key として往復させる値。
+   *
+   * ・画面で作った商談 … `edits:<cid>:<key>` の <key>
+   * ・Salesforce 由来  … `sf:<OpportunityId>` を**そのまま**返す
+   *
+   * ⚠ Twenty のレコード id を返してはいけない。保存時に別の externalId になり、
+   *    元のレコードが消えて作り直される（2026-10-01 に直した）。
+   * ⚠ Salesforce 由来を `d0` のような連番にしてもいけない。保存時に
+   *    `edits:<cid>:d0` として**複製**されてしまう。
+   */
   const dealKey = (r: Record<string, unknown>, cid: string): string => {
     const ext = str(r.externalId);
+    if (ext.startsWith('sf:')) return ext;
     const prefix = `edits:${cid}:`;
     return ext.startsWith(prefix) ? ext.slice(prefix.length) : '';
   };
