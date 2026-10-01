@@ -7,7 +7,7 @@
 //
 // 返すのは件数だけ。顧客名・商談名は出さない。
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getPtaiIdentity } from '@/lib/ptai/approver';
 import { actorStampFor } from '@/lib/ptai/staff';
 import { syncSalesforceOpportunities } from '@/lib/ptai/salesforce/sync';
@@ -16,7 +16,10 @@ import { getPtaiDataSource } from '@/lib/twenty/data-source';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-export async function POST() {
+/** 画面を開いたときの自動同期で使う間隔。これより新しければ何もしない */
+const AUTO_MAX_AGE_MS = 60 * 60_000;
+
+export async function POST(req: NextRequest) {
   const me = await getPtaiIdentity();
   if (!me) return NextResponse.json({ ok: false, code: 'session_expired' }, { status: 401 });
 
@@ -29,8 +32,15 @@ export async function POST() {
   }
 
   try {
+    // `?ifStale=1` は画面を開いたときの自動同期。
+    // Vercel の Hobby プランは Cron が 1 日 1 回までなので、
+    // 1 時間おきの更新は**画面を開いたときに古ければ走らせる**で担保する。
+    const ifStale = req.nextUrl.searchParams.get('ifStale') === '1';
     const actor = await actorStampFor(me.id, me.name);
-    const r = await syncSalesforceOpportunities(actor);
+    const r = await syncSalesforceOpportunities(actor, false, ifStale ? AUTO_MAX_AGE_MS : undefined);
+    if (r.skipped) {
+      return NextResponse.json(r, { headers: { 'Cache-Control': 'no-store' } });
+    }
     console.info('[ptai/sf-sync]', JSON.stringify({
       fetched: r.fetched, matched: r.matched,
       created: r.created, updated: r.updated, deleted: r.deleted,

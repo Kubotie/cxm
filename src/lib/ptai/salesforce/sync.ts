@@ -36,6 +36,8 @@ export interface SyncResult {
   deleted: number;
   /** 取引先が無い／Notion に無い会社ぶん */
   skippedNoCompany: number;
+  /** 最近やったばかりで何もしなかった */
+  skipped?: boolean;
   message: string | null;
 }
 
@@ -45,16 +47,44 @@ const EMPTY: SyncResult = {
 };
 
 /**
+ * 最後に同期した時刻。`sf:` のレコードの updatedAt の最大値で測る。
+ * 同期は毎回 update を打つので、これがそのまま「最後に走った時刻」になる。
+ * 専用の保存先を作らずに済ませるための割り切り。
+ */
+export async function lastSyncedAt(): Promise<Date | null> {
+  try {
+    const rows = await listRecords(OPP.plural, OPP.singular, { pageSize: 200, maxRecords: 2000 });
+    let max = 0;
+    for (const r of rows) {
+      if (!String(r.externalId ?? '').startsWith(SF_EXTERNAL_PREFIX)) continue;
+      const t = new Date(String(r.updatedAt ?? '')).getTime();
+      if (Number.isFinite(t) && t > max) max = t;
+    }
+    return max ? new Date(max) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Salesforce → Twenty の一方向の写し取り。
  *
- * @param actor  書き込みの記録に使う操作者
- * @param dryRun true なら数えるだけで書かない
+ * @param actor    書き込みの記録に使う操作者
+ * @param dryRun   true なら数えるだけで書かない
+ * @param maxAgeMs 指定すると、これより新しい同期が済んでいれば**何もしない**
  */
 export async function syncSalesforceOpportunities(
-  actor: ActorStamp, dryRun = false,
+  actor: ActorStamp, dryRun = false, maxAgeMs?: number,
 ): Promise<SyncResult> {
   if (!isSalesforceConfigured()) {
     return { ...EMPTY, message: 'Salesforce が未設定です' };
+  }
+
+  if (maxAgeMs) {
+    const last = await lastSyncedAt();
+    if (last && Date.now() - last.getTime() < maxAgeMs) {
+      return { ...EMPTY, ok: true, skipped: true, message: null };
+    }
   }
 
   const [opps, customers] = await Promise.all([
