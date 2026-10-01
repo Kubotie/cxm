@@ -36,6 +36,13 @@ export function targetsDataSourceId(): string | null {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const CUSTOMER_PROP = {
+  /**
+   * Salesforce の Account ID。2026-10-01 に追加した列。
+   * SF の Account に Notion ページ ID を持つ項目が無いので、**こちら側に鍵を持つ**。
+   * 社名が完全一致した 113 社は scripts/notion-sf-account-id.mjs が埋めた。
+   * 残り（同名 11 社・不一致 3 社）は人が入れる。
+   */
+  sfAccountId:  'Salesforce Account ID',
   name:            '企業名',                            // title
   tier:            'Tier',                              // select
   industry:        '業種',                              // select

@@ -59,6 +59,8 @@ export interface AccountInfo {
   lastEditedTime: string;
   /** JP_Docs の照会に使う */
   companyRelationIds: string[];
+  /** Salesforce の Account ID。新規商談・見積もりの画面を開くのに使う */
+  sfAccountId:        string | null;
   /** キー日程（決算月・予算策定時期・契約更新月）。§9-4 で Notion が正本 */
   keyDates:       KeyDates;
 }
@@ -149,6 +151,7 @@ export function toAccountInfo(c: NotionCustomer): AccountInfo {
     keyDates:       c.keyDates,
     lastEditedTime: c.lastEditedTime,
     companyRelationIds: c.companyRelation,
+    sfAccountId:        c.sfAccountId,
   };
 }
 

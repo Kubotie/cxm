@@ -56,6 +56,8 @@ export function toRawCompany(c: Record<string, unknown>): RawCompany {
   return {
     cid:   str(c.id),
     n:     str(c.name).replace(/　/g, ' '),
+    // Salesforce の鍵は Notion 顧客管理DB が持つ。この経路（Twenty Company 直読み）には無い
+    sfid:  null,
     t:     strOrNull(c.tier),
     ps:    strOrNull(c.pgaStatus),
     m:     currencyToYen(c.mrr),

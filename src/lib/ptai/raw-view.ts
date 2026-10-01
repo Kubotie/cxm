@@ -45,6 +45,7 @@ function buildRawCompany(s: CompanySummary, deals: RawOpportunity[] | null): Raw
   return {
     cid:  a.notionPageId,
     n:    a.name,
+    sfid: a.sfAccountId,
     t:    tierCode(a.tier),
     ps:   a.solutionStatus,
     m:    a.mrr,

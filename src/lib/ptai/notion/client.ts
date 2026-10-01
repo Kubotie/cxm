@@ -192,6 +192,8 @@ export interface NotionCustomer {
   nextActionDate: string | null;
   solutionStatus: string | null;
   companyRelation: string[];
+  /** Salesforce の Account ID。未設定なら null */
+  sfAccountId:    string | null;
   /** キー日程（§9-4 で Notion に置くと決定）。月で持つ。日付ではない */
   keyDates:       KeyDates;
 }
@@ -216,6 +218,7 @@ function toCustomer(page: Record<string, unknown>): NotionCustomer {
     nextActionDate:  (r(CUSTOMER_PROP.nextActionDate) as string | null) ?? null,
     solutionStatus:  (r(CUSTOMER_PROP.solutionStatus) as string | null) ?? null,
     companyRelation: (r(CUSTOMER_PROP.companyDatabase) as string[] | null) ?? [],
+    sfAccountId:     ((r(CUSTOMER_PROP.sfAccountId) as string | null) ?? '').trim() || null,
     keyDates: {
       fiscalMonth:  parseMonth(r(CUSTOMER_PROP.fiscalMonth) as string | null),
       budgetMonths: parseMonthRange(r(CUSTOMER_PROP.budgetMonths) as string | null),

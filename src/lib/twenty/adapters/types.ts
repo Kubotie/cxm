@@ -111,6 +111,8 @@ export interface RawCompany {
   dom: string;
   cs: string | null;
   opp: RawOpportunity[] | null;
+  /** Salesforce の Account ID（Notion 顧客管理DB が持つ）。未設定なら null */
+  sfid: string | null;
   notes: RawNote[];
   /** repo の資料。いまは入れていない（移行元でも 3 社 11 件だけだった） */
   docs: RawDoc[];

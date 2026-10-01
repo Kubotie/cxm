@@ -154,7 +154,7 @@ function buildDeal0(c,i){
   return {id:i, cid:c.cid, oid:opp?opp.id:null, n:c.n, t:pick('t', ec.tier, c.t), ps:c.ps, m, ind:pick('ind', ec.ind, c.ind), icp:c.icp, aw:c.aw,
     owners: c.o, ownerSplit: false, rawOwn:c.own, na:c.na, hist,
     nd: first ? iso(first.date) : null, naHead: first ? first.text : (c.na||''),
-    le:c.up, url:c.url, dom:c.dom, cs:c.cs, notes:c.notes||[], docs:c.docs||[], od:c.od||[],
+    le:c.up, url:c.url, dom:c.dom, cs:c.cs, notes:c.notes||[], docs:c.docs||[], od:c.od||[], sfid:c.sfid||null,
     st, opp, oppUp: opp ? opp.up : null, ph:p.ph, phEst:p.est, phWhy:p.why,
     apply: pick('apply', eo.applyDate, null),
     bill: pick('bill', eo.billingDate, null),
@@ -163,6 +163,22 @@ function buildDeal0(c,i){
     term: pick('term', eo.term, null), bs: pick('bs', eo.barrierStatus, null), br: pick('br', eo.barrier, null),
     src, edit: editActive(e) ? e : null};
 }
+/* 【移植による変更 4/4】Salesforce への導線（2026-10-01）
+   見積もり・金額は Salesforce でしか入力できないので、そこへ飛ぶ。
+   鍵は Notion 顧客管理DB の「Salesforce Account ID」列（d.sfid）。
+   未設定の会社ではリンクを出さず、その旨だけ出す。
+   商談名の規則: 先頭に「PtAI」を入れる（Salesforce 側で見分ける印）。 */
+const SF_BASE = 'https://ptmind.my.salesforce.com';
+const sfAccountUrl = id => `${SF_BASE}/lightning/r/Account/${id}/view`;
+const sfNewOppUrl = (id, name) =>
+  `${SF_BASE}/lightning/o/Opportunity/new?defaultFieldValues=`
+  + encodeURIComponent(`AccountId=${id},Name=PtAI ${coShort(name)}`);
+function sfLinks(d){
+  if(!d.sfid) return '<span class="sub" style="font-size:11px;margin-left:4px" title="Notion 顧客管理DB の「Salesforce Account ID」列が未設定です">Salesforce 未連携</span>';
+  return `<a href="${esc(sfAccountUrl(d.sfid))}" target="_blank" rel="noopener" style="font-size:12px">Salesforce ↗</a>`
+       + `<a href="${esc(sfNewOppUrl(d.sfid, d.n))}" target="_blank" rel="noopener" style="font-size:12px" title="Salesforce で新しい商談を作ります。金額と見積もりもそちらで入れてください">＋ 新規商談（SF）↗</a>`;
+}
+
 /* ---- 商談（子）: Opportunity 1件目＝main、ダッシュボードで追加した商談＝edits.deals ---- */
 const DEAL_KEYS=['name','phase','applyDate','billingDate','closeMonth','addMrr','term','barrierStatus','barrier','need','na','naDate','lostReason','lostDetail','ms'];
 const coShort = n => n.replace(/株式会社|一般社団法人|（旧名[^）]*）/g,'').replace(/^[\s　]+|[\s　]+$/g,'');
@@ -835,7 +851,7 @@ function renderDrawer(){
       <div><div class="eyebrow">${TIER_JP(d.t)}・${IND_JP[d.ind]||'業種未設定'}　担当 ${d.owners.map(o=>`<span class="ownerchip"><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${CONFIG.memberColor[o]}"></i> ${o}</span>`).join(' ')}</div>
       <h2 id="dTitle">${esc(d.n)}</h2></div>
       <div class="dhbtns"><button type="button" class="fullbtn" id="dFull" aria-pressed="${drawerFull}" title="${drawerFull?'サイドパネルに戻す':'全画面で表示'}">${drawerFull?'⤡ 戻す':'⤢ 全画面'}</button><button type="button" class="close" aria-label="閉じる">×</button></div></div>
-    <div class="ctrl"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}<span class="chip">案件 ${RAW_JP[d.st]}</span>${d.url?`<a href="${esc(d.url)}" target="_blank" rel="noopener" style="font-size:12px">Notion 顧客ページ ↗</a>`:''}<span class="sub" style="margin-left:auto">企業の最終更新 ${d.le}</span></div>
+    <div class="ctrl"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}<span class="chip">案件 ${RAW_JP[d.st]}</span>${d.url?`<a href="${esc(d.url)}" target="_blank" rel="noopener" style="font-size:12px">Notion 顧客ページ ↗</a>`:''}${sfLinks(d)}<span class="sub" style="margin-left:auto">企業の最終更新 ${d.le}</span></div>
     <div class="dstats num">${(()=>{ const L=mrrLift(d), tot=Math.max(1,L.base+L.live+L.next);
       const bar=(L.live||L.next)?`<span class="ds-bar" aria-hidden="true"><span class="b0" style="width:${L.base/tot*100}%"></span><span class="b1" style="width:${L.live/tot*100}%"></span><span class="b2" style="width:${L.next/tot*100}%"></span></span>`:'';
       if(L.live) return `<div>現在MRR<b>${man(L.now)}</b><span class="ds-sub">${man(L.base)} → ${man(L.now)}（<span class="up">＋${man(L.live)}</span> Ptengine AI）</span>${bar}</div>`;
