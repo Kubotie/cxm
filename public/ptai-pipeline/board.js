@@ -1,7 +1,10 @@
 /* ─── Ptengine AI Pipeline Board — 原本 JS（アーティファクト Version 96）を無編集で移植 ───
    変更は 2 箇所だけ（いずれも末尾に【移植による変更】と注記）:
      1. RAW を window.__PGA_RAW から受け取る（原本の const RAW = {...} の分離）
-     2. ncCreateTwenty の catch を、自前 API のエラーコードに読み替える */
+     2. ncCreateTwenty の catch を、自前 API のエラーコードに読み替える
+     3〜8. （既存の注記は各所の【移植による変更】を参照）
+     9. v2 の指標（⑥①②③ の列・積み上げカード）と、商談追加ボタンの撤去
+        2026-10-01 Kubotie 指示。計算式は FORECAST / ladder の注記を見ること */
 const RAW = window.__PGA_RAW;
 /* ===================== 設定 ===================== */
 const TODAY = (d=>new Date(d.getFullYear(),d.getMonth(),d.getDate()))(new Date());
@@ -337,6 +340,46 @@ function potOf(d){
     prio:(d.m+AI_MIN)*((fit||9)/15)};
 }
 const AI_MIN = 100000;
+
+/* ═══ 【移植による変更 9/9】v2 の指標（2026-10-01 Kubotie 指示）═══════════
+   ⑥ 現在MRR        … Notion の「現在MRR」。Company Database の mrr を毎朝 6 時に同期した値。
+                       かっこ内は「期初MRR」との差。期初は初回同期を 1 回だけ焼き付けたもの
+   ① （目標）追加MRR … 担当者が会社ごとに決める目標（aim）。Notion の「想定追加MRR」
+   ② （商談）追加MRR … 商談の金額の合計（失注・Admin Close は除く）
+   ③ （見込）追加MRR … 商談ごとに 金額 × 下の係数 を足したもの
+
+   ⚠ ③ の係数は **PROB（Salesforce の DefaultProbability）とは別物**。
+     Kubotie 指示: Goal Shared 30 / Qualified Champion 50 / Evaluating 70 /
+                   Probable 90 / Won 100。
+     Verbal は指示が無かったので Probable(90) と Won(100) の間を取って 95 とした。
+     変えるときはここだけ直せばよい。                                        */
+const FORECAST = {INACTIVE:0, ACTIVE:0, GOAL_SHARED:.30, QUALIFIED_CHAMPION:.50,
+  EVALUATING:.70, PROBABLE:.90, VERBAL:.95, WON:1, CLOSED_WON:1, ADMIN_CLOSE:0, CLOSED_LOST:0};
+
+/* 期初MRR。RAW の bm（Notion の「期初MRR」）。無い会社は増減 0 として扱う */
+const BASE_MRR = {};
+(RAW.companies||[]).forEach(c=>{ if(typeof c.bm==='number') BASE_MRR[c.cid]=c.bm; });
+const baseMrrOf = d => (BASE_MRR[d.cid]!==undefined ? BASE_MRR[d.cid] : d.m);
+
+/* 数える商談：失注と Admin Close は外す */
+const openDealsOf = d => (d.deals||[]).filter(x=>x.ph!=='CLOSED_LOST' && x.ph!=='ADMIN_CLOSE');
+/* ② 商談の金額の合計。商談がまだ無い会社は会社に入っている額で代用する */
+const m2 = d => (d.deals&&d.deals.length)
+  ? openDealsOf(d).reduce((t,x)=>t+(x.add||0),0) : (d.add||0);
+/* ③ 商談ごとに 金額 × 係数 */
+const m3 = d => (d.deals&&d.deals.length)
+  ? openDealsOf(d).reduce((t,x)=>t+(x.add||0)*(FORECAST[x.ph]||0),0)
+  : (d.add||0)*(FORECAST[d.ph]||0);
+/* 受注した商談の金額（Won ＋ 受注(Closed Won)）。すでに現在MRR に入っているぶん */
+const WON_SET = ['WON','CLOSED_WON'];
+const wonAmt = d => (d.deals&&d.deals.length)
+  ? (d.deals||[]).filter(x=>WON_SET.includes(x.ph)).reduce((t,x)=>t+(x.add||0),0)
+  : (WON_SET.includes(d.ph) ? (d.add||0) : 0);
+/* 指定フェーズ以上の商談の金額（Admin Close・失注は除く） */
+const atLeast = (d, from) => { const i=PHASES.indexOf(from);
+  return openDealsOf(d).reduce((t,x)=>t+(PHASES.indexOf(x.ph)>=i ? (x.add||0) : 0), 0)
+    || ((d.deals&&d.deals.length) ? 0 : (PHASES.indexOf(d.ph)>=i ? (d.add||0) : 0)); };
+
 function rulesHtml(){
   const dueTxt=(()=>{ const [y,m]=CONFIG.targetDue.split('-'); return `${y}年${+m}月末`; })();
   const st=CONFIG.stages; const pct=v=>Math.round(v/CONFIG.targetMrr*100)+'%';
@@ -501,12 +544,45 @@ function renderKpis(){
   const noNa=cnt(ds,d=>inDealPh(d)&&!d.naHead);
   const mismatch=cnt(ds,d=>mismatchOf(d));
   const stage=CONFIG.stages.filter(s=>w>=s.at).length; const next=CONFIG.stages[Math.min(stage,3)];
+
+  /* ═══ 【移植による変更 9/9】積み上げカード（2026-10-01 Kubotie 指示）═════
+     計画      ＝ ①（目標）追加MRR の合算
+     確定      ＝ 受注した商談の金額（Won ＋ 受注(Closed Won)）
+     コミット  ＝ Probable 以上の商談の金額
+     チャレンジ＝ Qualified Champion 以上の商談の金額
+     パイプライン ＝ ②（商談）追加MRR の合算 ＋ 現在MRR − 受注した商談の金額
+
+     ⚠ 10万円の足切りは**かけない**。v1 の「確定MRR／期待値MRR」にあった
+       足切りと合算MRR の考え方は、この行では使っていない。
+     ⚠ 確定 ⊆ コミット ⊆ チャレンジ ⊆ パイプライン になるよう、
+       4 枚とも**商談の金額**を土台に揃えてある（確定だけ別物にしない）。    */
+  const wt = d => view==='team' ? 1 : share(d, view);
+  const sumW = f => ds.reduce((t,d)=>t+f(d)*wt(d),0);
+  const plan   = sumW(d=>aimOf(d)||0),  planN = cnt(ds,d=>aimOf(d)>0);
+  const wonV   = sumW(wonAmt),          wonN  = cnt(ds,d=>wonAmt(d)>0);
+  const cmt    = sumW(d=>atLeast(d,'PROBABLE')),           cmtN = cnt(ds,d=>atLeast(d,'PROBABLE')>0);
+  const chal   = sumW(d=>atLeast(d,'QUALIFIED_CHAMPION')), chalN= cnt(ds,d=>atLeast(d,'QUALIFIED_CHAMPION')>0);
+  const pipe   = sumW(m2) + sumW(d=>d.m) - wonV;
+  const pipeN  = cnt(ds,d=>m2(d)>0);
+  const exv    = sumW(m3);
+
+  const pc  = v => tgt?Math.min(999,Math.round(v/tgt*100)):0;
+  const bar = v => tgt?`<div class="lbar" aria-hidden="true"><i style="width:${Math.min(100,Math.max(0,v/tgt*100))}%"></i></div>`:'';
+  const rest= v => tgt?(v>=tgt?'<b class="okk">目標到達</b>':`あと ${man(tgt-v)}`):'';
+  const lcard=(k,name,sub2,tip,v,n)=>`<div class="card kpi lad l-${k}" data-tip="${esc(tip)}" tabindex="0">
+      <div class="label">${name}<small>${sub2}</small></div>
+      <div class="val num">${man(v)}<small>円</small></div>${bar(v)}
+      <div class="foot"><b>${tgt?pc(v)+'%':''}</b> ${rest(v)}<br>${n}社</div></div>`;
+
   document.getElementById('kpis').innerHTML=`
-   <div class="card kpi hero"><div class="label">目標 合算MRR <span class="qi rq" data-tip="${esc(rulesHtml())}" tabindex="0" aria-label="計上ルール">?</span></div><div class="val num">${tgt?man(tgt):'—'}<small>円</small></div><div class="foot">${view==='team'?(allocGap()>0?'<b style="color:var(--plane)">⚠ 配分不足 '+man(allocGap())+'</b>':''):tgt?'全体の '+Math.round(tgt/CONFIG.targetMrr*100)+'%':'目標配分なし'}</div><button type="button" class="editbtn" data-edit>目標を編集</button></div>
-   ${kpiCard('var(--gold)','確定MRR', `<b>確定MRR</b>フェーズが「Won」「受注 (Closed Won)」で、確定した追加MRR が会社で10万円以上の会社の合算MRR。${view==='team'?`<br>次のステージ（支給率 ${next.rate}）まで ${man(Math.max(0,next.at-w))}円`:''}`, man(w), '円', `${cnt(ds,d=>d.ph==='CLOSED_WON')}社${view==='team'&&next.at>w?`・次ステージまで ${man(next.at-w)}`:''}`)}
-   ${kpiCard('var(--accent)','期待値MRR', `<b>期待値MRR</b>（見込）追加MRR が10万円以上の会社の合算MRR × フェーズの確率。<br>追加MRR を入力済み：${cnt(ds,d=>d.add>0)}社`, man(e), '円', tgt?`目標の ${Math.round(e/tgt*100)}%`:'')}
-   ${kpiCard('var(--p1)','商談中の合算MRR', `<b>商談中の合算MRR</b>Active 〜 Verbal の会社のうち、（見込）追加MRR が10万円以上の会社の合算MRR（確率を掛けない額）。すべて契約になった場合の最大額です。<br>商談中 ${inDeal.length}社`, man(p), '円', `${inQ.length}社${tgt?`・目標の ${Math.round(p/tgt*100)}%`:''}`)}
-   ${kpiCard('var(--crit)','ネクストアクション期限超過', `<b>ネクストアクション期限超過</b>商談（Opportunity）のネクストアクションで、期日が過ぎている件数。サクセスの Todo は含みません。<br>商談中でネクストアクションが未入力：${noNa}社`, overdue, '件', noNa?`ネクストアクション未入力 ${noNa}社`:'', overdue?'var(--crit)':'')}`;
+   <div class="card kpi hero"><div class="label">目標 合算MRR <span class="qi rq" data-tip="${esc(rulesHtml())}" tabindex="0" aria-label="計上ルール">?</span></div><div class="val num">${tgt?man(tgt):'—'}<small>円</small></div><div class="foot">${view==='team'?(allocGap()>0?'<b style="color:var(--plane)">⚠ 配分不足 '+man(allocGap())+'</b>':'期限 '+CONFIG.targetDue):tgt?'全体の '+Math.round(tgt/CONFIG.targetMrr*100)+'%':'目標配分なし'}</div><button type="button" class="editbtn" data-edit>目標を編集</button></div>
+   ${lcard('plan','計画','（目標）追加MRR の合算','<b>計画（目標を全部取ったら）</b>担当者が会社ごとに入れた ①（目標）追加MRR の合計です。現在MRR は足しません。<br>いまの計画で目標に届くかを見る値です。', plan, planN)}
+   ${kpiCard('var(--p5)','期待値（参考）', `<b>期待値（参考）</b>③（見込）追加MRR の合計。商談ごとに 金額 × フェーズの係数（Goal Shared 30% / Qualified Champion 50% / Evaluating 70% / Probable 90% / Verbal 95% / Won 100%）を足したものです。<br>商談の金額を入力済み：${cnt(ds,d=>m2(d)>0)}社`, man(exv), '円', tgt?`目標の ${pc(exv)}%`:'')}
+   ${kpiCard('var(--crit)','ネクストアクション期限超過', `<b>ネクストアクション期限超過</b>商談のネクストアクションで、期日が過ぎている件数。サクセスの Todo は含みません。<br>商談中でネクストアクションが未入力：${noNa}社`, overdue, '件', noNa?`未入力 ${noNa}社`:'', overdue?'var(--crit)':'')}
+   ${lcard('won','確定','受注した商談', `<b>確定</b>フェーズが Won・受注 (Closed Won) の商談の金額の合計。すでに現在MRR に入っているぶんです。${view==='team'?`<br>次のステージ（支給率 ${next.rate}）まで ${man(Math.max(0,next.at-w))}円`:''}`, wonV, wonN)}
+   ${lcard('cmt','コミット','Probable 以上','<b>コミット</b>フェーズが Probable 以上（Probable・Verbal・Won・受注）の商談の金額の合計。確率は掛けません。', cmt, cmtN)}
+   ${lcard('best','チャレンジ','Qualified Champion 以上','<b>チャレンジ</b>フェーズが Qualified Champion 以上の商談の金額の合計。コミットより手前のものまで含めた、取りにいける上限です。', chal, chalN)}
+   ${lcard('pipe','パイプライン','全商談＋現在MRR','<b>パイプライン</b>②（商談）追加MRR の合算 ＋ 現在MRR − 受注した商談の金額。<br>受注ぶんを引くのは、すでに現在MRR に入っていて二重に数えてしまうためです。', pipe, pipeN)}`;
 }
 
 function kpiCard(color, label, tip, val, unit, foot, valColor){
@@ -718,10 +794,10 @@ function renderDeals(){
   const fo=document.getElementById('fOwner').value, fp=document.getElementById('fPhase').value, fs=document.getElementById('fStatus').value, ft=document.getElementById('fTier').value, q=document.getElementById('fQ').value.trim();
   const base = view==='team'?DEALS:DEALS.filter(d=>d.owners.includes(view));
   let ds=base.filter(d=>(!FS.owner.size||d.owners.some(o=>FS.owner.has(o)))&&(!FS.phase.size||FS.phase.has(d.ph))&&(!fs||d.ps===fs)&&(!FS.tier.size||FS.tier.has(d.t))&&(!q||d.n.includes(q))&&(!missingOnly||(!baseMo(d)||!d.add)&&d.ph!=='CLOSED_LOST'));
-  const key={co:d=>d.n,o:d=>d.owners.join(),t:d=>d.t||'Z',ps:d=>PS.indexOf(d.ps),st:d=>PHASES.indexOf(d.ph),m:d=>d.m,add:d=>d.add,aim:d=>{const g=goalAdd(d);return g?(d.m+g)*goalCtx().w(d)+1e12:aimOf(d);},tot:total,cl:d=>d.close||'9999',ap:d=>d.apply||'9999',br:d=>(d.bs?BS_OPTS.indexOf(d.bs):9)+(d.br||'~'),pr:d=>PROB[d.ph],exp:expected,ind:d=>d.ind||'',pot:d=>(potOf(d)||{prio:-1}).prio,nd:d=>d.nd||'9999',le:d=>d.le}[sortKey];
+  const key={co:d=>d.n,o:d=>d.owners.join(),t:d=>d.t||'Z',ps:d=>PS.indexOf(d.ps),st:d=>PHASES.indexOf(d.ph),m:d=>d.m,add:d=>d.add,aim:d=>{const g=goalAdd(d);return g?(d.m+g)*goalCtx().w(d)+1e12:aimOf(d);},tot:total,cl:d=>d.close||'9999',ap:d=>d.apply||'9999',br:d=>(d.bs?BS_OPTS.indexOf(d.bs):9)+(d.br||'~'),pr:d=>PROB[d.ph],exp:expected,add3:d=>m3(d),ind:d=>d.ind||'',pot:d=>(potOf(d)||{prio:-1}).prio,nd:d=>d.nd||'9999',le:d=>d.le}[sortKey];
   ds.sort((x,y)=>{const a=key(x),b=key(y);return (a>b?1:a<b?-1:0)*sortDir;});
   const th=(k,l,r,t,tp)=>`<th class="${r?'r':''}" data-k="${k}" ${t?`title="${t}"`:''} ${tp?`data-tip="${esc(tp)}"`:''} ${sortKey===k?`aria-sort="${sortDir>0?'ascending':'descending'}"`:''}>${l}${sortKey===k?(sortDir>0?' ▲':' ▼'):''}</th>`;
-  const head=`<thead><tr>${th('co','企業／商談')}${th('o','担当')}${th('t','Tier')}${th('st','フェーズ')}${th('m','現在MRR',1)}${th('aim','（目標）追加MRR',1,'この会社で追加したいMRR。クリックで入力')}${th('add','（見込）追加MRR',1,'商談で見込んでいる追加MRR（商談の入力から）')}${th('tot','合算MRR',1)}${th('ap','申込完了日')}${th('cl','課金開始日')}${th('exp','期待値MRR',1)}${th('br','商談障壁')}${th('ind','業種')}${th('pot','ポテンシャル <span class="qi">?</span>',0,'',POT_HEAD_TIP)}<th>ニーズ</th><th>ネクストアクション</th>${th('nd','アクション期日')}${th('le','更新日')}</tr></thead>`;
+  const head=`<thead><tr>${th('co','企業／商談')}${th('o','担当')}${th('t','Tier')}${th('st','フェーズ')}${th('m','⑥ 現在MRR',1,'','毎朝 6 時に Company Database（Salesforce 連動）から同期した額。かっこ内は期初MRR からの増減')}${th('aim','① （目標）追加MRR',1,'この会社で追加したいMRR。クリックで入力')}${th('add','② （商談）追加MRR',1,'商談の金額の合計（失注・Admin Close は除く）')}${th('add3','③ （見込）追加MRR',1,'② を商談ごとに フェーズの係数 で割り引いた額')}${th('ap','申込完了日')}${th('cl','課金開始日')}${th('br','商談障壁')}${th('ind','業種')}${th('pot','ポテンシャル <span class="qi">?</span>',0,'',POT_HEAD_TIP)}<th>ニーズ</th><th>ネクストアクション</th>${th('nd','アクション期日')}${th('le','更新日')}</tr></thead>`;
   const sig=[view,sortKey,sortDir,...['fStatus','fQ'].map(id=>document.getElementById(id).value),...Object.values(FS).map(v=>[...v].sort().join(',')),missingOnly].join('|');
   if(sig!==pageSig){ page=1; pageSig=sig; }
   const pages=Math.max(1,Math.ceil(ds.length/pageSize)); page=Math.min(Math.max(1,page),pages);
@@ -733,19 +809,18 @@ function renderDeals(){
   const rows=ds.map(d=>{const late=d.nd&&d.nd<dstr(TODAY), soon=d.nd&&!late&&days(ymd(d.nd),TODAY)<=7;
     const nD=d.deals.length, open=nD>0&&EXPANDED.has(d.cid);
     const par=`<tr data-id="${d.id}" class="par${open?' open':''}">
-      <td class="co" title="${esc(d.n)}">${nD?`<button type="button" class="caret" data-caret="${d.cid}" aria-expanded="${open}" aria-label="${open?'商談を閉じる':'商談を開く'}">${open?'▼':'▶'}</button>`:''}${esc(d.n)}<span class="cmeta">${nD?`<span class="chip dcnt">商談 ${nD}件</span><button type="button" class="adddeal ico" data-add="${d.id}" aria-label="商談を追加" title="商談を追加">＋</button>`:`<button type="button" class="adddeal" data-add="${d.id}" title="この会社にはまだ商談がありません">＋商談を追加</button>`}${RAW.companies[d.id]&&RAW.companies[d.id].newco?(()=>{ const sy=RAW.companies[d.id].sync||{}; const ok=sy.notion==='done'&&sy.twenty==='done'; return `<span class="chip ${ok?'ncok':'unsync'}" title="Notion：${sy.notion==='done'?'作成済み':'未作成'}／Twenty：${sy.twenty==='done'?'作成済み':'同期待ち'}">${ok?'新規':'新規・未同期'}</span>`; })():''}</span></td>
+      <td class="co" title="${esc(d.n)}">${nD?`<button type="button" class="caret" data-caret="${d.cid}" aria-expanded="${open}" aria-label="${open?'商談を閉じる':'商談を開く'}">${open?'▼':'▶'}</button>`:''}${esc(d.n)}<span class="cmeta">${nD?`<span class="chip dcnt">商談 ${nD}件</span>`:''}${RAW.companies[d.id]&&RAW.companies[d.id].newco?(()=>{ const sy=RAW.companies[d.id].sync||{}; const ok=sy.notion==='done'&&sy.twenty==='done'; return `<span class="chip ${ok?'ncok':'unsync'}" title="Notion：${sy.notion==='done'?'作成済み':'未作成'}／Twenty：${sy.twenty==='done'?'作成済み':'同期待ち'}">${ok?'新規':'新規・未同期'}</span>`; })():''}</span></td>
       <td>${d.owners.map(o=>`<span class="ownerchip"><i style="background:${CONFIG.memberColor[o]}"></i>${o}</span>`).join('<br>')}</td>
       <td class="num">${TIER_JP(d.t)}</td>
       <td title="${nD>1?'いちばん進んでいる商談のフェーズ':''}"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}</td>
       <td class="r num">${(()=>{ const L=mrrLift(d);
-        if(L.live) return `${man(L.now)}<span class="mrrup" title="AI 契約前 ${man(L.base)} ＋ Ptengine AI ${man(L.live)}">＋${man(L.live)}</span>`;
-        if(L.next) return `${man(d.m)}<span class="mrrnext" title="受注済み。課金開始で ${man(L.base+L.next)} になります">${L.nextDate?mdj(L.nextDate)+'〜':''} ${man(L.base+L.next)}</span>`;
-        return man(d.m); })()}</td>
+        if(L.next) return `${man(d.m)}<span class="mrrnext" title="受注済み。課金開始で ${man(d.m+L.next)} になります">${L.nextDate?mdj(L.nextDate)+'〜':''} ${man(d.m+L.next)}</span>`;
+        return man(d.m); })()}${(()=>{ const dl=d.m-baseMrrOf(d);
+        return `<div class="mdelta ${dl>0?'up':dl<0?'dn':''}" title="期初MRR ${man(baseMrrOf(d))}（初回同期を焼き付けたもの）">（${dl>0?'＋':dl<0?'−':'±'}${man(Math.abs(dl))}）</div>`; })()}</td>
       <td class="r num aimc">${aimCell(d)}</td>
-      <td class="r num">${d.add?man(d.add):'<span class="dim">—</span>'}</td>
-      <td class="r num"><b>${man(total(d))}</b></td>
+      <td class="r num">${m2(d)?man(m2(d)):'<span class="dim">—</span>'}</td>
+      <td class="r num">${m3(d)?man(m3(d)):'<span class="dim">—</span>'}</td>
       <td></td><td></td>
-      <td class="r num">${man(expected(d))}</td>
       <td></td>
       <td style="white-space:nowrap">${IND_JP[d.ind]||'<span class="dim">—</span>'}</td>
       <td>${potHtml(d)}</td>
@@ -753,7 +828,7 @@ function renderDeals(){
       <td>${d.naHead?`<div class="txt" title="${esc(d.naHead)}${d.naDeal&&nD>1?'（'+esc(d.naDeal.name)+'）':''}">${esc(d.naHead)}</div>${d.naDeal&&nD>1?`<div class="nadl">${esc(d.naDeal.name.replace(/^Ptengine AI\s*[-－]\s*/,'').replace(new RegExp('^'+coShort(d.n).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'_?'),'')||d.naDeal.name)}</div>`:''}`:'<span class="dim">—</span>'}</td>
       <td class="num ${late?'late':soon?'soon':''}">${d.nd?d.nd.slice(5).replace('-','/'):'<span class="dim">—</span>'}${late?`<div style="font-size:11px">${days(TODAY,ymd(d.nd))}日超過</div>`:''}</td>
       <td class="num">${d.le.slice(5).replace('-','/')}</td></tr>`;
-    const sep = d.id===gHit ? `<tr class="gsep"><td colspan="18"><span>ここまでで目標 ${man(goalCtx().tgt)} に到達</span></td></tr>` : '';
+    const sep = d.id===gHit ? `<tr class="gsep"><td colspan="17"><span>ここまでで目標 ${man(goalCtx().tgt)} に到達</span></td></tr>` : '';
     if(!open) return par+sep;
     const subs=d.deals.map(x=>{
       const lost=x.ph==='CLOSED_LOST', fin=['CLOSED_WON','CLOSED_LOST'].includes(x.ph);
@@ -765,10 +840,9 @@ function renderDeals(){
       <td>${phChip(d,x)}</td>
       <td></td><td></td>
       <td class="r num">${x.add?man(x.add)+(x.src&&x.src.add==='edit'&&x.primary?'<span class="chip estm">入力</span>':''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
-      <td></td>
+      <td class="r num">${x.add?man((x.add||0)*(FORECAST[x.ph]||0)):'<span class="dim">—</span>'}</td>
       <td class="num">${x.apply?dateCell(x.apply.slice(5).replace('-','/'), x.apply<dstr(TODAY)&&!['CLOSED_WON','CLOSED_LOST','VERBAL','WON'].includes(x.ph), x.apply.slice(0,4)!==String(TODAY.getFullYear())?`<span class="dim">'${x.apply.slice(2,4)}</span>`:''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
       <td class="num">${x.close?dateCell(x.close.replace('-','/'), x.close<ymOf(TODAY)&&!fin, ''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
-      <td class="r num">${man(dealExp(x))}</td>
       <td class="brc">${x.bs||x.br?`${x.bs?`<span class="chip bs-${BS_OPTS.indexOf(x.bs)}">${esc(x.bs)}</span>`:''}${x.br?`<div class="brt" title="${esc(x.br)}">${esc(x.br)}</div>`:''}`:(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
       <td></td>
       <td></td>
@@ -777,8 +851,8 @@ function renderDeals(){
       <td class="num ${naLate?'late':naSoon?'soon':''}">${na.date?na.date.slice(5).replace('-','/'):'<span class="dim">—</span>'}${naLate?`<div style="font-size:11px">${days(TODAY,ymd(na.date))}日超過</div>`:''}</td>
       <td class="num">${x.up?x.up.slice(5).replace('-','/'):'<span class="dim">—</span>'}</td></tr>`;}).join('');
     return par+subs+sep;}).join('');
-  const foot=`<tfoot><tr><td colspan="4">絞り込み結果 ${all.length}社の合計</td><td class="r num">${man(all.reduce((s,d)=>s+d.m,0))}</td><td class="r num">${man(all.reduce((s,d)=>s+aimOf(d),0))}</td><td class="r num">${man(all.reduce((s,d)=>s+d.add,0))}</td><td class="r num">${man(all.reduce((s,d)=>s+total(d),0))}</td><td></td><td></td><td class="r num">${man(all.reduce((s,d)=>s+expected(d),0))}</td><td colspan="7"></td></tr></tfoot>`;
-  const tbl=document.getElementById('deals'); tbl.innerHTML=head+`<tbody>${rows||'<tr><td colspan="18" class="dim" style="padding:18px 8px">条件に合う企業はありません</td></tr>'}</tbody>`+foot;
+  const foot=`<tfoot><tr><td colspan="4">絞り込み結果 ${all.length}社の合計</td><td class="r num">${man(all.reduce((s,d)=>s+d.m,0))}</td><td class="r num">${man(all.reduce((s,d)=>s+aimOf(d),0))}</td><td class="r num">${man(all.reduce((s,d)=>s+m2(d),0))}</td><td class="r num">${man(all.reduce((s,d)=>s+m3(d),0))}</td><td colspan="9"></td></tr></tfoot>`;
+  const tbl=document.getElementById('deals'); tbl.innerHTML=head+`<tbody>${rows||'<tr><td colspan="17" class="dim" style="padding:18px 8px">条件に合う企業はありません</td></tr>'}</tbody>`+foot;
   renderPager(all.length,pages);
   tbl.querySelectorAll('tbody tr[data-id]').forEach(tr=>tr.onclick=e=>e.target.closest('input')?null:tr.dataset.dk?openDeal(+tr.dataset.id,'edit',tr.dataset.dk):openDeal(+tr.dataset.id,'sum'));
   wireAim(tbl);
@@ -1424,8 +1498,8 @@ function sumDeals(d){
   return `<section class="sx-sec"><header class="sx-sh"><h3>商談 <span class="sx-cnt">${d.deals.length}</span></h3>
       ${d.deals.length?`<span class="sx-meta">合算MRR <b class="num">${man(total(d))}</b>・期待値 <b class="num">${man(expected(d))}</b>${d.add&&d.add<AI_MIN?'<span class="sx-warn">追加MRR 10万円未満のため目標に数えません</span>':''}</span>`:''}
       <button type="button" class="adddeal" data-sfsync title="Salesforce の PtAI 商談を取り込みます（金額・フェーズ・日付は Salesforce が正）">⟳ Salesforce から更新</button>
-      <button type="button" class="adddeal" data-dnew>＋商談を追加</button></header>
-    ${d.deals.length?`<div class="sx-deals">${cards}</div>`:'<p class="sx-empty">商談はまだありません。「＋商談を追加」から作成できます（同期時に Twenty の Opportunity を作成）</p>'}</section>`;
+</header>
+    ${d.deals.length?`<div class="sx-deals">${cards}</div>`:'<p class="sx-empty">商談はまだありません。商談は Salesforce で作成すると、1 時間おきの同期で出てきます</p>'}</section>`;
 }
 function sumKeyDates(d){
   const kd=kdOf(d);
@@ -1496,9 +1570,9 @@ function dealsSection(d){
       <td class="r num">${man(dealExp(x))}</td>
       <td>${na.t?esc(na.t.length>40?na.t.slice(0,40)+'…':na.t):'<span class="dim">—</span>'}</td>
       <td class="num ${late?'late':''}">${na.date?na.date.slice(5).replace('-','/'):'—'}</td></tr>`; }).join('');
-  return `<div class="sec"><h3>商談 <span class="sub">${d.deals.length}件。行をクリックで入力</span><button type="button" class="adddeal" data-dnew style="margin-left:auto">＋商談を追加</button></h3>
+  return `<div class="sec"><h3>商談 <span class="sub">${d.deals.length}件。行をクリックで入力</span></h3>
     ${d.deals.length?`<div class="dealwrap"><table class="dealtbl"><thead><tr><th>商談名</th><th>フェーズ</th><th class="r">（見込）追加MRR</th><th>申込完了日</th><th>課金開始日</th><th class="r">確率</th><th class="r">期待値</th><th>ネクストアクション</th><th>アクション期日</th></tr></thead><tbody>${rows}</tbody>
-    <tfoot><tr><td colspan="2">会社の合計（現在MRR ${man(d.m)} を含む期待値）</td><td class="r num">${man(d.add)}</td><td></td><td></td><td class="r num">${Math.round(PROB[d.ph]*100)}%</td><td class="r num">${man(expected(d))}</td><td colspan="2"></td></tr></tfoot></table></div>`:'<p class="empty">商談はまだありません。「＋商談を追加」から作成できます（同期時に Twenty の Opportunity を作成）。</p>'}</div>`;
+    <tfoot><tr><td colspan="2">会社の合計</td><td class="r num">${man(m2(d))}</td><td></td><td></td><td class="r num">${Math.round(PROB[d.ph]*100)}%</td><td class="r num">${man(expected(d))}</td><td colspan="2"></td></tr></tfoot></table></div>`:'<p class="empty">商談はまだありません。商談は Salesforce で作成すると、1 時間おきの同期で出てきます。</p>'}</div>`;
 }
 document.getElementById('dBody').addEventListener('click',e=>{
   if(openId===null) return;
@@ -1766,7 +1840,7 @@ function editForm(d){
   const xr = x || {ph:phN(r.phase||'INACTIVE')};
   const badge = k => isMain&&x ? srcBadge(k,d) : '';
   const chips = d.deals.map(y=>`<button type="button" data-dsel="${esc(y.key)}" aria-pressed="${y.key===key}" title="${esc(y.name)}">${esc(y.name.replace(/^Ptengine AI - /,''))}</button>`).join('')
-    + `<button type="button" class="new" data-dsel="new" aria-pressed="${key==='new'||(isMain&&!x)}">＋商談を追加</button>`;
+    ;   /* 【移植による変更 9/9】新規商談のタブは出さない（商談は Salesforce で作る） */
   const isOpen = x ? DEAL_OPEN===d.cid+'|'+key : editDeal==='new';
   const FIELDS = isOpen ? `<div class="dbody">${wonLocked(x)?`<div class="lockn"><b>受注済みの商談です。</b>ここで保存した変更と削除は、Utty が承認すると反映されます。${x.pe||x.pdel?'すでに承認待ちの申請があります（新しく保存すると置き換わります）。':''}</div>`:''}
     <div class="efrow wide"><label for="efName">商談名</label><input id="efName" type="text" value="${esc(v.name)}" style="font:inherit;font-size:13px;padding:6px 8px;border-radius:7px;border:1px solid var(--ring);background:var(--surface);color:var(--ink);width:100%" placeholder="Ptengine AI - 企業名（部門名）"></div>
@@ -1797,7 +1871,7 @@ function editForm(d){
   const nAct=d.deals.filter(y=>!dOrd(y)).length, nWon=d.deals.filter(y=>dOrd(y)===1).length, nLost=d.deals.filter(y=>dOrd(y)===2).length;
   const dcount = d.deals.length>1 ? `<div class="dcount"><span>商談 <b class="num">${d.deals.length}</b>件</span>${nAct?`<span class="c act">進行中 ${nAct}</span>`:''}${nWon?`<span class="c won">受注 ${nWon}</span>`:''}${nLost?`<span class="c lost">失注 ${nLost}</span>`:''}</div>` : '';
   const dealList = dcount + d.deals.slice().sort((a,b)=>dOrd(a)-dOrd(b)).map((y,di)=>`<div class="dcard ${y.key===key&&isOpen?'open':''} ${['','won','lost'][dOrd(y)]}" style="--pc:var(${PCOL[y.ph]})">${head(y, y.key===key&&isOpen, d.deals.length>1?di+1:0)}${dealSum(d,y)}${y.key===key&&isOpen?FIELDS:''}</div>`).join('')
-    + `<button type="button" class="dhead new" data-dsel="new" aria-expanded="${!x&&isOpen}"><span class="dcar" aria-hidden="true">${!x&&isOpen?'▾':'＋'}</span><span class="dh-n">商談を追加</span></button>` + (!x&&isOpen?FIELDS:'');
+    ;   /* 【移植による変更 9/9】「商談を追加」の見出しは出さない（商談は Salesforce で作る） */
   const legend = isNew ? '新しい商談' : isMain ? (d.oid?esc(d.opp.raw):'Twenty に未作成（同期時に作成）') : 'ダッシュボードで追加（同期時に Opportunity を作成）';
   return `<form id="efForm" class="ef" novalidate>
    <p class="sub" style="margin:0 0 12px">入力した値はすぐにダッシュボードに反映され、閲覧者全員に共有されます。Twenty への書き込みは同期のときに行います（同期までは「Twenty 未反映」と表示）。</p>

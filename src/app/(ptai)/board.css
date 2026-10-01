@@ -1517,3 +1517,30 @@ table.deals.iss{min-width:880px}
 .fbsend{ border:0; background:var(--ink); color:#fff; border-radius:8px;
   padding:6px 14px; cursor:pointer; font-size:12px; font-weight:700; }
 .fbsend:disabled{ opacity:.5; cursor:default; }
+
+/* ─── 【移植による変更 9/9】v2 の指標（2026-10-01）───────────────────────
+   KPI は 4 列 × 2 段。1 段目＝目標・計画・期待値・期限超過、
+   2 段目＝確定・コミット・チャレンジ・パイプライン。
+   アーティファクト v2 の定義をそのまま持ってきている。 */
+#kpis.g-kpi{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:900px){#kpis.g-kpi{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:640px){#kpis.g-kpi{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* 現在MRR の下に出す「期初からの増減」 */
+.mdelta{font-size:11px;color:var(--muted);font-weight:500}
+.mdelta.up{color:var(--good)}
+.mdelta.dn{color:var(--crit)}
+
+/* 積み上げカード */
+#kpis .lad .label{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-weight:700;color:var(--ink)}
+#kpis .lad .label small{font-weight:500;color:var(--muted);font-size:11.5px}
+.lbar{height:6px;border-radius:3px;background:color-mix(in oklab,var(--ink) 8%,transparent);margin:6px 0 2px;overflow:hidden}
+.lbar i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+.l-won .lbar i{background:var(--gold)}
+.l-cmt .lbar i{background:var(--p8)}
+.l-best .lbar i{background:var(--p6)}
+.l-pipe .lbar i{background:var(--p4)}
+.l-plan .lbar i{background:repeating-linear-gradient(90deg,var(--gold) 0 6px,color-mix(in oklab,var(--gold) 45%,transparent) 6px 10px)}
+.l-won{box-shadow:inset 0 3px 0 var(--gold)}
+.l-plan{box-shadow:inset 0 3px 0 color-mix(in oklab,var(--gold) 55%,transparent)}
+.okk{color:var(--gold-ink)}

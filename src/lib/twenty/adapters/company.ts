@@ -61,6 +61,8 @@ export function toRawCompany(c: Record<string, unknown>): RawCompany {
     t:     strOrNull(c.tier),
     ps:    strOrNull(c.pgaStatus),
     m:     currencyToYen(c.mrr),
+    // この経路（Twenty Company 直読み）には期初MRR が無い。増減は 0 として扱う
+    bm:    currencyToYen(c.mrr),
     ind:   strOrNull(c.industryJp),
     slug:  strOrNull(c.industrySlug),
     lay:   strOrNull(c.companySizeLayer),

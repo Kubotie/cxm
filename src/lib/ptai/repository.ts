@@ -46,7 +46,13 @@ export interface AccountInfo {
   industry:       string | null;
   /** 主担当の呼称（Paul / Baba …）。Notion の担当3 から変換済み */
   owners:         string[];
+  /**
+   * 現在MRR。Notion の `現在MRR`（Company Database から毎朝同期）。
+   * まだ同期が付いていない会社だけ、古い `⚠️MRR` に落とす。
+   */
   mrr:            number;
+  /** 期初MRR。初回同期を焼き付けたもの。画面の増減（かっこ内）はこれとの差 */
+  baseMrr:        number;
   aimMrr:         number;
   billingMonth:   string | null;
   billingStage:   string | null;
@@ -139,7 +145,10 @@ export function toAccountInfo(c: NotionCustomer): AccountInfo {
     tier:           c.tier ? TIER_FROM_NOTION[c.tier] ?? null : null,
     industry:       c.industry ? INDUSTRY_FROM_NOTION[c.industry] ?? null : null,
     owners:         c.owners3.map(o => OWNER_FROM_NOTION[o] ?? o),
-    mrr:            c.mrr ?? 0,
+    // 同期済みの 現在MRR を優先する。⚠️MRR は人の手入力が古いまま残っている
+    mrr:            c.curMrr ?? c.mrr ?? 0,
+    // 期初が無い会社（同期が付かなかった 7 社）は増減 0 として扱う
+    baseMrr:        c.baseMrr ?? c.curMrr ?? c.mrr ?? 0,
     aimMrr:         c.aimMrr ?? 0,
     billingMonth:   c.billingMonth,
     billingStage:   c.billingStage,

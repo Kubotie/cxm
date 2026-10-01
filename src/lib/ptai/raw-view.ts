@@ -49,6 +49,7 @@ function buildRawCompany(s: CompanySummary, deals: RawOpportunity[] | null): Raw
     t:    tierCode(a.tier),
     ps:   a.solutionStatus,
     m:    a.mrr,
+    bm:   a.baseMrr,
     ind:  a.industry,
     slug: null,
     lay:  null,

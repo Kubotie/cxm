@@ -95,7 +95,10 @@ export interface RawCompany {
   n: string;
   t: string | null;
   ps: string | null;
+  /** 現在MRR。Notion の `現在MRR`（Company Database から毎朝同期） */
   m: number;
+  /** 期初MRR。画面の「現在MRR（＋◯◯）」の括弧内は m − bm */
+  bm: number;
   ind: string | null;
   slug: string | null;
   lay: string | null;
