@@ -156,6 +156,13 @@ export async function buildDbView(): Promise<DbViewResult> {
     group(rows, r => str(r.notionCompanyId));
 
   // ── edits ─────────────────────────────────────────────────────────────────
+  /** `edits:<cid>:<key>` の <key> を取り出す。原本はこれを deals[].key として往復させる */
+  const dealKey = (r: Record<string, unknown>, cid: string): string => {
+    const ext = str(r.externalId);
+    const prefix = `edits:${cid}:`;
+    return ext.startsWith(prefix) ? ext.slice(prefix.length) : '';
+  };
+
   const oppsBy = byCompany(opps);
   const actBy  = byCompany(actions);
   const actvBy = byCompany(activities);
@@ -201,7 +208,11 @@ export async function buildDbView(): Promise<DbViewResult> {
       companyId:   cid,
       companyName: cust?.name ?? '',
       opp:   main ? withExtras(main, 'main') : {},
-      deals: extra.map((r, i) => withExtras(r, str(r.id) || `d${i}`)),
+      // ⚠ 鍵は **externalId の末尾**にする。Twenty のレコード id を返すと、
+      //    保存時に `edits:<cid>:<その id>` という別の externalId になり、
+      //    **元のレコードが消えて作り直される**（保存のたびに id が変わり、
+      //    createdAt と「作成者」が失われる）。2026-10-01 に気づいて直した。
+      deals: extra.map((r, i) => withExtras(r, dealKey(r, cid) || `d${i}`)),
       company,
     });
     // 中身が何も無い会社は返さない（原本は「編集があるものだけ」を前提にしている）

@@ -168,7 +168,7 @@ function buildDeal0(c,i){
    鍵は Notion 顧客管理DB の「Salesforce Account ID」列（d.sfid）。
    未設定の会社ではリンクを出さず、その旨だけ出す。
    商談名の規則: 先頭に「PtAI」を入れる（Salesforce 側で見分ける印）。 */
-const SF_BASE = 'https://ptmind.my.salesforce.com';
+const SF_BASE = 'https://ptmind.lightning.force.com';
 const sfAccountUrl = id => `${SF_BASE}/lightning/r/Account/${id}/view`;
 const sfNewOppUrl = (id, name) =>
   `${SF_BASE}/lightning/o/Opportunity/new?defaultFieldValues=`
@@ -851,7 +851,7 @@ function renderDrawer(){
       <div><div class="eyebrow">${TIER_JP(d.t)}・${IND_JP[d.ind]||'業種未設定'}　担当 ${d.owners.map(o=>`<span class="ownerchip"><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${CONFIG.memberColor[o]}"></i> ${o}</span>`).join(' ')}</div>
       <h2 id="dTitle">${esc(d.n)}</h2></div>
       <div class="dhbtns"><button type="button" class="fullbtn" id="dFull" aria-pressed="${drawerFull}" title="${drawerFull?'サイドパネルに戻す':'全画面で表示'}">${drawerFull?'⤡ 戻す':'⤢ 全画面'}</button><button type="button" class="close" aria-label="閉じる">×</button></div></div>
-    <div class="ctrl"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}<span class="chip">案件 ${RAW_JP[d.st]}</span>${d.url?`<a href="${esc(d.url)}" target="_blank" rel="noopener" style="font-size:12px">Notion 顧客ページ ↗</a>`:''}${sfLinks(d)}<span class="sub" style="margin-left:auto">企業の最終更新 ${d.le}</span></div>
+    <div class="ctrl"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}${RAW_JP[d.st]?`<span class="chip">案件 ${RAW_JP[d.st]}</span>`:''}${d.url?`<a href="${esc(d.url)}" target="_blank" rel="noopener" style="font-size:12px">Notion 顧客ページ ↗</a>`:''}${sfLinks(d)}<span class="sub" style="margin-left:auto">企業の最終更新 ${d.le}</span></div>
     <div class="dstats num">${(()=>{ const L=mrrLift(d), tot=Math.max(1,L.base+L.live+L.next);
       const bar=(L.live||L.next)?`<span class="ds-bar" aria-hidden="true"><span class="b0" style="width:${L.base/tot*100}%"></span><span class="b1" style="width:${L.live/tot*100}%"></span><span class="b2" style="width:${L.next/tot*100}%"></span></span>`:'';
       if(L.live) return `<div>現在MRR<b>${man(L.now)}</b><span class="ds-sub">${man(L.base)} → ${man(L.now)}（<span class="up">＋${man(L.live)}</span> Ptengine AI）</span>${bar}</div>`;
