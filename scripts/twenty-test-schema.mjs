@@ -253,6 +253,34 @@ const SCHEMA = [
       ['externalId', 'TEXT',      '移行元のID'],
     ],
   },
+  {
+    nameSingular: 'testFeedback', namePlural: 'testFeedbacks',
+    labelSingular: 'PtAI フィードバック（test）', labelPlural: 'PtAI フィードバック（test）',
+    description: '画面から送られた要望・不具合の報告と、その判断記録', icon: 'IconMessageReport',
+    fields: [
+      ['body',        'TEXT',      '内容'],
+      ['kind',        'SELECT',    '種別', { options: opts([
+        ['BUG','動かない','red'],['WRONG','内容が違う','orange'],
+        ['REQUEST','こうしたい','blue'],['QUESTION','質問','gray']]) }],
+      // NEW → TRIAGED（方針を示した）→ RESOLVED / DISMISSED / DEFERRED（保留）
+      ['status',      'SELECT',    '状態', { options: opts([
+        ['NEW','新規','red'],['TRIAGED','方針あり','blue'],['DEFERRED','保留','orange'],
+        ['RESOLVED','解決','green'],['DISMISSED','見送り','gray']]) }],
+      // 画面のどこを指しているか。再描画で変わりうるので elementText も残す
+      ['selector',    'TEXT',      '要素のパス'],
+      ['elementText', 'TEXT',      '要素の文字'],
+      ['screenPath',  'TEXT',      '画面・タブ'],
+      ['notionCompanyId', 'TEXT',  'Notion 会社ページID'],
+      ['reporter',    'TEXT',      '報告者'],
+      // ここから下は私（Claude）が書く判断記録
+      ['decision',    'TEXT',      '対応方針'],
+      ['decidedBy',   'TEXT',      '判断した人'],
+      ['decidedAt',   'DATE_TIME', '判断日時'],
+      ['resolvedAt',  'DATE_TIME', '解決・見送り日時'],
+      ['updatedByName2', 'TEXT',   '最終更新者（PtAI の操作者）'],
+      ['externalId',  'TEXT',      '移行元のID'],
+    ],
+  },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════

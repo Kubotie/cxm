@@ -1491,3 +1491,29 @@ table.deals.iss{min-width:880px}
 .md table.mdt{ border-collapse:collapse; margin:6px 0 10px; font-size:12px; width:100%; }
 .md table.mdt td{ border:1px solid var(--grid); padding:4px 7px; vertical-align:top; }
 .md table.mdt tr:first-child td{ background:var(--surface-2); font-weight:700; }
+
+/* ─── フィードバック（2026-10-01 追加）────────────────────────────────────
+   画面左下のボタンから、気づいたことをその場で送れるようにする。
+   原本の画面に重ならないよう、固定で最前面に置く。 */
+.fbwrap{ position:fixed; left:16px; bottom:16px; z-index:9999; font-size:12px; }
+.fbbtn{ border:1px solid var(--ring); background:var(--surface); color:var(--ink-2);
+  border-radius:999px; padding:7px 13px; cursor:pointer; box-shadow:var(--shadow);
+  font-size:12px; font-weight:700; }
+.fbbtn:hover{ background:var(--accent-soft); color:var(--accent-ink); border-color:transparent; }
+.fbbox{ position:absolute; left:0; bottom:40px; width:320px; background:var(--surface);
+  border:1px solid var(--ring); border-radius:12px; box-shadow:var(--shadow); padding:12px; }
+.fbh{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.fbx{ border:0; background:none; font-size:16px; line-height:1; cursor:pointer; color:var(--muted); }
+.fbtarget{ font-size:11.5px; color:var(--ink-2); background:var(--surface-2);
+  border-radius:6px; padding:5px 8px; margin-bottom:6px; word-break:break-all; }
+.fbpick{ width:100%; border:1px dashed var(--ring); background:none; color:var(--accent-ink);
+  border-radius:8px; padding:6px; cursor:pointer; font-size:11.5px; margin-bottom:8px; }
+.fbkinds{ display:flex; flex-wrap:wrap; gap:4px 10px; margin-bottom:8px; font-size:11.5px; }
+.fbkinds label{ display:inline-flex; align-items:center; gap:3px; cursor:pointer; }
+.fbbox textarea{ width:100%; box-sizing:border-box; border:1px solid var(--ring);
+  border-radius:8px; padding:7px; font:inherit; font-size:12px; resize:vertical; }
+.fbact{ display:flex; align-items:center; gap:8px; margin-top:8px; }
+.fbmsg{ flex:1; font-size:11px; color:var(--ink-2); }
+.fbsend{ border:0; background:var(--ink); color:#fff; border-radius:8px;
+  padding:6px 14px; cursor:pointer; font-size:12px; font-weight:700; }
+.fbsend:disabled{ opacity:.5; cursor:default; }

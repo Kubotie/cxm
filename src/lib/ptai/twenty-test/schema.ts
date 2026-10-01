@@ -30,6 +30,7 @@ export const TEST_OBJECTS = {
   accountPlan:  { singular: 'testAccountPlan',  plural: 'testAccountPlans' },
   comment:      { singular: 'testComment',      plural: 'testComments' },
   operationLog: { singular: 'testOperationLog', plural: 'testOperationLogs' },
+  feedback:     { singular: 'testFeedback',     plural: 'testFeedbacks' },
 } as const;
 
 export type TestObjectKey = keyof typeof TEST_OBJECTS;
@@ -339,3 +340,27 @@ export const MS_OFFSET_DAYS = { TRIAL: 49, QUOTE: 35, VERBAL_COMMIT: 10 } as con
 
 /** 課金開始日を基準にするときは 14 日引いてから逆算する */
 export const MS_BILL_OFFSET_DAYS = 14;
+
+// ── フィードバック（2026-10-01）────────────────────────────────────────────
+//
+// 画面から送られた要望・不具合を貯め、**判断の記録も同じ行に残す**。
+// 「方針を示したか・解決したか・見送ったか・保留したか」を後から追えるように。
+
+export const FEEDBACK_KIND = ['BUG', 'WRONG', 'REQUEST', 'QUESTION'] as const;
+export type FeedbackKind = (typeof FEEDBACK_KIND)[number];
+
+export const FEEDBACK_KIND_JP: Record<FeedbackKind, string> = {
+  BUG: '動かない', WRONG: '内容が違う', REQUEST: 'こうしたい', QUESTION: '質問',
+};
+
+/** NEW → TRIAGED（方針を示した）→ RESOLVED / DISMISSED / DEFERRED（保留） */
+export const FEEDBACK_STATUS = ['NEW', 'TRIAGED', 'DEFERRED', 'RESOLVED', 'DISMISSED'] as const;
+export type FeedbackStatus = (typeof FEEDBACK_STATUS)[number];
+
+export const FEEDBACK_STATUS_JP: Record<FeedbackStatus, string> = {
+  NEW: '新規', TRIAGED: '方針あり', DEFERRED: '保留', RESOLVED: '解決', DISMISSED: '見送り',
+};
+
+/** 定期報告で出すもの。新規と保留は片付くまで何度でも出す */
+export const FEEDBACK_OPEN: ReadonlySet<FeedbackStatus> =
+  new Set<FeedbackStatus>(['NEW', 'TRIAGED', 'DEFERRED']);

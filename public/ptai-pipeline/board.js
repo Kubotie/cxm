@@ -2946,3 +2946,133 @@ initFilters(); initGoalForm(); initNewco(); document.getElementById('isAll').add
   });
   window.addEventListener('resize',()=>{ const w=parseInt(dr.style.width); if(w) apply(w); });
 })();
+
+/* 【移植による変更 8/8】フィードバックの収集（2026-10-01）
+   画面の左下のボタン → 要素をマウスオーバー＆クリックで選ぶ → 種別と内容を書いて送信。
+   貯め先は Twenty の testFeedback。判断の記録（方針・解決・見送り・保留）は
+   運用側が /api/ptai/feedback に書く。
+
+   ⚠ 選んだ要素の CSS パスは**再描画で変わりうる**ので、その場の文字（elementText）も
+      一緒に送る。人が見て「どこの話か」分かることを優先する。 */
+(function(){
+  var picking=false, picked=null, hovered=null, box=null;
+
+  function cssPath(el){
+    var parts=[], n=el, depth=0;
+    while(n && n.nodeType===1 && n!==document.body && depth++<6){
+      var seg=n.tagName.toLowerCase();
+      if(n.id){ parts.unshift(seg+'#'+n.id); break; }
+      var cls=(n.className&&typeof n.className==='string')
+        ? n.className.trim().split(/\s+/).filter(function(c){return c&&!/^(hover|active|open|done|cur)$/.test(c);}).slice(0,2) : [];
+      if(cls.length) seg+='.'+cls.join('.');
+      var p=n.parentElement;
+      if(p){ var same=Array.prototype.filter.call(p.children,function(c){return c.tagName===n.tagName;});
+        if(same.length>1) seg+=':nth-of-type('+(Array.prototype.indexOf.call(same,n)+1)+')'; }
+      parts.unshift(seg); n=p;
+    }
+    return parts.join(' > ');
+  }
+  function screenPath(){
+    var tab = (typeof dTab!=='undefined' && openId!==null) ? ('drawer/'+dTab) : 'board';
+    return tab + (typeof VIEW!=='undefined' && VIEW ? ('/'+VIEW) : '');
+  }
+  function companyId(){
+    try{ return (openId!==null && DEALS[openId]) ? DEALS[openId].cid : null; }catch(_){ return null; }
+  }
+
+  function outline(el,on){
+    if(!el) return;
+    el.style.outline = on ? '2px solid var(--accent)' : '';
+    el.style.outlineOffset = on ? '1px' : '';
+  }
+  function onMove(e){
+    if(!picking) return;
+    var el=e.target;
+    if(el===hovered || (box&&box.contains(el))) return;
+    outline(hovered,false); hovered=el; outline(hovered,true);
+  }
+  function onPick(e){
+    if(!picking) return;
+    if(box&&box.contains(e.target)) return;
+    e.preventDefault(); e.stopPropagation();
+    picked=e.target; stopPick(); openForm();
+  }
+  function startPick(){
+    picking=true; document.body.style.cursor='crosshair';
+    document.addEventListener('mousemove',onMove,true);
+    document.addEventListener('click',onPick,true);
+    document.addEventListener('keydown',onEsc,true);
+    if(box) box.querySelector('.fbpick').textContent='画面の要素をクリックしてください（Esc で中止）';
+  }
+  function stopPick(){
+    picking=false; document.body.style.cursor='';
+    outline(hovered,false); hovered=null;
+    document.removeEventListener('mousemove',onMove,true);
+    document.removeEventListener('click',onPick,true);
+    document.removeEventListener('keydown',onEsc,true);
+  }
+  function onEsc(e){ if(e.key==='Escape'){ stopPick(); openForm(); } }
+
+  function openForm(){
+    if(!box) return;
+    var t = picked ? (picked.innerText||'').trim().replace(/\s+/g,' ').slice(0,60) : '';
+    box.querySelector('.fbtarget').textContent = picked ? ('選択：'+(t||picked.tagName.toLowerCase())) : '画面全体について';
+    box.querySelector('.fbpick').textContent = picked ? '選び直す' : '画面の要素を選ぶ';
+    box.hidden=false;
+    box.querySelector('textarea').focus();
+  }
+
+  function build(){
+    var w=document.createElement('div');
+    w.className='fbwrap';
+    w.innerHTML =
+      '<button type="button" class="fbbtn" title="気づいたことを送る">💬 フィードバック</button>'+
+      '<div class="fbbox" hidden>'+
+        '<div class="fbh"><b>フィードバック</b><button type="button" class="fbx" aria-label="閉じる">×</button></div>'+
+        '<div class="fbtarget">画面全体について</div>'+
+        '<button type="button" class="fbpick">画面の要素を選ぶ</button>'+
+        '<div class="fbkinds">'+
+          '<label><input type="radio" name="fbkind" value="BUG"> 動かない</label>'+
+          '<label><input type="radio" name="fbkind" value="WRONG"> 内容が違う</label>'+
+          '<label><input type="radio" name="fbkind" value="REQUEST" checked> こうしたい</label>'+
+          '<label><input type="radio" name="fbkind" value="QUESTION"> 質問</label>'+
+        '</div>'+
+        '<textarea rows="4" placeholder="どうなっているとよいか、何が困っているかを書いてください"></textarea>'+
+        '<div class="fbact"><span class="fbmsg"></span><button type="button" class="fbsend">送信</button></div>'+
+      '</div>';
+    document.body.appendChild(w);
+    box=w.querySelector('.fbbox');
+
+    w.querySelector('.fbbtn').onclick=function(){ if(box.hidden){ picked=null; openForm(); } else { box.hidden=true; stopPick(); } };
+    box.querySelector('.fbx').onclick=function(){ box.hidden=true; stopPick(); };
+    box.querySelector('.fbpick').onclick=function(){ box.hidden=true; startPick(); };
+    box.querySelector('.fbsend').onclick=send;
+  }
+
+  async function send(){
+    var ta=box.querySelector('textarea'), msg=box.querySelector('.fbmsg'), btn=box.querySelector('.fbsend');
+    var body=(ta.value||'').trim();
+    if(!body){ msg.textContent='内容を書いてください'; ta.focus(); return; }
+    btn.disabled=true; msg.textContent='送信中…';
+    try{
+      var res=await fetch('/api/ptai/feedback',{method:'POST',credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          body: body,
+          kind: (box.querySelector('input[name=fbkind]:checked')||{}).value||'REQUEST',
+          selector: picked?cssPath(picked):null,
+          elementText: picked?((picked.innerText||'').trim().replace(/\s+/g,' ').slice(0,300)):null,
+          screenPath: screenPath(),
+          companyId: companyId(),
+        })});
+      var j=await res.json().catch(function(){return {};});
+      if(res.ok && j.ok){ msg.textContent='ありがとうございます。送信しました'; ta.value=''; picked=null;
+        setTimeout(function(){ box.hidden=true; msg.textContent=''; },1200); }
+      else msg.textContent=j.message||'送信できませんでした';
+    }catch(_){ msg.textContent='送信できませんでした'; }
+    btn.disabled=false;
+  }
+
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',build);
+  else build();
+})();
