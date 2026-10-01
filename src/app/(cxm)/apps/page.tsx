@@ -3,9 +3,8 @@
 // ログイン後の着地点。CXM と Ptengine AI パイプラインは入口（認証）だけを共有し、
 // データは今のところ独立している。どちらからでも相互に行き来できる。
 //
-// Ptengine AI パイプラインは移植直後で整備中。開けるが業務では使わない状態なので、
-// カードに「整備中・使用不可」を明示する（status: 'wip'）。
-// 使えるようになったら status を外すだけでよい。
+// Ptengine AI パイプラインは 2026-10-01 に業務利用を開始した。
+// 整備中の表示は外してある（status: 'wip' の仕組みは次のアプリのために残す）。
 
 import Link from "next/link";
 import { BarChart3, Target, ArrowRight, Wrench } from "lucide-react";
@@ -42,10 +41,7 @@ const APPS: AppCard[] = [
     body: "Ptengine AI 追加販売の商談パイプラインとアカウントサクセス計画。",
     icon: Target,
     accent: "from-orange-500 to-orange-600",
-    status: "wip",
-    // 接続状態は環境（PTAI_DATA_SOURCE）で変わるので、ここでは断定しない。
-    // 実際にどちらで動いているかは画面の先頭に出す（(ptai)/ptai-pipeline/page.tsx）。
-    note: "整備中です。業務の判断には使わないでください。接続先とデータの扱いは、開いた画面の先頭に出ます。",
+
   },
 ];
 

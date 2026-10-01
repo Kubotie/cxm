@@ -21,9 +21,8 @@ export const dynamic = "force-dynamic";
 
 export default async function PtaiPipelinePage() {
   const profile = await getCurrentUserProfile();
-  // ⚠ 告知の文面を環境で切り替える。**嘘を出さないため。**
-  //    twenty のときは実際に Twenty と Notion へ書き込むので、
-  //    「この画面の中だけに保存されます」は誤り。
+  // 移行元スナップショットを読んでいる環境だけ、その旨を出す。
+  // twenty（本番）では告知を出さない — 業務で使える状態になったため（2026-10-01）。
   const live = getPtaiDataSource() === "twenty";
 
   return (
@@ -31,32 +30,23 @@ export default async function PtaiPipelinePage() {
       <div className="pshell">
         <Link href="/apps">アプリ一覧</Link>
         <span className="pshell-here">Ptengine AI パイプライン</span>
-        <span className="pshell-wip">{live ? "整備中・本番データ" : "整備中・使用不可"}</span>
+        {!live && <span className="pshell-wip">移行元スナップショット</span>}
         <Link href="/v2">CXM</Link>
         <span className="pshell-sp" />
         {profile && <span className="pshell-user">{profile.name || profile.name2}</span>}
       </div>
 
-      {/* 整備中であることを画面の先頭で明示する。
-          board.css のトークンを使うので、原本の見た目から浮かない。
-          使えるようになったらこのブロックごと消す。 */}
-      <div className="pwip" role="note">
-        <b>この画面は整備中です。業務の判断には使わないでください。</b>
-        {live ? (
+      {/* 移行元スナップショットを読んでいる環境だけ注意書きを出す。
+          本番（twenty）では出さない。 */}
+      {!live && (
+        <div className="pwip" role="note">
+          <b>この画面は移行元のスナップショットを読んでいます。</b>
           <span>
-            データは Twenty CRM と Notion から取得しており、
-            <b>入力した内容は Twenty と Notion に実際に書き込まれます。</b>
-            商談・アクション・組織図は Twenty の test* オブジェクト、
-            会社情報とキー日程・目標は Notion が正本です。
+            Twenty CRM とは未接続です。入力した内容はこの画面の中だけに保存され、
+            Twenty にも Notion にも反映されません。
           </span>
-        ) : (
-          <span>
-            データは移行元の固定スナップショットで、Twenty CRM とは未接続です。
-            入力した内容はこの画面の中だけに保存され、Twenty にも Notion にも反映されません。
-            動作確認・レビュー目的でのみ開いてください。
-          </span>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* 原本の DOM。board.js が id で掴むので React からは触らない */}
       <div dangerouslySetInnerHTML={{ __html: BOARD_HTML }} />
