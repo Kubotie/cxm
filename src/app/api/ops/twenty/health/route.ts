@@ -42,6 +42,7 @@ import { getPtaiDataSource } from '@/lib/twenty/data-source';
 import { TEST_OBJECTS, type TestObjectKey } from '@/lib/ptai/twenty-test/schema';
 import { listTargetRows } from '@/lib/ptai/notion/client';
 import { listPtaiStaff } from '@/lib/ptai/staff';
+import { salesforceDiagnostics, type SfDiagnostics } from '@/lib/ptai/salesforce/client';
 import { DEFAULT_APPROVER_NAME2 } from '@/lib/ptai/approver-policy';
 
 export const dynamic = 'force-dynamic';
@@ -80,6 +81,8 @@ export interface TwentyHealthResult {
     companyFieldsVerified:     boolean;
     opportunityFieldsVerified: boolean;
   };
+  /** Salesforce（商談・金額の正本）の状況 */
+  salesforce: SfDiagnostics;
   /** 現行設計で対処が要るもの。集計情報だけ */
   warnings: string[];
   /** 既存オブジェクトについての参考情報。現行設計では実害が無い */
@@ -104,6 +107,7 @@ function errorResult(message: string, baseUrl: string): TwentyHealthResult {
       workspaceMembers: null, tasks: null, noteTargets: null,
     },
     schema: { companyFieldsVerified: false, opportunityFieldsVerified: false },
+    salesforce: { configured: false, ptaiOpportunities: 0, open: 0, byStage: {}, withoutAccount: 0, message: null },
     warnings: [message],
     legacyNotes: [],
   };
@@ -196,6 +200,22 @@ export async function GET(_req: NextRequest): Promise<NextResponse<TwentyHealthR
     notionTargets.message = 'Notion の目標 DB を読めませんでした（NOTION_PTAI_TARGETS_DS_ID とトークンを確認してください）';
     warnings.push(notionTargets.message);
     void e;
+  }
+
+  // ── 2c-2. Salesforce（商談・金額の正本）────────────────────────────────
+  //   PtAI 商談は**商談名**で見分ける（PtAI / Ptengine AI / PtengineAI）。
+  //   Salesforce 側に専用の製品カテゴリーも RecordType も無いため。
+  let salesforce = { configured: false, ptaiOpportunities: 0, open: 0, byStage: {}, withoutAccount: 0, message: null } as SfDiagnostics;
+  try {
+    salesforce = await salesforceDiagnostics();
+    if (!salesforce.configured) {
+      warnings.push('Salesforce が未設定です。商談と金額を取り込めません');
+    } else if (salesforce.withoutAccount) {
+      warnings.push(`PtAI 商談のうち ${salesforce.withoutAccount} 件が取引先未設定です。会社に紐付けられません`);
+    }
+  } catch {
+    degraded = true;
+    warnings.push('Salesforce の状況を確認できませんでした');
   }
 
   // ── 2d. 操作者を Twenty の本人レコードに紐付けられるか ─────────────────────
@@ -314,6 +334,7 @@ export async function GET(_req: NextRequest): Promise<NextResponse<TwentyHealthR
       testCounts,
       notionTargets,
       identity,
+      salesforce,
       counts,
       schema,
       warnings,

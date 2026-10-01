@@ -245,6 +245,46 @@ export function TwentyOpsPage() {
 
               <section>
                 <h2 className="text-[13px] font-bold mb-2 flex items-center gap-1.5">
+                  <Database className="w-3.5 h-3.5 text-slate-500" /> Salesforce（商談・金額の正本）
+                </h2>
+                <Card>
+                  <CardContent className="pt-4 text-[12px] leading-relaxed space-y-1.5">
+                    <p>
+                      PtAI の商談は<strong>商談名</strong>で見分けます
+                      （<span className="font-mono">PtAI</span> /
+                       <span className="font-mono"> Ptengine AI</span> /
+                       <span className="font-mono"> PtengineAI</span>。大文字小文字は区別しません）。
+                      Salesforce 側に PtAI 専用の製品カテゴリーも RecordType も無いためです。
+                      <strong>金額と見積もりは Salesforce でしか入れられません</strong>
+                      （<span className="font-mono">Opportunity.Amount</span> は作成不可・更新不可）。
+                    </p>
+                    {!health.salesforce.configured ? (
+                      <p className="text-red-700">未接続です{health.salesforce.message ? `（${health.salesforce.message}）` : ''}</p>
+                    ) : (
+                      <>
+                        <p className="tabular-nums">
+                          PtAI 商談 <strong>{health.salesforce.ptaiOpportunities}</strong> 件
+                          （未クローズ {health.salesforce.open} 件
+                          {health.salesforce.withoutAccount > 0 && `／取引先未設定 ${health.salesforce.withoutAccount} 件`}）
+                        </p>
+                        {Object.keys(health.salesforce.byStage).length > 0 && (
+                          <p className="text-slate-600">
+                            {Object.entries(health.salesforce.byStage)
+                              .sort((a, b) => b[1] - a[1])
+                              .map(([k, v]) => `${k} ${v}`).join('／')}
+                          </p>
+                        )}
+                        {health.salesforce.message && (
+                          <p className="text-slate-500">{health.salesforce.message}</p>
+                        )}
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              </section>
+
+              <section>
+                <h2 className="text-[13px] font-bold mb-2 flex items-center gap-1.5">
                   <Users className="w-3.5 h-3.5 text-slate-500" /> 操作者の記録
                 </h2>
                 <Card>
