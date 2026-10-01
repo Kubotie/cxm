@@ -50,14 +50,19 @@ const MODE = argv.has('--apply') ? 'apply' : argv.has('--destroy') ? 'destroy'
 // ═══════════════════════════════════════════════════════════════════════════
 
 const STAGES = [
-  ['NOT_STARTED',   '初回アポ実施前',       'gray'],
-  ['FIRST_MEETING', '初回アポ実施済み',     'blue'],
-  ['TRIAL',         'トライアル開始済み',   'blue'],
-  ['QUOTE',         '最終見積もり提示済み', 'blue'],
-  ['VERBAL_COMMIT', '口頭合意獲得済み',     'blue'],
-  ['APPLICATION',   '申込用紙回収済み',     'blue'],
-  ['CLOSED_WON',    '契約締結済み',         'yellow'],
-  ['CLOSED_LOST',   '失注',                 'gray'],
+  // Salesforce のフェーズに合わせた（2026-10-01）。POC は使わないと決めたので入れない。
+  // 旧キー（NOT_STARTED ほか）は読み込み時に読み替えるので、選択肢からは外す。
+  ['INACTIVE',           'Inactive',           'gray'],
+  ['ACTIVE',             'Active',             'blue'],
+  ['GOAL_SHARED',        'Goal Shared',        'blue'],
+  ['QUALIFIED_CHAMPION', 'Qualified Champion', 'blue'],
+  ['EVALUATING',         'Evaluating',         'blue'],
+  ['PROBABLE',           'Probable',           'blue'],
+  ['VERBAL',             'Verbal',             'purple'],
+  ['WON',                'Won',                'green'],
+  ['CLOSED_WON',         '受注 (Closed Won)',   'green'],
+  ['ADMIN_CLOSE',        'Admin Close',        'gray'],
+  ['CLOSED_LOST',        'Close Lost',         'red'],
 ];
 
 /** SELECT の options を組み立てる。value は英大文字スネーク or 指定値 */

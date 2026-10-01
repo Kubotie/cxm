@@ -68,7 +68,7 @@ const customerPage = (over: Record<string, unknown> = {}) => ({
 
 const deal = (over: Record<string, unknown> = {}) => ({
   id: 'd1', name: 'Ptengine AI - テスト商事', notionCompanyId: 'page-1',
-  stage: 'QUOTE', addMrr: 300_000, applyDate: '2026-12-01', msBase: 'APPLY',
+  stage: 'PROBABLE', addMrr: 300_000, applyDate: '2026-12-01', msBase: 'APPLY',
   isMain: true, ...over,
 });
 
@@ -124,7 +124,7 @@ describe('商談の組み立て', () => {
     stub({ customer: customerPage(), deals: [
       deal({ id: 'lost', stage: 'CLOSED_LOST', isMain: false }),
       deal({ id: 'won',  stage: 'CLOSED_WON',  isMain: false }),
-      deal({ id: 'open', stage: 'TRIAL',       isMain: true }),
+      deal({ id: 'open', stage: 'EVALUATING',       isMain: true }),
     ] });
     const r = await load('repository.ts');
     const d = await r.getCompanyDetail({ notionPageId: 'page-1', minutesLimit: 0 });
@@ -135,7 +135,7 @@ describe('商談の組み立て', () => {
     stub({ customer: customerPage(), deals: [deal({ stage: 'APPROVAL' })] });
     const r = await load('repository.ts');
     const d = await r.getCompanyDetail({ notionPageId: 'page-1', minutesLimit: 0 });
-    assert.equal(d.deals[0].stage, 'QUOTE');
+    assert.equal(d.deals[0].stage, 'PROBABLE');
   });
 });
 
@@ -145,7 +145,7 @@ describe('KPI の組み立て', () => {
 
   test('失注の商談は追加MRR に足さない', async () => {
     stub({ customer: customerPage(), deals: [
-      deal({ id: 'a', stage: 'QUOTE',       addMrr: 300_000, isMain: true }),
+      deal({ id: 'a', stage: 'PROBABLE',       addMrr: 300_000, isMain: true }),
       deal({ id: 'b', stage: 'CLOSED_LOST', addMrr: 900_000, isMain: false }),
     ] });
     const r = await load('repository.ts');
@@ -163,7 +163,7 @@ describe('KPI の組み立て', () => {
   });
 
   test('申込用紙回収済みは確定に入る（§9-6）', async () => {
-    stub({ customer: customerPage(), deals: [deal({ stage: 'APPLICATION' })] });
+    stub({ customer: customerPage(), deals: [deal({ stage: 'WON' })] });
     const r = await load('repository.ts');
     const d = await r.getCompanyDetail({ notionPageId: 'page-1', minutesLimit: 0 });
     assert.equal(d.kpi.won, 800_000);
@@ -173,13 +173,13 @@ describe('KPI の組み立て', () => {
 
   test('代表フェーズは main の商談', async () => {
     stub({ customer: customerPage(), deals: [
-      deal({ id: 'sub',  stage: 'TRIAL', isMain: false }),
-      deal({ id: 'main', stage: 'VERBAL_COMMIT', isMain: true }),
+      deal({ id: 'sub',  stage: 'EVALUATING', isMain: false }),
+      deal({ id: 'main', stage: 'VERBAL', isMain: true }),
     ] });
     const r = await load('repository.ts');
     const d = await r.getCompanyDetail({ notionPageId: 'page-1', minutesLimit: 0 });
     const like = r.toCompanyLike(d.account, d.deals);
-    assert.equal(like.stage, 'VERBAL_COMMIT');
+    assert.equal(like.stage, 'VERBAL');
   });
 });
 

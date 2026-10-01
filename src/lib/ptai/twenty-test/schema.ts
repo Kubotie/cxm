@@ -61,34 +61,64 @@ export function twentyField(objectSingular: string, specName: string): string {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const STAGES = [
-  'NOT_STARTED', 'FIRST_MEETING', 'TRIAL', 'QUOTE',
-  'VERBAL_COMMIT', 'APPLICATION', 'CLOSED_WON', 'CLOSED_LOST',
+  'INACTIVE', 'ACTIVE', 'GOAL_SHARED', 'QUALIFIED_CHAMPION', 'EVALUATING',
+  'PROBABLE', 'VERBAL', 'WON', 'CLOSED_WON', 'ADMIN_CLOSE', 'CLOSED_LOST',
 ] as const;
 export type Stage = (typeof STAGES)[number];
 
-/** 進行順。CLOSED_LOST はどこからでも遷移できるので順序に含めない */
-export const STAGE_ORDER: readonly Stage[] = STAGES.slice(0, 7) as readonly Stage[];
+/**
+ * セールスパスの並び（Salesforce の画面どおり）。
+ * `ADMIN_CLOSE` と `CLOSED_LOST` はどこからでも遷移できるので順序に含めない。
+ */
+export const STAGE_ORDER: readonly Stage[] = [
+  'INACTIVE', 'ACTIVE', 'GOAL_SHARED', 'QUALIFIED_CHAMPION', 'EVALUATING',
+  'PROBABLE', 'VERBAL', 'WON', 'CLOSED_WON',
+];
 
+/** 表示名。**Salesforce の表記をそのまま使う**（突き合わせやすさを優先） */
 export const STAGE_JP: Record<Stage, string> = {
-  NOT_STARTED:   '初回アポ実施前',
-  FIRST_MEETING: '初回アポ実施済み',
-  TRIAL:         'トライアル開始済み',
-  QUOTE:         '最終見積もり提示済み',
-  VERBAL_COMMIT: '口頭合意獲得済み',
-  APPLICATION:   '申込用紙回収済み',
-  CLOSED_WON:    '契約締結済み',
-  CLOSED_LOST:   '失注',
+  INACTIVE:           'Inactive',
+  ACTIVE:             'Active',
+  GOAL_SHARED:        'Goal Shared',
+  QUALIFIED_CHAMPION: 'Qualified Champion',
+  EVALUATING:         'Evaluating',
+  PROBABLE:           'Probable',
+  VERBAL:             'Verbal',
+  WON:                'Won',
+  CLOSED_WON:         '受注 (Closed Won)',
+  ADMIN_CLOSE:        'Admin Close',
+  CLOSED_LOST:        'Close Lost',
 };
 
-/** §F の暫定確率。**§9-6 が未決**（申込用紙回収済みを確定に含めるか） */
+/**
+ * 確率。**Salesforce の OpportunityStage.DefaultProbability をそのまま**
+ * （2026-10-01 実測）。ダッシュボード独自の 0/10/30/55/80/95/100 は廃止。
+ */
 export const STAGE_PROB: Record<Stage, number> = {
-  NOT_STARTED: 0, FIRST_MEETING: 0.10, TRIAL: 0.30, QUOTE: 0.55,
-  VERBAL_COMMIT: 0.80, APPLICATION: 0.95, CLOSED_WON: 1, CLOSED_LOST: 0,
+  INACTIVE: 0, ACTIVE: 0, GOAL_SHARED: 0.10, QUALIFIED_CHAMPION: 0.30,
+  EVALUATING: 0.40, PROBABLE: 0.60, VERBAL: 0.90, WON: 1, CLOSED_WON: 1,
+  ADMIN_CLOSE: 0, CLOSED_LOST: 0,
 };
 
-/** 旧キーの読み替え（§F）。読み込み時にだけ使う。書き込みは新キーのみ */
+/**
+ * 旧キーの読み替え。**読み込み時にだけ使う。書き込みは新キーのみ。**
+ *
+ * 2026-10-01 にダッシュボード独自の 8 段階から Salesforce のフェーズへ移した。
+ *   NOT_STARTED   初回アポ実施前     → INACTIVE
+ *   FIRST_MEETING 初回アポ実施済み    → ACTIVE
+ *   TRIAL         トライアル開始済み   → EVALUATING
+ *   QUOTE         最終見積もり提示済み → PROBABLE
+ *   VERBAL_COMMIT 口頭合意獲得済み    → VERBAL
+ *   APPLICATION   申込用紙回収済み    → WON（100%・未クローズ）
+ *
+ * `POC` は Salesforce の選択肢にはあるが**使わない**と決めた（2026-10-01）。
+ * 流れてきたら Evaluating として扱う。
+ */
 export const STAGE_LEGACY: Record<string, Stage> = {
-  RE_PROPOSAL: 'TRIAL', EVALUATION: 'TRIAL', APPROVAL: 'QUOTE',
+  NOT_STARTED: 'INACTIVE', FIRST_MEETING: 'ACTIVE', TRIAL: 'EVALUATING',
+  QUOTE: 'PROBABLE', VERBAL_COMMIT: 'VERBAL', APPLICATION: 'WON',
+  POC: 'EVALUATING',
+  RE_PROPOSAL: 'EVALUATING', EVALUATION: 'EVALUATING', APPROVAL: 'PROBABLE',
 };
 
 export function normalizeStage(v: unknown): Stage | null {
@@ -96,6 +126,14 @@ export function normalizeStage(v: unknown): Stage | null {
   const mapped = STAGE_LEGACY[s] ?? s;
   return (STAGES as readonly string[]).includes(mapped) ? (mapped as Stage) : null;
 }
+
+/**
+ * 確定（受注）とみなすフェーズ。
+ * `WON` は Salesforce 上は `IsWon = false`（未クローズ）だが、確率 100%・
+ * 予測区分 Commit で、従来の「申込用紙回収済み」に当たる。
+ * 「申込用紙回収済みを確定に含める」という決定を引き継ぐ（2026-10-01 Kubotie）。
+ */
+export const WON_STAGE_SET: ReadonlySet<Stage> = new Set<Stage>(['WON', 'CLOSED_WON']);
 
 /** 承認が要る変更（§4-2）。契約締結済みに入れる／外す */
 export function needsApproval(from: Stage | null, to: Stage | null): boolean {

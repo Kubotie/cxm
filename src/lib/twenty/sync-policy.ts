@@ -584,13 +584,16 @@ export const NOTE_MATCH = {
  * `src/lib/ptai/twenty-test/schema.ts` の STAGES で、ここはその写し。
  */
 export const DASHBOARD_PHASES = [
-  'NOT_STARTED', 'FIRST_MEETING', 'TRIAL', 'QUOTE',
-  'VERBAL_COMMIT', 'APPLICATION', 'CLOSED_WON', 'CLOSED_LOST',
+  'INACTIVE', 'ACTIVE', 'GOAL_SHARED', 'QUALIFIED_CHAMPION', 'EVALUATING',
+  'PROBABLE', 'VERBAL', 'WON', 'CLOSED_WON', 'ADMIN_CLOSE', 'CLOSED_LOST',
 ] as const;
 
-/** 旧 8 段階のキー → 新キー（board.js の PH_LEGACY と同じ） */
+/** 旧キー → 新キー（twenty-test/schema.ts の STAGE_LEGACY・board.js の PH_LEGACY と同じ） */
 export const DASHBOARD_PHASE_LEGACY: Record<string, string> = {
-  RE_PROPOSAL: 'TRIAL', EVALUATION: 'TRIAL', APPROVAL: 'QUOTE',
+  NOT_STARTED: 'INACTIVE', FIRST_MEETING: 'ACTIVE', TRIAL: 'EVALUATING',
+  QUOTE: 'PROBABLE', VERBAL_COMMIT: 'VERBAL', APPLICATION: 'WON',
+  POC: 'EVALUATING',
+  RE_PROPOSAL: 'EVALUATING', EVALUATION: 'EVALUATING', APPROVAL: 'PROBABLE',
 };
 
 /** Twenty の stage（実測 5 段階） */

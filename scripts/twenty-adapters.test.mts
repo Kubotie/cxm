@@ -278,10 +278,13 @@ describe('方針', () => {
     }
   });
 
-  test('stage の対応表を確定していない', async () => {
+  test('既存 Opportunity の stage との対応表は、いまも作らない', async () => {
     const m = await load('sync-policy.ts');
+    // ダッシュボードのフェーズは Salesforce に合わせた（2026-10-01）。
+    // 既存の **Twenty** Opportunity（5 段階）との対応は依然として不要
+    // （Pipeline の商談は testOpportunity と Salesforce が正本）。
     assert.equal(m.STAGE_MAPPING_DECIDED, false);
-    assert.equal(m.DASHBOARD_PHASES.length, 8);        // 7 段階＋失注（Version 96）
+    assert.equal(m.DASHBOARD_PHASES.length, 11);       // Salesforce のフェーズ（POC は使わない）
     assert.equal(m.TWENTY_STAGES.length, 5);
   });
 

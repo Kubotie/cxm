@@ -188,13 +188,18 @@ export const INDUSTRY_FROM_NOTION: Record<string, string> = {
  *    **フェーズの正本は testOpportunity.stage**（Notion へは書くだけ）。
  */
 export const STAGE_TO_BILLING_STAGE: Record<string, string> = {
-  NOT_STARTED:   'S0 未検証',
-  FIRST_MEETING: 'S0 未検証',
-  TRIAL:         'S1 PoC開始済み',
-  QUOTE:         'S3 見積提示',
-  VERBAL_COMMIT: 'S4 稟議中',
-  APPLICATION:   'S4 稟議中',
-  CLOSED_WON:    'S5 受注',
+  // Salesforce のフェーズ（2026-10-01）→ Notion の課金ステージ
+  INACTIVE:           'S0 未検証',
+  ACTIVE:             'S0 未検証',
+  GOAL_SHARED:        'S0 未検証',
+  QUALIFIED_CHAMPION: 'S1 PoC開始済み',
+  EVALUATING:         'S1 PoC開始済み',
+  PROBABLE:           'S3 見積提示',
+  VERBAL:             'S4 稟議中',
+  WON:                'S4 稟議中',
+  CLOSED_WON:         'S5 受注',
+  // 閉じたが失注ではない Admin Close は動かさない
+  ADMIN_CLOSE:        'S0 未検証',
   // 失注は課金ステージを動かさない（運用の合意が要るため書かない）
 };
 

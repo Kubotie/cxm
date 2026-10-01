@@ -49,12 +49,12 @@ let oppId = null;
 await check('testOpportunity を作成できる', async () => {
   const r = await C.createRecord(OPP.plural, OPP.singular, {
     name: MARK, companyName: MARK, notionCompanyId: 'smoke-' + MARK,
-    stage: 'TRIAL', addMrr: 300000, applyDate: '2026-12-01',
+    stage: 'EVALUATING', addMrr: 300000, applyDate: '2026-12-01',
     msBase: 'apply', isMain: true, need: 'スモークテスト',
   });
   oppId = r.id; created.push([OPP.plural, r.id]);
   if (!oppId) throw new Error('id が返らない');
-  if (r.stage !== 'TRIAL') throw new Error(`stage=${r.stage}`);
+  if (r.stage !== 'EVALUATING') throw new Error(`stage=${r.stage}`);
   if (r.msBase !== 'apply') throw new Error(`msBase が小文字に戻らない: ${r.msBase}`);
   return 'msBase は APPLY で保存され apply で返る';
 });
@@ -69,24 +69,29 @@ await check('取得すると同じ値が返る', async () => {
 });
 
 await check('部分更新ができる（送った項目だけ変わる）', async () => {
-  const r = await C.updateRecord(OPP.plural, OPP.singular, oppId, { stage: 'QUOTE', barrier: '稟議が長い' });
-  if (r.stage !== 'QUOTE') throw new Error(`stage=${r.stage}`);
+  const r = await C.updateRecord(OPP.plural, OPP.singular, oppId, { stage: 'PROBABLE', barrier: '稟議が長い' });
+  if (r.stage !== 'PROBABLE') throw new Error(`stage=${r.stage}`);
   if (r.addMrr !== 300000) throw new Error('送っていない addMrr が変わった');
   return 'stage だけ変わり addMrr は保持';
 });
 
-await check('旧フェーズキーが新キーに正規化される', async () => {
-  if (S.normalizeStage('RE_PROPOSAL') !== 'TRIAL') throw new Error('RE_PROPOSAL');
-  if (S.normalizeStage('EVALUATION') !== 'TRIAL') throw new Error('EVALUATION');
-  if (S.normalizeStage('APPROVAL') !== 'QUOTE') throw new Error('APPROVAL');
-  if (S.normalizeStage('SCREENING') !== null) throw new Error('未知の値を通した');
-  return 'RE_PROPOSAL/EVALUATION→TRIAL、APPROVAL→QUOTE';
+await check('旧フェーズキーが Salesforce のキーに正規化される', async () => {
+  // 2026-10-01 にフェーズを Salesforce に合わせた。旧キーは読み込み時だけ読み替える
+  if (S.normalizeStage('NOT_STARTED')   !== 'INACTIVE')   throw new Error('NOT_STARTED');
+  if (S.normalizeStage('FIRST_MEETING') !== 'ACTIVE')     throw new Error('FIRST_MEETING');
+  if (S.normalizeStage('TRIAL')         !== 'EVALUATING') throw new Error('TRIAL');
+  if (S.normalizeStage('QUOTE')         !== 'PROBABLE')   throw new Error('QUOTE');
+  if (S.normalizeStage('VERBAL_COMMIT') !== 'VERBAL')     throw new Error('VERBAL_COMMIT');
+  if (S.normalizeStage('APPLICATION')   !== 'WON')        throw new Error('APPLICATION');
+  if (S.normalizeStage('POC')           !== 'EVALUATING') throw new Error('POC は使わない');
+  if (S.normalizeStage('SCREENING')     !== null)         throw new Error('未知の値を通した');
+  return '旧 8 段階 → Salesforce のキー、POC は Evaluating へ';
 });
 
 await check('契約締結済みへの出入りだけ承認が要る', async () => {
-  if (!S.needsApproval('QUOTE', 'CLOSED_WON')) throw new Error('入りが承認不要になっている');
-  if (!S.needsApproval('CLOSED_WON', 'QUOTE')) throw new Error('外しが承認不要になっている');
-  if (S.needsApproval('TRIAL', 'QUOTE')) throw new Error('通常の前進に承認を要求している');
+  if (!S.needsApproval('PROBABLE', 'CLOSED_WON')) throw new Error('入りが承認不要になっている');
+  if (!S.needsApproval('CLOSED_WON', 'PROBABLE')) throw new Error('外しが承認不要になっている');
+  if (S.needsApproval('EVALUATING', 'PROBABLE')) throw new Error('通常の前進に承認を要求している');
   return '入り・外しのみ true';
 });
 
@@ -94,7 +99,7 @@ await check('承認待ちを pendingEdit に積める（値は変えない）', 
   const r = await C.updateRecord(OPP.plural, OPP.singular, oppId, {
     pendingEdit: { stage: 'CLOSED_WON', addMrr: 500000, requestedAt: new Date().toISOString(), requestedBy: 'smoke' },
   });
-  if (r.stage !== 'QUOTE') throw new Error('本体の stage が変わってしまった');
+  if (r.stage !== 'PROBABLE') throw new Error('本体の stage が変わってしまった');
   const pe = typeof r.pendingEdit === 'string' ? JSON.parse(r.pendingEdit) : r.pendingEdit;
   if (pe?.stage !== 'CLOSED_WON') throw new Error('pendingEdit が読めない');
   return 'RAW_JSON に積めて本体は不変';
@@ -111,13 +116,13 @@ await check('createIfAbsent が重複を作らない（Twenty に upsert は無�
 await check('testOperationLog に予約語の読み替えで書ける', async () => {
   const r = await C.createRecord(LOG.plural, LOG.singular, {
     name: MARK, at: new Date().toISOString(), actor: 'smoke', action: 'update',
-    object: 'testOpportunity', recordId: oppId, field: 'stage', from: 'TRIAL', to: 'QUOTE',
+    object: 'testOpportunity', recordId: oppId, field: 'stage', from: 'EVALUATING', to: 'PROBABLE',
     source: 'ui', message: 'スモーク',
   });
   created.push([LOG.plural, r.id]);
   if (r.object !== 'testOpportunity') throw new Error(`object が戻らない: ${JSON.stringify(r.object)}`);
   if (r.field !== 'stage') throw new Error(`field が戻らない: ${JSON.stringify(r.field)}`);
-  if (r.from !== 'TRIAL' || r.to !== 'QUOTE') throw new Error('from/to が戻らない');
+  if (r.from !== 'EVALUATING' || r.to !== 'PROBABLE') throw new Error('from/to が戻らない');
   if (r.action !== 'update') throw new Error(`action=${r.action}`);
   return 'object→objectName / field→fieldName を往復';
 });

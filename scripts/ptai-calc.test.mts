@@ -15,7 +15,7 @@ const yen = (actual: number, expected: number, msg?: string) =>
   assert.ok(Math.abs(actual - expected) < 1, msg ?? `${actual} ≠ ${expected}`);
 
 const co = (over: Record<string, unknown> = {}) => ({
-  mrr: 500_000, stage: 'QUOTE', addMrr: 300_000, owners: ['Paul'], ...over,
+  mrr: 500_000, stage: 'PROBABLE', addMrr: 300_000, owners: ['Paul'], ...over,
 }) as any;
 
 describe('金額（§3）', () => {
@@ -33,22 +33,22 @@ describe('金額（§3）', () => {
   });
 
   test('期待値MRR ＝ **合算MRR** × フェーズの確率（原本に合わせる）', () => {
-    // QUOTE は 55%。(500,000 + 300,000) × 0.55
-    yen(calc.expectedMrr(co()), 440_000);
-    // 仕様書 §3 の「現在MRR × 確率」だと 275,000 になる。そちらではない
-    assert.ok(Math.abs(calc.expectedMrr(co()) - 275_000) > 1);
+    // Probable は 60%（Salesforce の DefaultProbability）。(500,000 + 300,000) × 0.60
+    yen(calc.expectedMrr(co()), 480_000);
+    // 仕様書 §3 の「現在MRR × 確率」だと 300,000 になる。そちらではない
+    assert.ok(Math.abs(calc.expectedMrr(co()) - 300_000) > 1);
   });
 
   test('商談が複数なら 現在MRR×代表確率 ＋ 商談ごとの期待値', () => {
     const c = co({
-      addMrr: 500_000, stage: 'TRIAL',
+      addMrr: 500_000, stage: 'EVALUATING',
       deals: [
-        { stage: 'TRIAL', addMrr: 200_000 },        // 0.30 → 60,000
-        { stage: 'VERBAL_COMMIT', addMrr: 300_000 }, // 0.80 → 240,000
+        { stage: 'EVALUATING', addMrr: 200_000 },        // 0.40 → 80,000
+        { stage: 'VERBAL', addMrr: 300_000 },            // 0.90 → 270,000
       ],
     });
-    // 500,000 × 0.30 ＝ 150,000 ＋ 60,000 ＋ 240,000
-    yen(calc.expectedMrr(c), 450_000);
+    // 代表フェーズは Evaluating。500,000 × 0.40 ＝ 200,000 ＋ 80,000 ＋ 270,000
+    yen(calc.expectedMrr(c), 550_000);
   });
 
   test('失注の商談は期待値に入れない', () => {
@@ -57,26 +57,27 @@ describe('金額（§3）', () => {
 
   test('確定MRR は契約締結済みのみ。足切りも効く', () => {
     assert.equal(calc.wonMrr(co({ stage: 'CLOSED_WON' })), 800_000);
-    assert.equal(calc.wonMrr(co({ stage: 'QUOTE' })), 0, '契約前を数えている');
+    assert.equal(calc.wonMrr(co({ stage: 'PROBABLE' })), 0, '契約前を数えている');
     assert.equal(calc.wonMrr(co({ stage: 'CLOSED_WON', addMrr: 50_000 })), 0, '足切りが効いていない');
   });
 
-  test('**申込用紙回収済みは確定に含める**（§9-6 の回答 / 2026-10-01）', () => {
-    assert.equal(calc.wonMrr(co({ stage: 'APPLICATION' })), 800_000);
-    assert.equal(calc.wonMrr(co({ stage: 'VERBAL_COMMIT' })), 0, '口頭合意はまだ確定でない');
-    assert.deepEqual([...calc.WON_STAGES].sort(), ['APPLICATION', 'CLOSED_WON']);
+  test('**Won も確定に含める**（2026-10-01 Kubotie。従来の「申込用紙回収済み」に当たる）', () => {
+    assert.equal(calc.wonMrr(co({ stage: 'WON' })), 800_000);
+    assert.equal(calc.wonMrr(co({ stage: 'VERBAL' })), 0, 'Verbal はまだ確定でない');
+    // Won は Salesforce 上は IsWon = false・未クローズだが、確率 100%・Commit
+    assert.deepEqual([...calc.WON_STAGES].sort(), ['CLOSED_WON', 'WON']);
   });
 
   test('確定に入れた申込用紙回収済みは、商談中から外す（二重計上を防ぐ）', () => {
-    const c = co({ stage: 'APPLICATION' });
+    const c = co({ stage: 'WON' });
     assert.ok(calc.wonMrr(c) > 0);
     assert.equal(calc.inDealMrr(c), 0, '確定と商談中の両方に出てしまっている');
     assert.equal(calc.stackBucket(c), 'won');
   });
 
-  test('確率は据え置き。申込用紙回収済みの期待値は 95%', () => {
-    // 確定に入れても確率は 1.0 にしない（§9-6 で確率は据え置きと回答）
-    yen(calc.expectedMrr(co({ stage: 'APPLICATION' })), 800_000 * 0.95);
+  test('Won の確率は Salesforce どおり 100%', () => {
+    // Salesforce の DefaultProbability が 100%。確定にも入れる
+    yen(calc.expectedMrr(co({ stage: 'WON' })), 800_000 * 1);
     yen(calc.expectedMrr(co({ stage: 'CLOSED_WON' })), 800_000);
   });
 
@@ -85,8 +86,8 @@ describe('金額（§3）', () => {
       stage: 'CLOSED_WON', addMrr: 600_000,
       deals: [
         { stage: 'CLOSED_WON',  addMrr: 300_000 },
-        { stage: 'APPLICATION', addMrr: 100_000 },   // これも確定
-        { stage: 'QUOTE',       addMrr: 200_000 },
+        { stage: 'WON', addMrr: 100_000 },   // これも確定
+        { stage: 'PROBABLE',       addMrr: 200_000 },
       ],
     });
     assert.equal(calc.wonAddMrr(c), 400_000);
@@ -94,9 +95,9 @@ describe('金額（§3）', () => {
   });
 
   test('商談中は 初回アポ実施済み〜口頭合意獲得済み', () => {
-    for (const s of ['FIRST_MEETING', 'TRIAL', 'QUOTE', 'VERBAL_COMMIT'])
+    for (const s of ['ACTIVE', 'EVALUATING', 'PROBABLE', 'VERBAL'])
       assert.ok(calc.isInDeal(co({ stage: s })), `${s} が商談中でない`);
-    for (const s of ['NOT_STARTED', 'APPLICATION', 'CLOSED_WON', 'CLOSED_LOST'])
+    for (const s of ['INACTIVE', 'WON', 'CLOSED_WON', 'CLOSED_LOST'])
       assert.ok(!calc.isInDeal(co({ stage: s })), `${s} を商談中にしている`);
   });
 });
@@ -124,9 +125,9 @@ describe('担当の持分と積み上げ（§3）', () => {
 
   test('内訳は 確定 → 商談中 → 狙い の順に 1 つだけ', () => {
     assert.equal(calc.stackBucket(co({ stage: 'CLOSED_WON' })), 'won');
-    assert.equal(calc.stackBucket(co({ stage: 'QUOTE' })), 'inDeal');
-    assert.equal(calc.stackBucket(co({ stage: 'NOT_STARTED', addMrr: 0, aimMrr: 500_000 })), 'aim');
-    assert.equal(calc.stackBucket(co({ stage: 'NOT_STARTED', addMrr: 0, aimMrr: 0 })), 'none');
+    assert.equal(calc.stackBucket(co({ stage: 'PROBABLE' })), 'inDeal');
+    assert.equal(calc.stackBucket(co({ stage: 'INACTIVE', addMrr: 0, aimMrr: 500_000 })), 'aim');
+    assert.equal(calc.stackBucket(co({ stage: 'INACTIVE', addMrr: 0, aimMrr: 0 })), 'none');
   });
 });
 
@@ -164,14 +165,14 @@ describe('遅れと期限（§3）', () => {
   const today = new Date(2026, 10, 1);   // 2026-11-01
 
   test('予定を過ぎて未到達なら遅れ', () => {
-    const r = calc.lateMilestone('FIRST_MEETING', { TRIAL: '2026-10-13', QUOTE: '2026-10-27' }, today);
+    const r = calc.lateMilestone('ACTIVE', { TRIAL: '2026-10-13', QUOTE: '2026-10-27' }, today);
     assert.ok(r);
-    assert.equal(r!.stage, 'TRIAL', '最も古い遅れを返す');
+    assert.equal(r!.stage, 'EVALUATING', '最も古い遅れを返す');
     assert.equal(r!.days, 19);
   });
 
   test('すでに到達しているフェーズは遅れにしない', () => {
-    const r = calc.lateMilestone('QUOTE', { TRIAL: '2026-10-13', QUOTE: '2026-10-27' }, today);
+    const r = calc.lateMilestone('PROBABLE', { TRIAL: '2026-10-13', QUOTE: '2026-10-27' }, today);
     assert.equal(r, null);
   });
 
@@ -192,8 +193,8 @@ describe('遅れと期限（§3）', () => {
 describe('KPI の集計', () => {
   const companies = [
     co({ mrr: 500_000, addMrr: 300_000, stage: 'CLOSED_WON', owners: ['Paul'] }),
-    co({ mrr: 400_000, addMrr: 200_000, stage: 'QUOTE',      owners: ['Paul', 'Baba'] }),
-    co({ mrr: 300_000, addMrr: 50_000,  stage: 'TRIAL',      owners: ['Baba'] }),   // 足切り
+    co({ mrr: 400_000, addMrr: 200_000, stage: 'PROBABLE',      owners: ['Paul', 'Baba'] }),
+    co({ mrr: 300_000, addMrr: 50_000,  stage: 'EVALUATING',      owners: ['Baba'] }),   // 足切り
   ];
 
   test('チーム全体', () => {
@@ -202,7 +203,7 @@ describe('KPI の集計', () => {
     assert.equal(k.wonCount, 1);
     assert.equal(k.inDeal, 600_000, '足切りされた 1 社は入らない');
     assert.equal(k.inDealCount, 1);
-    yen(k.expected, 800_000 + 600_000 * 0.55);
+    yen(k.expected, 800_000 + 600_000 * 0.60);
   });
 
   test('メンバー別は持分で按分する', () => {

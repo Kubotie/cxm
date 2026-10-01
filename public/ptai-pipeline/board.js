@@ -14,29 +14,28 @@ const CONFIG = {
 };
 /* 商談フェーズ（PGA_Phase_Planning_Design_v0 §1-1）。Twenty の stage にこの値が入っていればそのまま使い、無ければ暫定判定する */
 // フェーズは Salesforce の商談フェーズに合わせる（2026-09-30 Utty）。旧キーは読み込み時に置き換える
-const PHASES = ['NOT_STARTED','FIRST_MEETING','TRIAL','QUOTE','VERBAL_COMMIT','APPLICATION','CLOSED_WON','CLOSED_LOST'];
-const PH_LEGACY = {RE_PROPOSAL:'TRIAL', EVALUATION:'TRIAL', APPROVAL:'QUOTE'};
+const PHASES = ['INACTIVE','ACTIVE','GOAL_SHARED','QUALIFIED_CHAMPION','EVALUATING','PROBABLE','VERBAL','WON','CLOSED_WON','ADMIN_CLOSE','CLOSED_LOST'];   /* 【移植による変更 5/6】Salesforce のフェーズへ（2026-10-01）。POC は使わない */
+const PH_LEGACY = {NOT_STARTED:'INACTIVE', FIRST_MEETING:'ACTIVE', TRIAL:'EVALUATING', QUOTE:'PROBABLE', VERBAL_COMMIT:'VERBAL', APPLICATION:'WON', POC:'EVALUATING', RE_PROPOSAL:'EVALUATING', EVALUATION:'EVALUATING', APPROVAL:'PROBABLE'};   /* 旧キーは読み込み時だけ読み替える */
 const phN = p => PH_LEGACY[p]||p;
 const msN = m => { if(!m||typeof m!=='object') return m||null; const o={}; Object.entries(m).forEach(([k,v])=>{ const k2=phN(k); if(k==='APPROVAL'||k==='RE_PROPOSAL') return; if(v&&!o[k2]) o[k2]=v; }); return Object.keys(o).length?o:null; };
-const PH_JP = {NOT_STARTED:'初回アポ実施前',FIRST_MEETING:'初回アポ実施済み',TRIAL:'トライアル開始済み',QUOTE:'最終見積もり提示済み',VERBAL_COMMIT:'口頭合意獲得済み',APPLICATION:'申込用紙回収済み',CLOSED_WON:'契約締結済み',CLOSED_LOST:'失注',
-  RE_PROPOSAL:'トライアル開始済み',EVALUATION:'トライアル開始済み',APPROVAL:'最終見積もり提示済み'};
-const PH_SHORT = {NOT_STARTED:'初回アポ前',FIRST_MEETING:'初回アポ済',TRIAL:'トライアル',QUOTE:'最終見積',VERBAL_COMMIT:'口頭合意',APPLICATION:'申込用紙回収',CLOSED_WON:'契約締結',CLOSED_LOST:'失注'};
-const PROB = {NOT_STARTED:0,FIRST_MEETING:.10,TRIAL:.30,QUOTE:.55,VERBAL_COMMIT:.80,APPLICATION:.95,CLOSED_WON:1,CLOSED_LOST:0};
-const PCOL = {NOT_STARTED:'--p1',FIRST_MEETING:'--p2',TRIAL:'--p4',QUOTE:'--p5',VERBAL_COMMIT:'--p6',APPLICATION:'--p8',CLOSED_WON:'--gold',CLOSED_LOST:'--axis'};   // 進むほど青が濃くなり、契約締結はゴールド
+const PH_JP = {INACTIVE:'Inactive',ACTIVE:'Active',GOAL_SHARED:'Goal Shared',QUALIFIED_CHAMPION:'Qualified Champion',EVALUATING:'Evaluating',PROBABLE:'Probable',VERBAL:'Verbal',WON:'Won',CLOSED_WON:'受注 (Closed Won)',ADMIN_CLOSE:'Admin Close',CLOSED_LOST:'Close Lost'};
+const PH_SHORT = {INACTIVE:'Inactive',ACTIVE:'Active',GOAL_SHARED:'Goal Shared',QUALIFIED_CHAMPION:'Qualified',EVALUATING:'Evaluating',PROBABLE:'Probable',VERBAL:'Verbal',WON:'Won',CLOSED_WON:'受注',ADMIN_CLOSE:'Admin Close',CLOSED_LOST:'失注'};
+const PROB = {INACTIVE:0,ACTIVE:0,GOAL_SHARED:.10,QUALIFIED_CHAMPION:.30,EVALUATING:.40,PROBABLE:.60,VERBAL:.90,WON:1,CLOSED_WON:1,ADMIN_CLOSE:0,CLOSED_LOST:0};   /* Salesforce の DefaultProbability をそのまま */
+const PCOL = {INACTIVE:'--axis',ACTIVE:'--p1',GOAL_SHARED:'--p2',QUALIFIED_CHAMPION:'--p4',EVALUATING:'--p5',PROBABLE:'--p6',VERBAL:'--p7',WON:'--p8',CLOSED_WON:'--gold',ADMIN_CLOSE:'--axis',CLOSED_LOST:'--axis'};   // 進むほど青が濃くなり、受注はゴールド
 const RAW_JP = {NONE:'案件なし',NEW:'新規',SCREENING:'スクリーニング',MEETING:'商談',PROPOSAL:'提案',CUSTOMER:'顧客化'};
 const TO_PHASE_PS = ['APPO_SET','APPO_REQUESTING','INTRO_PLANNED','CONSIDERING','PASSED'];
 function phaseOf(ps, st){
   if(PHASES.includes(phN(st))) return {ph:phN(st), est:false, why:'Twenty のフェーズ'};
-  return {ph:'NOT_STARTED', est:false, why:'未入力'};   // 推定はしない（2026-09-29 Utty）。フェーズはダッシュボードの入力か Twenty のフェーズだけ
+  return {ph:'INACTIVE', est:false, why:'未入力'};   // 推定はしない（2026-09-29 Utty）。フェーズはダッシュボードの入力か Twenty のフェーズだけ
   const r=(ph,why)=>({ph,est:true,why});
   if(st==='CUSTOMER') return r('CLOSED_WON','Opportunity が顧客化');
   if(ps==='PASSED') return r('CLOSED_LOST','Ptengine AI ステータスが見送り');
-  if(ps==='CONSIDERING') return r('FIRST_MEETING','Ptengine AI ステータスが検討中');
-  if(ps==='FDE_IN_PROGRESS'||ps==='POC_IN_PROGRESS') return r('TRIAL','Ptengine AI ステータスが'+PS_JP[ps]+'（PoC・先行提供の開始済み）');
-  if(st==='PROPOSAL') return r('FIRST_MEETING','Opportunity が提案');
-  if(st==='MEETING'||st==='SCREENING') return r('FIRST_MEETING','Opportunity が'+RAW_JP[st]);
-  if(ps==='APPO_SET') return r('FIRST_MEETING','Ptengine AI ステータスがアポ確定');
-  return r('NOT_STARTED', st==='NEW'?'Opportunity が新規':'案件なし・Ptengine AI ステータスが'+(PS_JP[ps]||'未設定'));
+  if(ps==='CONSIDERING') return r('ACTIVE','Ptengine AI ステータスが検討中');
+  if(ps==='FDE_IN_PROGRESS'||ps==='POC_IN_PROGRESS') return r('EVALUATING','Ptengine AI ステータスが'+PS_JP[ps]+'（PoC・先行提供の開始済み）');
+  if(st==='PROPOSAL') return r('ACTIVE','Opportunity が提案');
+  if(st==='MEETING'||st==='SCREENING') return r('ACTIVE','Opportunity が'+RAW_JP[st]);
+  if(ps==='APPO_SET') return r('ACTIVE','Ptengine AI ステータスがアポ確定');
+  return r('INACTIVE', st==='NEW'?'Opportunity が新規':'案件なし・Ptengine AI ステータスが'+(PS_JP[ps]||'未設定'));
 }
 const PS = ['FDE_IN_PROGRESS','POC_IN_PROGRESS','APPO_SET','APPO_REQUESTING','CONSIDERING','INTRO_PLANNED','STAY','NURTURE','PASSED','OUT_OF_SCOPE'];
 const PS_JP = {FDE_IN_PROGRESS:'FDE進行',POC_IN_PROGRESS:'PoC進行',APPO_SET:'アポ確定',APPO_REQUESTING:'アポ打診中',CONSIDERING:'検討中',INTRO_PLANNED:'紹介予定',STAY:'ステイ',NURTURE:'ナーチャ',PASSED:'見送り',OUT_OF_SCOPE:'対象外'};
@@ -221,7 +220,7 @@ function buildDeal(c,i){
   }
   ((e&&e.deals)||[]).forEach(x=>{
     if(!x||!x.key) return;
-    deals.push({key:x.key, primary:false, oid:null, name:x.name||('Ptengine AI - '+coShort(c.n)), ph: PHASES.includes(phN(x.phase))?phN(x.phase):'NOT_STARTED', est:false,
+    deals.push({key:x.key, primary:false, oid:null, name:x.name||('Ptengine AI - '+coShort(c.n)), ph: PHASES.includes(phN(x.phase))?phN(x.phase):'INACTIVE', est:false,
       apply:x.applyDate||null, bill:x.billingDate||null, close: x.billingDate?x.billingDate.slice(0,7):(x.closeMonth||null), add:x.addMrr||0,
       term:x.term||null, bs:null, br:x.barrier||null, need:x.need||'', na:x.na||'', naDate:x.naDate||null, log: Array.isArray(x.log)?x.log:[], ms:msN(x.ms), msBase:x.msBase||'apply', pe: x.pendingEdit||null, pdel: x.pendingDelete||null, steps: Array.isArray(x.steps)?x.steps:[],
       up:(x.updatedAt||'').slice(0,10)||null, raw:x, src:{add:'edit',close:'edit',apply:'edit'}, pending: PHASES.includes(phN(x.pendingPhase))?phN(x.pendingPhase):null});
@@ -496,8 +495,8 @@ function renderMemberHead(){
 function renderKpis(){
   const ds=scope();
   const tgt = view==='team'?CONFIG.targetMrr:(CONFIG.targets[view]||0);
-  const w=sum(ds,won), e=sum(ds,expected), inDeal=ds.filter(d=>!['NOT_STARTED','CLOSED_WON','CLOSED_LOST'].includes(d.ph)), inQ=inDeal.filter(d=>d.add>=AI_MIN), p=sum(inQ,total);
-  const inDealPh=d=>!['NOT_STARTED','CLOSED_WON','CLOSED_LOST'].includes(d.ph);
+  const w=sum(ds,won), e=sum(ds,expected), inDeal=ds.filter(d=>!['INACTIVE','CLOSED_WON','CLOSED_LOST'].includes(d.ph)), inQ=inDeal.filter(d=>d.add>=AI_MIN), p=sum(inQ,total);
+  const inDealPh=d=>!['INACTIVE','CLOSED_WON','CLOSED_LOST'].includes(d.ph);
   const overdue=ds.reduce((t,d)=>t+(d.deals||[]).filter(x=>!['CLOSED_WON','CLOSED_LOST'].includes(x.ph)&&x.na&&x.naDate&&x.naDate<dstr(TODAY)).length,0);
   const noNa=cnt(ds,d=>inDealPh(d)&&!d.naHead);
   const mismatch=cnt(ds,d=>mismatchOf(d));
@@ -608,7 +607,7 @@ function renderForecast(){
     <text x="${L}" y="${H-4}" style="fill:var(--muted)">単位：万円（${fcMode==='exp'?'期待値＝合算MRR × フェーズ確率':'想定＝合算MRR'}）　${fcCum?`— 累積　- - 目標ライン（${dueJP()}に100%）`:''}</text>
   </svg>`;
   document.getElementById('fcLegend').innerHTML=PH.map(p=>`<span><i class="dot" style="background:var(${PCOL[p]})"></i>${PH_JP[p]}</span>`).join('');
-  const act=none.filter(d=>d.ph!=='NOT_STARTED'); const pastOpen=past.filter(d=>d.ph!=='CLOSED_WON');
+  const act=none.filter(d=>d.ph!=='INACTIVE'); const pastOpen=past.filter(d=>d.ph!=='CLOSED_WON');
   document.getElementById('fcMissing').innerHTML=`<div class="miss">
      <div><b class="num">${none.length}社</b> が${lab}予定日 未入力（うち商談中 ${act.length}社・合算 ${man(act.reduce((a,d)=>a+total(d),0))}）${pastOpen.length?`／<b class="num" style="color:var(--crit)">${pastOpen.length}社</b> が予定日を過ぎたまま`:''}${later.length?`／${later.length}社 は期限より後（${man(sum(later,val))}）`:''}</div>
      <button type="button" class="linkbtn" id="fcShowMissing">${missingOnly?'絞り込みを解除':'未入力の企業を一覧で見る ↓'}</button></div>`;
@@ -622,7 +621,7 @@ document.querySelectorAll('[data-fm]').forEach(b=>b.onclick=()=>{fcMode=b.datase
 function renderFunnel(){
   const ds=scope(); const maxAmt=Math.max(...PHASES.map(s=>sum(ds.filter(d=>d.ph===s),total)),1);
   document.getElementById('funnel').innerHTML=PHASES.map(s=>{const l=ds.filter(d=>d.ph===s); const amt=sum(l,total), ex=sum(l,expected);
-    const PH_2L={NOT_STARTED:['初回アポ','実施前'],FIRST_MEETING:['初回アポ','実施済み'],TRIAL:['トライアル','開始済み'],QUOTE:['最終見積もり','提示済み'],VERBAL_COMMIT:['口頭合意','獲得済み'],APPLICATION:['申込用紙','回収済み'],CLOSED_WON:['契約','締結済み']};
+    const PH_2L={INACTIVE:['Inactive',''],ACTIVE:['Active',''],GOAL_SHARED:['Goal','Shared'],QUALIFIED_CHAMPION:['Qualified','Champion'],EVALUATING:['Evaluating',''],PROBABLE:['Probable',''],VERBAL:['Verbal',''],WON:['Won',''],CLOSED_WON:['受注','Closed Won'],ADMIN_CLOSE:['Admin','Close'],CLOSED_LOST:['Close','Lost']};
     const n=PHASES.indexOf(s)+1, lost=s==='CLOSED_LOST';
     return `<div class="fcol ${lost?'lost':''} ${l.length?'':'zero'}" role="button" tabindex="0" data-ph="${s}" aria-pressed="${phaseFilter===s}" data-tip="${esc(`<b>${PH_JP[s]}</b>${l.length}社　現在MRR ${man(amt)}<br>確率 ${Math.round(PROB[s]*100)}%　期待値 ${man(ex)}<br>クリックでこのフェーズの企業を表示`)}">
       <div class="ph">${lost?'':`<span class="no num">${n}</span>`}<span class="nm">${(PH_2L[s]||[PH_JP[s],''])[0]}${(PH_2L[s]||[])[1]?`<small>${PH_2L[s][1]}</small>`:''}</span></div>
@@ -681,7 +680,7 @@ function renderAlerts(){
   ds.forEach(d=>{
     (d.deals||[]).filter(x=>x.pe||x.pdel).forEach(x=>push('apr','apr',d, x.pdel?'受注済み商談の削除の承認待ち':'受注済み商談の変更の承認待ち', `${d.n}：${x.name}`,'edit', d.m+2e9));
     (d.deals||[]).filter(x=>x.pending&&x.pending!==x.ph).forEach(x=>push('apr','apr',d,`${PH_JP[x.pending]}の承認待ち`,`${d.n}：${x.name}（${PH_JP[x.ph]} → ${PH_JP[x.pending]}）`,'sum',d.m+2e9));
-    (d.deals||[]).filter(x=>!['CLOSED_WON','CLOSED_LOST','NOT_STARTED'].includes(x.ph)).forEach(x=>{
+    (d.deals||[]).filter(x=>!['CLOSED_WON','CLOSED_LOST','INACTIVE'].includes(x.ph)).forEach(x=>{
       const miss=[!x.add&&'（見込）追加MRR', !x.apply&&'申込完了日', !x.na&&'ネクストアクション', x.na&&!x.naDate&&'アクション期日'].filter(Boolean);
       if(miss.length) push('deal','warn',d,`<span class="atag dl">商談</span>${miss.join('・')}が未入力`,`${d.n}：${x.name.replace(/^Ptengine AI\s*[-－]\s*/,'')}（${PH_JP[x.ph]}）`,'edit', d.m+(x.add||0)); });
     (d.deals||[]).forEach(x=>{ const L=msLate(x); if(!L) return;
@@ -691,7 +690,7 @@ function renderAlerts(){
     (d.sxOpen||[]).forEach(x=>{ if(x.dueStr<T) push('late','crit',d,`<span class="atag sx">サクセス</span>Todo の期限超過 ${days(TODAY,ymd(x.dueStr))}日`,`${d.n}：${x.text}`,'plan',d.m); else if(x.dueStr<=W) push('week','warn',d,`<span class="atag sx">サクセス</span>${x.dueStr.slice(5).replace('-','/')} まで`,`${d.n}：${x.text}`,'plan'); });
     (d.deals||[]).filter(x=>!['CLOSED_WON','CLOSED_LOST'].includes(x.ph)&&x.na&&x.naDate).forEach(x=>{ if(x.naDate<T) push('late','crit',d,`<span class="atag dl">商談</span>ネクストアクションの期限超過 ${days(TODAY,ymd(x.naDate))}日`,`${d.n}：${x.na}`,'edit',d.m+1); else if(x.naDate<=W) push('week','warn',d,`<span class="atag dl">商談</span>${x.naDate.slice(5).replace('-','/')} まで`,`${d.n}：${x.na}`,'edit'); });
     if(d.ph==='CLOSED_WON'||d.ph==='CLOSED_LOST') return;
-    const dealing=!['NOT_STARTED','CLOSED_WON','CLOSED_LOST'].includes(d.ph);
+    const dealing=!['INACTIVE','CLOSED_WON','CLOSED_LOST'].includes(d.ph);
     if(dealing && !aimOf(d) && !(d.add>=AI_MIN)) push('aim','warn',d,'（目標）追加MRR が未入力',`${d.n}（${PH_JP[d.ph]}・現在MRR ${man(d.m)}）`,'edit');
     if(dealing && !d.planCount) push('plan','warn',d,'<span class="atag sx">サクセス</span>プラン未作成',`${d.n}（${PH_JP[d.ph]}・現在MRR ${man(d.m)}）`,'plan');
     if(dealing && !((orgOf(d)||{nodes:[]}).nodes||[]).some(n=>n.kind==='person')) push('org','warn',d,'組織図未作成',`${d.n}（${PH_JP[d.ph]}）`,'org');
@@ -767,7 +766,7 @@ function renderDeals(){
       <td></td><td></td>
       <td class="r num">${x.add?man(x.add)+(x.src&&x.src.add==='edit'&&x.primary?'<span class="chip estm">入力</span>':''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
       <td></td>
-      <td class="num">${x.apply?dateCell(x.apply.slice(5).replace('-','/'), x.apply<dstr(TODAY)&&!['CLOSED_WON','CLOSED_LOST','VERBAL_COMMIT','APPLICATION'].includes(x.ph), x.apply.slice(0,4)!==String(TODAY.getFullYear())?`<span class="dim">'${x.apply.slice(2,4)}</span>`:''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
+      <td class="num">${x.apply?dateCell(x.apply.slice(5).replace('-','/'), x.apply<dstr(TODAY)&&!['CLOSED_WON','CLOSED_LOST','VERBAL','WON'].includes(x.ph), x.apply.slice(0,4)!==String(TODAY.getFullYear())?`<span class="dim">'${x.apply.slice(2,4)}</span>`:''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
       <td class="num">${x.close?dateCell(x.close.replace('-','/'), x.close<ymOf(TODAY)&&!fin, ''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
       <td class="r num">${man(dealExp(x))}</td>
       <td class="brc">${x.bs||x.br?`${x.bs?`<span class="chip bs-${BS_OPTS.indexOf(x.bs)}">${esc(x.bs)}</span>`:''}${x.br?`<div class="brt" title="${esc(x.br)}">${esc(x.br)}</div>`:''}`:(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
@@ -1514,12 +1513,18 @@ function selDealKey(d){
   if(editDeal && d.deals.some(x=>x.key===editDeal)) return editDeal;
   return d.deals[0] ? d.deals[0].key : 'main';
 }
-const PH_FLOW=['FIRST_MEETING','TRIAL','QUOTE','VERBAL_COMMIT','APPLICATION','CLOSED_WON'];
+const PH_FLOW=['ACTIVE','GOAL_SHARED','QUALIFIED_CHAMPION','EVALUATING','PROBABLE','VERBAL','WON','CLOSED_WON'];
 /* ---- 到達予定（マイルストーン）：申込完了日 or 課金開始日から逆算して自動提案 ---- */
 const MS_PH=['TRIAL','QUOTE','VERBAL_COMMIT'];   // ゴールの「申込用紙回収済み」は申込完了日そのもの
 const MS_OFF={TRIAL:49,QUOTE:35,VERBAL_COMMIT:10};   // 申込完了日の何日前か
 const MS_BILL_GAP=14;                                                  // 課金開始日を基準にするときは申込完了＝課金開始の14日前とみなす
-const reachedPh=(x,p)=>x.ph==='CLOSED_WON'||(PH_FLOW.indexOf(x.ph)>=PH_FLOW.indexOf(p));
+/* 【移植による変更 5/6】ms の鍵とフェーズ名の分離（2026-10-01）
+   原本は到達予定日の鍵（TRIAL/QUOTE/VERBAL_COMMIT）とフェーズ名を同じ文字列で
+   兼用していた。Salesforce のフェーズに移すとフェーズ名だけ変わるので、
+   **ms の鍵は保存済みデータのまま据え置き**、対応表で読み替える。 */
+const MS2PH={TRIAL:'EVALUATING',QUOTE:'PROBABLE',VERBAL_COMMIT:'VERBAL'};
+const phOf=p=>MS2PH[p]||p;
+const reachedPh=(x,p)=>{const t=phOf(p);return x.ph==='CLOSED_WON'||(PH_FLOW.indexOf(x.ph)>=PH_FLOW.indexOf(t));};
 const toFri=dt=>{ const w=dt.getDay(); if(w===6) dt.setDate(dt.getDate()-1); if(w===0) dt.setDate(dt.getDate()-2); return dt; };
 function msSuggest(x, base, baseDate){
   if(!baseDate) return null;
@@ -1537,7 +1542,7 @@ function msSuggest(x, base, baseDate){
   return out;
 }
 const MS_TIP = '基準の日付（申込完了日か課金開始日）から逆算して、各フェーズの到達予定を自動で入れます。日付はクリックで変更でき、変更したものは基準を変えても保持されます。予定日を過ぎても次のフェーズに進んでいないと、お知らせの「予定より遅れ」に出ます。';
-const msText = v => v&&typeof v==='object' ? MS_PH.filter(p=>v[p]).map(p=>`${PH_JP[p]} ${mdj(v[p])}`).join('・')||'—' : '—';
+const msText = v => v&&typeof v==='object' ? MS_PH.filter(p=>v[p]).map(p=>`${PH_JP[phOf(p)]} ${mdj(v[p])}`).join('・')||'—' : '—';
 function msLate(x){   // 予定日を過ぎたのに到達していない最新のマイルストーン
   if(!x.ms||['CLOSED_WON','CLOSED_LOST'].includes(x.ph)) return null; const T=dstr(TODAY);
   const late=MS_PH.filter(p=>x.ms[p]&&x.ms[p]<T&&!reachedPh(x,p)); if(!late.length) return null;
@@ -1591,7 +1596,7 @@ function msRow(y){
   const chips=MS_PH.filter(p=>m[p]||reachedPh(y,p)).map(p=>{
     const r=reachedPh(y,p), late=!r&&m[p]&&m[p]<T; let cls=r?'done':late?'late':''; if(!r&&!late&&!nextSet){ cls='next'; nextSet=true; }
     const tip=r?'到達済み':late?`予定より${days(TODAY,ymd(m[p]))}日遅れ`:m[p]?relDay(m[p]):'';
-    return `<span class="m ${cls}" title="${esc(PH_JP[p]+'：'+(tip||''))}"><b>${PH_JP[p]}</b>${m[p]?`<span class="num">${mdj(m[p])}</span>`:''}${!r&&m[p]?`<em>${late?days(TODAY,ymd(m[p]))+'日遅れ':relDay(m[p])}</em>`:''}</span>`;
+    return `<span class="m ${cls}" title="${esc(PH_JP[phOf(p)]+'：'+(tip||''))}"><b>${PH_JP[phOf(p)]}</b>${m[p]?`<span class="num">${mdj(m[p])}</span>`:''}${!r&&m[p]?`<em>${late?days(TODAY,ymd(m[p]))+'日遅れ':relDay(m[p])}</em>`:''}</span>`;
   });
   const bd = y.msBase==='bill' ? (y.bill||null) : y.apply; const bl = y.msBase==='bill' ? '課金開始' : '申込完了';
   if(bd) chips.push(`<span class="m" title="逆算の基準"><b>${bl}</b><span class="num">${mdj(bd)}</span></span>`);
@@ -1661,14 +1666,14 @@ function jrRow(y){
   const m=y.ms||{}, hasMs=MS_PH.some(p=>m[p]);
   const bd = won ? (y.apply||null) : (y.msBase==='bill' ? (y.bill||null) : y.apply);
   const bl = !won && y.msBase==='bill' ? '課金開始' : '申込用紙回収';
-  const goalR = bl==='課金開始' ? won : reachedPh(y,'APPLICATION');
+  const goalR = bl==='課金開始' ? won : reachedPh(y,'WON');
   const list=jrList(y,L);
   if(lost) return list?`<div class="jr"><div class="jrh"><span class="lab">経過</span></div>${list}</div>`:'';
   if(!hasMs && !bd && !won) return `<div class="jr"><div class="jrh"><span class="lab">道のり</span><span class="jrempty">到達予定が未設定です（申込完了日を入れると自動で入ります）</span></div>${list}</div>`;
   // 節目：スタート → 4つのフェーズ → ゴール（申込完了）
   const actual={}; L.forEach(e=>{ if(e.t==='ph' && !actual[phN(e.to)]) actual[phN(e.to)]=ld(e.at); });
   // 過去（到達済み・遅れ）は今日の左、これからは右。今日も1つの節目として等間隔に並べる
-  const st=[]; MS_PH.forEach(p=>{ const r=won||reachedPh(y,p); if(!m[p]&&!r) return; st.push({k:p, name:PH_SHORT[p], full:PH_JP[p], r, plan:m[p]||null, act:actual[p]||null, d:(r&&actual[p])||m[p]||null}); });
+  const st=[]; MS_PH.forEach(p=>{ const r=won||reachedPh(y,p); if(!m[p]&&!r) return; st.push({k:p, name:PH_SHORT[phOf(p)], full:PH_JP[phOf(p)], r, plan:m[p]||null, act:actual[p]||null, d:(r&&actual[p])||m[p]||null}); });
   if(bd) st.push({k:'goal', name:bl, full:bl==='課金開始'?'課金開始':PH_JP.APPLICATION, r:goalR, d:bd, plan:bd});
   let pd=null; st.forEach(x=>{ if(x.r){ if(!x.d||(pd&&x.d<pd)) x.d=pd; if(x.d) pd=x.d; } });
   const past=st.filter(x=>x.r||(x.plan&&x.plan<T)), fut=st.filter(x=>!past.includes(x));
@@ -1735,7 +1740,7 @@ function dealSum(d,y){
   if(y.ph==='CLOSED_LOST') return `<div class="dsum lost"><span class="dim">失注</span></div>`;
   if(y.ph==='CLOSED_WON'){ const bl=y.bill||(y.close?y.close+'-01':null); const L=(y.log||[]).slice().sort((a,b)=>a.at<b.at?-1:1);
     return `<div class="dsum wonc"><div class="dwon"><i aria-hidden="true">✓</i><b>受注しました</b>${y.apply?`<span><small>申込完了</small><b class="num">${mdj(y.apply)}</b></span>`:''}${bl?`<span><small>課金開始</small><b class="num">${mdj(bl)}</b>${bl>dstr(TODAY)?`<em>${relDay(bl)}</em>`:''}</span>`:''}${y.add?`<span class="amt"><b class="num">＋${man(y.add)}</b>/月</span>`:''}</div>${aprBox(d,y)}${jrList(y,L)}</div>`; }
-  const T=dstr(TODAY), idx=PH_FLOW.indexOf(y.ph), next=idx>=0&&idx<PH_FLOW.length-1?PH_FLOW[idx+1]:(y.ph==='NOT_STARTED'?PH_FLOW[0]:null);
+  const T=dstr(TODAY), idx=PH_FLOW.indexOf(y.ph), next=idx>=0&&idx<PH_FLOW.length-1?PH_FLOW[idx+1]:(y.ph==='INACTIVE'?PH_FLOW[0]:null);
   const bar=`<div class="dflow" aria-label="フェーズ ${PH_JP[y.ph]}">${PH_FLOW.map((p,i)=>`<i class="${i<idx?'done':i===idx?'cur':''}" title="${PH_JP[p]}"></i>`).join('')}</div>
     <div class="dflow-l"><b>${PH_JP[y.ph]}</b>${next&&y.ph!=='CLOSED_WON'?`<span>次は ${PH_JP[next]}</span>`:''}</div>`;
   const date=(l,v)=>v?`<span class="ddate ${v<T&&y.ph!=='CLOSED_WON'&&l==='申込完了'?'late':''}"><small>${l}</small><b class="num">${mdj(v)}</b>${y.ph!=='CLOSED_WON'?`<em>${relDay(v)}</em>`:''}</span>`:`<span class="ddate none"><small>${l}</small><b>—</b></span>`;
@@ -1758,7 +1763,7 @@ function editForm(d){
     term: r.term?String(r.term):'', bs:r.barrierStatus||'', br:r.barrier||'', need: has(r.need)?r.need:(x?x.need:''),
     na:r.na||'', naDate:r.naDate||'', lost:r.lostReason||'', lostD:r.lostDetail||'', ms:msN(r.ms)||{}, msBase:r.msBase||'apply'
   };
-  const xr = x || {ph:phN(r.phase||'NOT_STARTED')};
+  const xr = x || {ph:phN(r.phase||'INACTIVE')};
   const badge = k => isMain&&x ? srcBadge(k,d) : '';
   const chips = d.deals.map(y=>`<button type="button" data-dsel="${esc(y.key)}" aria-pressed="${y.key===key}" title="${esc(y.name)}">${esc(y.name.replace(/^Ptengine AI - /,''))}</button>`).join('')
     + `<button type="button" class="new" data-dsel="new" aria-pressed="${key==='new'||(isMain&&!x)}">＋商談を追加</button>`;
@@ -1773,7 +1778,7 @@ function editForm(d){
     <div class="msbox" id="msBox" data-saved="${MS_PH.some(p=>v.ms[p])?'1':''}">
       <div class="msh"><span class="mt">到達予定</span><span class="qi" data-tip="${esc(MS_TIP)}">?</span>
         <span class="msseg" role="radiogroup" aria-label="逆算の基準">${[['apply','申込完了',v.apply],['bill','課金開始',v.bill]].map(([k,l,dv])=>`<label><input type="radio" name="msBase" value="${k}" ${v.msBase===k?'checked':''}>${l}<b data-msb="${k}">${dv?mdj(dv):'<i>未入力</i>'}</b></label>`).join('')}</span></div>
-      <ol class="mstl">${MS_PH.map(p=>{ const r=reachedPh(xr,p); return `<li class="${r?'done':''}" data-p="${p}"><span class="dt"></span><span class="pl" title="${PH_JP[p]}">${PH_SHORT[p]||PH_JP[p]}</span>${r?'<span class="dv">到達済み</span><span class="sb"></span>':`<label class="dv none"><span class="dvt">—</span><input type="date" data-ms="${p}" min="2020-01-01" max="2099-12-31" value="${esc(v.ms[p]||'')}" ${v.ms[p]?'data-manual="1"':''} tabindex="0" aria-label="${PH_JP[p]}の予定日"></label><span class="sb"></span>`}</li>`; }).join('')}
+      <ol class="mstl">${MS_PH.map(p=>{ const r=reachedPh(xr,p); return `<li class="${r?'done':''}" data-p="${p}"><span class="dt"></span><span class="pl" title="${PH_JP[phOf(p)]}">${PH_SHORT[phOf(p)]||PH_JP[phOf(p)]}</span>${r?'<span class="dv">到達済み</span><span class="sb"></span>':`<label class="dv none"><span class="dvt">—</span><input type="date" data-ms="${p}" min="2020-01-01" max="2099-12-31" value="${esc(v.ms[p]||'')}" ${v.ms[p]?'data-manual="1"':''} tabindex="0" aria-label="${PH_JP[p]}の予定日"></label><span class="sb"></span>`}</li>`; }).join('')}
         <li class="base"><span class="dt"></span><span class="pl" id="msBaseL">申込完了</span><span class="dv" id="msBaseD">—</span><span class="sb">基準</span></li></ol>
       <div class="msf"><span id="msNote"></span><button type="button" id="msReset" hidden>↺ 基準から引き直す</button></div>
     </div>
@@ -1880,7 +1885,7 @@ function wireMs(d){
   };
   const fill=(force)=>{
     const b=base(), bd=bdate(b); if(!bd){ ins.forEach(i=>{ if(!i.dataset.manual) i.value=''; }); paint(); return; }
-    const x=x0||{ph:(document.getElementById('efPhase')||{}).value||'NOT_STARTED'};
+    const x=x0||{ph:(document.getElementById('efPhase')||{}).value||'INACTIVE'};
     const out=msSuggest(x,b,bd)||{};
     ins.forEach(i=>{ if(force){ delete i.dataset.manual; } if(!i.dataset.manual) i.value=out[i.dataset.ms]||''; });
     paint();
@@ -2111,7 +2116,7 @@ function renderPlanning(){
   const wk=addD(TODAY,7), wk2=addD(TODAY,14);
   const thisWeek=ps.filter(p=>p.status!=='DONE'&&p.due&&p.due>=today&&p.due<dstr(wk)).length, nextWeek=ps.filter(p=>p.status!=='DONE'&&p.due&&p.due>=dstr(wk)&&p.due<dstr(wk2)).length;
   const onTime=done.filter(p=>!p.due||!p.doneAt||p.doneAt.slice(0,10)<=p.due).length;
-  const activeNoPlan=scope().filter(d=>!['NOT_STARTED','CLOSED_WON','CLOSED_LOST'].includes(d.ph)&&!d.planCount);
+  const activeNoPlan=scope().filter(d=>!['INACTIVE','CLOSED_WON','CLOSED_LOST'].includes(d.ph)&&!d.planCount);
   document.getElementById('plKpis').innerHTML=`
     <div><b class="num">${ms.length}</b>中間ゴール<span>完了 ${done.length}</span></div>
     <div><b class="num" style="color:${late.length?'var(--crit)':'inherit'}">${late.length}</b>期限超過<span>遅延リスク ${risk.length}</span></div>

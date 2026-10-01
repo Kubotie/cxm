@@ -113,7 +113,7 @@ export async function syncSalesforceOpportunities(
     const res = await upsertByExternalId(OPP.plural, OPP.singular, ext, {
       name:            o.name,
       notionCompanyId: hit.cid,
-      stage:           SF_TO_DASHBOARD_STAGE[o.stage] ?? 'NOT_STARTED',
+      stage:           SF_TO_DASHBOARD_STAGE[o.stage] ?? 'INACTIVE',
       // 「（見込）追加MRR」は NetGain MRR。更新商談だと増加分がここに入る
       addMrr:          o.netMrr,
       // 「申込完了日」は商談の完了予定日

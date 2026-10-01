@@ -20,7 +20,7 @@
 //     新しいデータ経路が画面を駆動するようになった時点で反映される。
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { STAGE_PROB, type Stage } from './twenty-test/schema';
+import { STAGE_PROB, STAGE_ORDER, WON_STAGE_SET, type Stage } from './twenty-test/schema';
 
 /** 足切り。会社ごとの追加MRR がこの額未満なら合算MRR ごと数えない（原本 AI_MIN）*/
 export const AI_MIN = 100_000;
@@ -83,9 +83,10 @@ export function expectedMrr(c: CompanyLike): number {
  * 変更はここ 1 か所。確率（STAGE_PROB）は据え置きなので、
  * **申込用紙回収済みは「確定MRR に入るが、期待値は 95%」**という扱いになる。
  */
-export const WON_STAGES: ReadonlySet<Stage> = new Set<Stage>(['APPLICATION', 'CLOSED_WON']);
+// 定義は schema.ts の WON_STAGE_SET に一本化した（2026-10-01 の 12 段階化）
+export { WON_STAGE_SET as WON_STAGES } from './twenty-test/schema';
 
-export const isWon = (s: Stage | null): boolean => Boolean(s && WON_STAGES.has(s));
+export const isWon = (s: Stage | null): boolean => Boolean(s && WON_STAGE_SET.has(s));
 
 /** 確定した追加MRR。商談が複数なら確定フェーズのものだけ足す */
 export function wonAddMrr(c: CompanyLike): number {
@@ -112,7 +113,8 @@ export function wonMrr(c: CompanyLike): number {
  *   これは §9-6 の回答より前の記述。**確定に入れた以上、商談中からは外すのが筋。**
  */
 const IN_DEAL: ReadonlySet<Stage> = new Set<Stage>([
-  'FIRST_MEETING', 'TRIAL', 'QUOTE', 'VERBAL_COMMIT',
+  'ACTIVE', 'GOAL_SHARED', 'QUALIFIED_CHAMPION', 'EVALUATING',
+  'PROBABLE', 'VERBAL',
 ]);
 export const isInDeal = (c: CompanyLike): boolean => Boolean(c.stage && IN_DEAL.has(c.stage));
 
@@ -175,11 +177,22 @@ function toWeekday(d: Date): Date {
   return d;
 }
 
+/**
+ * 到達予定日の欄。**鍵は原本の `ms` のまま**（msTrial / msQuote / msVerbal）。
+ * フェーズ名ではなく「中間目標の名前」なので、12 段階化しても変えない。
+ */
 export interface MilestoneDates {
   TRIAL: string | null;
   QUOTE: string | null;
   VERBAL_COMMIT: string | null;
 }
+
+/** 中間目標 → それが「到達した」とみなせる Salesforce フェーズ */
+const MILESTONE_STAGES = [
+  { key: 'TRIAL',         stage: 'EVALUATING' },
+  { key: 'QUOTE',         stage: 'PROBABLE' },
+  { key: 'VERBAL_COMMIT', stage: 'VERBAL' },
+] as const satisfies readonly { key: keyof MilestoneDates; stage: Stage }[];
 
 /**
  * 到達予定を逆算する。
@@ -207,12 +220,12 @@ export function backcastMilestones(
 // 遅れ・期限（§3・お知らせの発生条件）
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** 進行順の位置。失注は -1 */
-const STAGE_INDEX: readonly Stage[] = [
-  'NOT_STARTED', 'FIRST_MEETING', 'TRIAL', 'QUOTE', 'VERBAL_COMMIT', 'APPLICATION', 'CLOSED_WON',
-];
+/**
+ * 進行順の位置。失注・Admin Close は -1。
+ * 並びは schema.ts の STAGE_ORDER（Salesforce のセールスパス）に合わせる。
+ */
 export const stageRank = (s: Stage | null): number =>
-  s ? STAGE_INDEX.indexOf(s) : -1;
+  s ? STAGE_ORDER.indexOf(s) : -1;
 
 export interface LateMilestone {
   stage: Stage;
@@ -232,13 +245,14 @@ export function lateMilestone(
   if (current === 'CLOSED_WON' || current === 'CLOSED_LOST') return null;
 
   let worst: LateMilestone | null = null;
-  for (const key of ['TRIAL', 'QUOTE', 'VERBAL_COMMIT'] as const) {
-    const due = parseYmd(String(ms[key] ?? ''));
+  // 到達予定を持つのはこの 3 つ（msTrial / msQuote / msVerbal）
+  for (const m of MILESTONE_STAGES) {
+    const due = parseYmd(String(ms[m.key] ?? ''));
     if (!due) continue;
-    if (stageRank(key) <= cur) continue;              // すでに到達している
+    if (stageRank(m.stage) <= cur) continue;          // すでに到達している
     if (due >= today) continue;                        // まだ期日前
     const days = Math.round((today.getTime() - due.getTime()) / 86_400_000);
-    if (!worst || days > worst.days) worst = { stage: key, days };
+    if (!worst || days > worst.days) worst = { stage: m.stage, days };
   }
   return worst;
 }
