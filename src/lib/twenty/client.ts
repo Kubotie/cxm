@@ -1,28 +1,32 @@
-// ─── Twenty CRM REST クライアント（サーバーサイド専用）────────────────────────
+// ─── Twenty CRM 読み取り専用クライアント（サーバーサイド専用）──────────────────
 //
-// 正本は Utty の取得スクリプト `pga_dashboard_fetch.py`（2026-09-24 版の
-// twenty_common.py を内蔵したもの）。挙動はそこで実測されたものに合わせている。
-// 推測で書き換えないこと。
+// 利用者は **PtAI Pipeline の連携経路だけ**。CXM のデータ経路からは呼ばない。
+//
+// **Phase 1 は読み取りのみ。** このファイルは GET しか発行しない。
+// 汎用の request(method, …) は export しない。POST / PATCH / DELETE の関数も置かない。
+// 書き込みは Phase 3 で、別ファイル（個人 API キーを扱う層）として追加する。
+//
+// ── 出典 ──────────────────────────────────────────────────────────────────────
+//   挙動は Utty の取得スクリプト pga_dashboard_fetch.py（twenty_common.py 内蔵版）と、
+//   2026-09-30 に本番 Twenty に対して実測した結果に合わせている。推測で変えないこと。
 //
 // ── 認証 ──────────────────────────────────────────────────────────────────────
-//   Authorization: Bearer <API key>。OAuth ではない。
-//   Read は共有キー（TWENTY_API_KEY）。Write は Phase 3 で「操作者本人の個人キー」に
-//   切り替える予定なので、ここでは Read 専用として扱う。
-//   **キーは戻り値にもログにも出さない。**
+//   Authorization: Bearer <API key>（OAuth ではない）
+//   環境変数 TWENTY_API_KEY（別名 TWENTY_READ_API_KEY）。
+//   **キーは戻り値にも例外にもログにも出さない。** 長さも先頭末尾も出さない。
 //
-// ── base URL に注意 ──────────────────────────────────────────────────────────
-//   引き継ぎ資料の TWENTY_API_URL は `https://crm.ptengine.com/api` だが、
-//   Twenty 本体はルート直下に /rest を生やす（ApiPath.Rest='rest'）。
-//   逆プロキシで /api を前置している可能性があるため、**候補を順に叩いて実測で決める**。
-//   元スクリプトの candidate_bases() / resolve_base_url() をそのまま移した。
+// ── base URL ─────────────────────────────────────────────────────────────────
+//   実測: https://crm.ptengine.com が API。
+//   引き継ぎ資料の https://crm.ptengine.com/api は**フロントエンドの SPA** が返るだけ。
+//   末尾スラッシュと誤った /api・/rest・/metadata の接尾辞は正規化して剥がす。
 //
 // ── REST の制約（実測。守らないと黙って壊れる）──────────────────────────────
-//   - limit は最大 200（twenty-shared QUERY_MAX_RECORDS）。**超えると黙って切られる**
-//   - 既定ページサイズ 60（QUERY_DEFAULT_LIMIT_RECORDS）
+//   - limit は最大 200。**超えると黙って切り詰められる**
+//   - 既定ページサイズ 60
 //   - depth は 0 か 1 のみ
-//   - **fields パラメータは存在しない**（列の間引きはできない）
+//   - fields パラメータは存在しない（列の間引きはできない）
 //   - ページングは starting_after カーソル ＋ pageInfo.hasNextPage / endCursor
-//   - 応答の封筒が 2 種類ある（new / legacy）。unwrapList で吸収する
+//   - 応答の封筒が new / legacy の 2 形式ある
 //
 // ブラウザから import しないこと。
 
@@ -30,35 +34,75 @@
 export const TWENTY_MAX_LIMIT = 200;
 /** twenty-shared QUERY_DEFAULT_LIMIT_RECORDS */
 export const TWENTY_DEFAULT_PAGE_SIZE = 60;
-/** 元スクリプトの DEFAULT_RATE_LIMIT（req/s） */
+
 const RATE_LIMIT_PER_SEC = 10;
-const REQUEST_TIMEOUT_MS = 60_000;
-const MAX_RETRY = 4;
-/** 元スクリプトの RETRY_BACKOFF（秒） */
-const RETRY_BACKOFF_MS = [2000, 4000, 8000, 16000];
+const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_RETRY = 3;
+const RETRY_BACKOFF_MS = [2000, 4000, 8000];
+/** 例外・ログに載せるエラー本文の上限。無制限に出さない */
+const ERROR_BODY_MAX = 300;
 
 const DEFAULT_BASE_URL = 'https://crm.ptengine.com';
 
 // ── 設定 ─────────────────────────────────────────────────────────────────────
 
+/**
+ * 読み取り用 API キー。
+ * TWENTY_API_KEY が主。TWENTY_READ_API_KEY は読み取り専用キーを別名で持つ場合の受け口。
+ * **この関数の戻り値をログ・レスポンスに載せないこと。**
+ */
 function readKey(): string | null {
-  // TWENTY_API_KEY が主。TWENTY_READ_API_KEY は読み取り専用キーを分ける場合の別名
-  return process.env.TWENTY_API_KEY || process.env.TWENTY_READ_API_KEY || null;
+  const k = process.env.TWENTY_API_KEY || process.env.TWENTY_READ_API_KEY || '';
+  return k.trim() ? k.trim() : null;
+}
+
+// ── API キーの解決（2026-10-01）────────────────────────────────────────────
+//   ① ptai_settings（管理画面から設定・AES-256-GCM で暗号化）
+//   ② 環境変数 TWENTY_API_KEY
+//   DB に無ければ環境変数へ落ちるので、設定前でも動く。
+async function resolveKey(): Promise<string | null> {
+  const { resolveSecret, SETTING_TWENTY_API_KEY } = await import('@/lib/ptai/settings-store');
+  return resolveSecret(SETTING_TWENTY_API_KEY, readKey() ?? undefined);
+}
+
+/**
+ * 設定値を正規化する。
+ *   - 末尾スラッシュを落とす
+ *   - 誤って付けられた /api, /rest, /metadata を剥がす（実測で /api は SPA が返る）
+ *   - 空なら既定値
+ */
+export function normalizeBaseUrl(raw: string | undefined | null): string {
+  let v = (raw ?? '').trim();
+  if (!v) return DEFAULT_BASE_URL;
+  v = v.replace(/\/+$/, '');
+  for (const suffix of ['/api', '/rest', '/metadata']) {
+    if (v.endsWith(suffix)) v = v.slice(0, -suffix.length);
+  }
+  v = v.replace(/\/+$/, '');
+  return v || DEFAULT_BASE_URL;
 }
 
 function configuredBase(): string {
-  return (process.env.TWENTY_API_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
+  return normalizeBaseUrl(process.env.TWENTY_API_URL);
 }
 
+/** 環境変数だけを見る同期版。**管理画面で設定したキーは見ない** */
 export function isTwentyConfigured(): boolean {
   return readKey() !== null;
 }
 
+/** 管理画面で設定したキーも含めて判定する。ルートはこちらを使うこと */
+export async function isTwentyConfiguredAsync(): Promise<boolean> {
+  return (await resolveKey()) !== null;
+}
+
 export interface TwentyConfigStatus {
   configured:    boolean;
+  /** 不足している環境変数名。値は含まない */
   missing:       string[];
-  configuredUrl: string;
-  /** 実測で決まった base URL。未解決なら null */
+  /** 正規化後の接続先。**キーではない** */
+  baseUrl:       string;
+  /** 実測で確定した base。未確定なら null */
   resolvedUrl:   string | null;
 }
 
@@ -67,36 +111,48 @@ export function getTwentyConfigStatus(): TwentyConfigStatus {
   const missing: string[] = [];
   if (!readKey()) missing.push('TWENTY_API_KEY');
   return {
-    configured:    missing.length === 0,
+    configured:  missing.length === 0,
     missing,
-    configuredUrl: configuredBase(),
-    resolvedUrl:   _resolvedBase,
+    baseUrl:     configuredBase(),
+    resolvedUrl: _resolvedBase,
   };
 }
 
 // ── エラー ───────────────────────────────────────────────────────────────────
 
-export class TwentyError extends Error {
-  readonly status?: number;
-  readonly body?: string;
-  readonly path?: string;
-  /** 設定不備（キー未設定・base 未解決）。呼び出し側は 503 にする */
-  readonly configIssue: boolean;
+export type TwentyErrorKind =
+  | 'config'        // キー未設定・base 未解決
+  | 'auth'          // 401 / 403
+  | 'not_api'       // API ではない応答（HTML 等）
+  | 'rate_limited'  // 429（再試行しても解消しなかった）
+  | 'server'        // 5xx
+  | 'network'       // 接続断・タイムアウト
+  | 'bad_response'  // JSON として読めない・形が想定外
+  | 'client';       // その他 4xx
 
-  constructor(message: string, opts: { status?: number; body?: string; path?: string; configIssue?: boolean } = {}) {
+export class TwentyError extends Error {
+  readonly kind: TwentyErrorKind;
+  readonly status?: number;
+  /** 上限まで切り詰めた応答本文。顧客データが載り得るのでログには出さない */
+  readonly bodySnippet?: string;
+  readonly path?: string;
+
+  constructor(message: string, kind: TwentyErrorKind, opts: { status?: number; body?: string; path?: string } = {}) {
     super(message);
     this.name = 'TwentyError';
+    this.kind = kind;
     this.status = opts.status;
-    this.body = opts.body;
+    this.bodySnippet = opts.body ? opts.body.slice(0, ERROR_BODY_MAX) : undefined;
     this.path = opts.path;
-    this.configIssue = opts.configIssue ?? false;
+  }
+
+  /** ログ・レスポンス向けの安全な要約。本文も鍵も含まない */
+  toSafeString(): string {
+    return `${this.kind}${this.status ? ` (HTTP ${this.status})` : ''}: ${this.message}`;
   }
 }
 
 // ── レート制御 ───────────────────────────────────────────────────────────────
-//
-// Vercel の関数インスタンスごとに効く簡易スロットル。
-// インスタンスをまたいだ制御はしていないので、並列実行を増やすときは要見直し。
 
 const MIN_INTERVAL_MS = 1000 / RATE_LIMIT_PER_SEC;
 let _lastCallAt = 0;
@@ -107,127 +163,105 @@ async function throttle(): Promise<void> {
   _lastCallAt = Date.now();
 }
 
-// ── base URL の解決 ─────────────────────────────────────────────────────────
+// ── base URL 解決 ───────────────────────────────────────────────────────────
 
-/** 設定値から試す base URL 候補を組み立てる（元スクリプト candidate_bases） */
+/** 正規化した設定値から試す候補を組み立てる */
 export function candidateBases(configured: string): string[] {
   const out: string[] = [];
   const add = (u: string) => { if (u && !out.includes(u)) out.push(u); };
 
-  const base = (configured || '').replace(/\/+$/, '');
+  const base = normalizeBaseUrl(configured);
   add(base);
-  for (const suffix of ['/api', '/rest', '/metadata']) {
-    if (base.endsWith(suffix)) add(base.slice(0, -suffix.length));
-  }
-  if (base) {
-    try {
-      const u = new URL(base);
-      add(`${u.protocol}//${u.host}`);
-      add(`${u.protocol}//${u.host}/api`);
-    } catch { /* URL として壊れていれば候補を増やさない */ }
-  }
+  try {
+    const u = new URL(base);
+    add(`${u.protocol}//${u.host}`);
+  } catch { /* URL として壊れていれば候補を増やさない */ }
   return out;
 }
 
-let _resolvedBase: string | null = null;
-
 /**
  * 候補ごとの判定。
- *   ok          … metadata が返った。この base で確定
- *   auth_failed … **Twenty 形式の 401/403 が返った**。base は正しく、キーの問題
- *   not_api     … HTML が返る等。API ではない（逆プロキシ違い・パス違い）
+ *   ok          … metadata が返った
+ *   auth_failed … Twenty 形式の 401/403。base は正しく、キーの問題
+ *   not_api     … HTML 等。API ではない
  *   unreachable … ネットワーク断・タイムアウト・5xx
  */
 export type BaseProbeResult = 'ok' | 'auth_failed' | 'not_api' | 'unreachable';
 
 export interface BaseProbe {
   base:      string;
-  ok:        boolean;
   result:    BaseProbeResult;
+  /** 人が読む短い説明。応答本文は含めない */
   detail:    string;
-  /** 応答の封筒。legacy = {data:{objects:[...]}} / new = {data:[...]} */
   envelope?: 'legacy' | 'new';
 }
 
-/** 401/403 が Twenty 由来か（＝ base は当たっているか）を判定する */
-function classifyProbeFailure(err: TwentyError): BaseProbeResult {
-  if (err.status === 401 || err.status === 403) return 'auth_failed';
-  // HTML が返ると JSON.parse で SyntaxError になる
-  if (!err.status && /SyntaxError|Unexpected token/.test(err.message)) return 'not_api';
-  if (err.status && err.status >= 400 && err.status < 500) return 'not_api';
+function classifyFailure(err: TwentyError): BaseProbeResult {
+  if (err.kind === 'auth')    return 'auth_failed';
+  if (err.kind === 'not_api' || err.kind === 'bad_response' || err.kind === 'client') return 'not_api';
   return 'unreachable';
 }
 
-/**
- * 候補を順に叩き、metadata API が応答する base を返す。
- * 呼び出しごとに実測するのではなく、プロセス内にキャッシュする。
- */
-export async function resolveBaseUrl(opts: { force?: boolean } = {}): Promise<{
+let _resolvedBase: string | null = null;
+
+export interface ResolveResult {
   base: string | null;
   report: BaseProbe[];
-  /** base は当たっているがキーで弾かれた候補（あれば診断に使う） */
+  /** base は当たっているがキーで弾かれた候補 */
   authFailedBase: string | null;
-}> {
+}
+
+export async function resolveBaseUrl(opts: { force?: boolean } = {}): Promise<ResolveResult> {
   if (_resolvedBase && !opts.force) return { base: _resolvedBase, report: [], authFailedBase: null };
 
-  const key = readKey();
-  if (!key) throw new TwentyError('TWENTY_API_KEY が未設定です', { configIssue: true });
+  const key = await resolveKey();
+  if (!key) throw new TwentyError('TWENTY_API_KEY が未設定です', 'config');
 
   const report: BaseProbe[] = [];
   for (const base of candidateBases(configuredBase())) {
     try {
-      const payload = await rawRequest('GET', '/rest/metadata/objects', { params: { limit: 1 }, base, key, noRetry: true });
+      const payload = await getJson('/rest/metadata/objects', { limit: 1 }, { base, key, noRetry: true });
       const objs = unwrapList(payload, 'objects');
       const envelope: 'legacy' | 'new' =
-        payload && typeof (payload as Record<string, unknown>).data === 'object'
-          && !Array.isArray((payload as Record<string, unknown>).data) ? 'legacy' : 'new';
-      report.push({ base, ok: true, result: 'ok', detail: `metadata OK (objects: ${objs.length})`, envelope });
+        isRecord(payload) && isRecord(payload.data) ? 'legacy' : 'new';
+      report.push({ base, result: 'ok', detail: `metadata に応答（objects: ${objs.length}）`, envelope });
       _resolvedBase = base;
       return { base, report, authFailedBase: null };
     } catch (e) {
       const err = e as TwentyError;
-      const result = classifyProbeFailure(err);
-      report.push({
-        base, ok: false, result,
-        detail: `${err.message}${err.body ? ` body=${err.body.slice(0, 200)}` : ''}`,
-      });
+      report.push({ base, result: classifyFailure(err), detail: err.toSafeString() });
     }
   }
-  // 「API には届いたがキーで弾かれた」候補があれば、それが正しい base とみなして返す
-  const authFailed = report.find(r => r.result === 'auth_failed')?.base ?? null;
-  return { base: null, report, authFailedBase: authFailed };
+  return { base: null, report, authFailedBase: report.find(r => r.result === 'auth_failed')?.base ?? null };
 }
 
-// ── 低レベル リクエスト ──────────────────────────────────────────────────────
+/** テスト用にモジュール状態を初期化する（本番コードからは呼ばない） */
+export function __resetClientStateForTests(): void {
+  _resolvedBase = null;
+  _lastCallAt = 0;
+}
 
-interface RawOpts {
-  params?:  Record<string, string | number>;
-  body?:    unknown;
+// ── 低レベル GET（**このモジュールの外に出さない**）──────────────────────────
+
+interface GetOpts {
   base?:    string;
   key?:     string;
-  /** base 解決の探索では再試行しない（候補を早く回すため） */
   noRetry?: boolean;
 }
 
-async function rawRequest(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+async function getJson(
   path: string,
-  opts: RawOpts = {},
+  params: Record<string, string | number> | undefined,
+  opts: GetOpts = {},
 ): Promise<unknown> {
-  const key = opts.key ?? readKey();
-  if (!key) throw new TwentyError('TWENTY_API_KEY が未設定です', { configIssue: true });
+  const key = opts.key ?? await resolveKey();
+  if (!key) throw new TwentyError('Twenty の API キーが未設定です', 'config');
 
-  const base = (opts.base ?? _resolvedBase ?? configuredBase()).replace(/\/+$/, '');
-  const qs = opts.params
-    ? '?' + new URLSearchParams(Object.entries(opts.params).map(([k, v]) => [k, String(v)])).toString()
+  const base = normalizeBaseUrl(opts.base ?? _resolvedBase ?? configuredBase());
+  const qs = params
+    ? '?' + new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString()
     : '';
   const url = `${base}${path}${qs}`;
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${key}`,
-    Accept: 'application/json',
-  };
-  if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
 
   const attempts = opts.noRetry ? 1 : MAX_RETRY + 1;
   let lastErr: TwentyError | null = null;
@@ -238,31 +272,47 @@ async function rawRequest(
     const timer = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS);
     try {
       const res = await fetch(url, {
-        method,
-        headers,
-        ...(opts.body !== undefined && { body: JSON.stringify(opts.body) }),
+        method: 'GET',                                     // ★ GET 以外は発行しない
+        headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
         signal: ctl.signal,
         cache: 'no-store',
       });
 
       if (res.ok) {
         const text = await res.text();
-        return text.trim() ? JSON.parse(text) : null;
+        if (!text.trim()) return null;
+        try {
+          return JSON.parse(text);
+        } catch {
+          // HTML が返るのはだいたい base URL が違うとき（/api は SPA を返す）
+          throw new TwentyError('JSON ではない応答（API ではない可能性）', 'not_api', { path });
+        }
       }
 
       const body = await res.text().catch(() => '');
-      // 429 以外の 4xx は再試行しても同じなので即中断（元スクリプトと同じ）
-      if (res.status !== 429 && res.status >= 400 && res.status < 500) {
-        throw new TwentyError(`HTTP ${res.status} ${method} ${path}`, { status: res.status, body, path });
+      // 401 / 403 は再試行しない
+      if (res.status === 401 || res.status === 403) {
+        throw new TwentyError('認証に失敗しました', 'auth', { status: res.status, body, path });
       }
-      lastErr = new TwentyError(`HTTP ${res.status} ${method} ${path}`, { status: res.status, body, path });
+      if (res.status === 429) {
+        lastErr = new TwentyError('レート制限', 'rate_limited', { status: res.status, body, path });
+      } else if (res.status >= 500) {
+        lastErr = new TwentyError('サーバーエラー', 'server', { status: res.status, body, path });
+      } else {
+        // その他の 4xx は再試行しても同じ
+        throw new TwentyError(`要求が拒否されました`, 'client', { status: res.status, body, path });
+      }
     } catch (e) {
       if (e instanceof TwentyError) {
-        if (e.status && e.status !== 429 && e.status < 500) throw e;
+        // 再試行しないもの
+        if (e.kind === 'auth' || e.kind === 'client' || e.kind === 'not_api' || e.kind === 'config') throw e;
         lastErr = e;
       } else {
         const name = (e as Error)?.name ?? 'Error';
-        lastErr = new TwentyError(`${name}: ${(e as Error)?.message ?? e} (${method} ${path})`, { path });
+        lastErr = new TwentyError(
+          name === 'AbortError' ? `タイムアウト（${REQUEST_TIMEOUT_MS}ms）` : `接続に失敗しました（${name}）`,
+          'network', { path },
+        );
       }
     } finally {
       clearTimeout(timer);
@@ -272,141 +322,175 @@ async function rawRequest(
       await new Promise(r => setTimeout(r, RETRY_BACKOFF_MS[Math.min(attempt, RETRY_BACKOFF_MS.length - 1)]));
     }
   }
-  throw lastErr ?? new TwentyError(`${method} ${path} に失敗しました`, { path });
+  throw lastErr ?? new TwentyError('取得に失敗しました', 'network', { path });
 }
 
-/** base を解決したうえでリクエストする */
-export async function twentyRequest(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
-  path: string,
-  opts: Omit<RawOpts, 'base' | 'key' | 'noRetry'> = {},
-): Promise<unknown> {
+/** base を解決したうえで GET する */
+async function readJson(path: string, params?: Record<string, string | number>): Promise<unknown> {
   if (!_resolvedBase) {
     const { base } = await resolveBaseUrl();
-    if (!base) throw new TwentyError('Twenty の base URL を解決できませんでした', { configIssue: true });
+    if (!base) throw new TwentyError('Twenty の base URL を解決できませんでした', 'config');
   }
-  return rawRequest(method, path, opts);
+  return getJson(path, params);
 }
 
-// ── 封筒の差を吸収 ───────────────────────────────────────────────────────────
+// ── 応答の検証・封筒吸収 ─────────────────────────────────────────────────────
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
 
 /**
  * 一覧応答から配列を取り出す。
  *   new    : { data: [...], pageInfo, totalCount }
- *   legacy : { data: { objects: [...] } } / { data: { fields: [...] } }
+ *   legacy : { data: { objects: [...] } }
  */
-export function unwrapList<T = Record<string, unknown>>(payload: unknown, legacyKey: string): T[] {
+export function unwrapList(payload: unknown, legacyKey: string): Record<string, unknown>[] {
   if (payload == null) return [];
-  const p = payload as Record<string, unknown>;
-  const data = (p.data ?? payload) as unknown;
-  if (Array.isArray(data)) return data as T[];
-  if (data && typeof data === 'object') {
-    const d = data as Record<string, unknown>;
-    if (Array.isArray(d[legacyKey])) return d[legacyKey] as T[];
-    for (const v of Object.values(d)) if (Array.isArray(v)) return v as T[];   // 保険：唯一の配列を拾う
+  const data = isRecord(payload) && 'data' in payload ? payload.data : payload;
+  if (Array.isArray(data)) return data.filter(isRecord);
+  if (isRecord(data)) {
+    const byKey = data[legacyKey];
+    if (Array.isArray(byKey)) return byKey.filter(isRecord);
+    for (const v of Object.values(data)) if (Array.isArray(v)) return v.filter(isRecord);
   }
   return [];
 }
 
-/** 単体応答からオブジェクトを取り出す */
-export function unwrapOne<T = Record<string, unknown>>(payload: unknown, ...legacyKeys: string[]): T | null {
-  if (payload == null) return null;
-  const p = payload as Record<string, unknown>;
-  const data = (p.data ?? payload) as unknown;
-  if (data && typeof data === 'object' && !Array.isArray(data)) {
-    const d = data as Record<string, unknown>;
-    for (const k of legacyKeys) {
-      if (d[k] && typeof d[k] === 'object' && !Array.isArray(d[k])) return d[k] as T;
-    }
-    return d as T;
-  }
+interface PageInfo { hasNextPage?: boolean; endCursor?: string }
+
+function readPageInfo(payload: unknown): PageInfo {
+  if (!isRecord(payload)) return {};
+  const pi = payload.pageInfo;
+  if (!isRecord(pi)) return {};
+  return {
+    hasNextPage: typeof pi.hasNextPage === 'boolean' ? pi.hasNextPage : undefined,
+    endCursor:   typeof pi.endCursor === 'string' ? pi.endCursor : undefined,
+  };
+}
+
+function readTotalCount(payload: unknown): number | null {
+  if (!isRecord(payload)) return null;
+  if (typeof payload.totalCount === 'number') return payload.totalCount;
+  if (isRecord(payload.data) && typeof payload.data.totalCount === 'number') return payload.data.totalCount;
   return null;
 }
 
-interface PageInfo { hasNextPage?: boolean; endCursor?: string }
+// ── 公開する読み取り API ─────────────────────────────────────────────────────
 
-// ── データ取得 ───────────────────────────────────────────────────────────────
-
-export interface ListOptions {
-  /** 1 ページの件数。**200 を超えると Twenty が黙って切り詰める** */
+export interface ReadOptions {
+  /** 1 ページの件数。**200 を超えると Twenty が黙って切り詰める**ので clamp する */
   pageSize?: number;
-  /** 0 か 1 のみ。1 にすると relation を 1 段引く（pointOfContact など） */
+  /** 0 か 1 のみ。1 で relation を 1 段引く */
   depth?: 0 | 1;
-  /** Twenty のフィルタ式。例: or(pgaStatus[is]:NOT_NULL,customerSource[in]:[PGA_TARGET,BOTH]) */
+  /** Twenty のフィルタ式。**省略すると全件になる**（companies は 5,000 件超） */
   filter?: string;
-  /** 安全弁。取得総数の上限（超えたら打ち切る） */
+  /** 安全弁。総取得件数の上限 */
   maxRecords?: number;
 }
 
 /**
- * 全レコードをカーソルページングで取得する。
+ * 全レコードをカーソルページングで取得する（GET のみ）。
  * `plural` は Twenty の複数形名（companies / opportunities / notes / workspaceMembers …）。
  */
-export async function listAllRecords<T = Record<string, unknown>>(
-  plural: string,
-  opts: ListOptions = {},
-): Promise<T[]> {
-  const pageSize = Math.min(opts.pageSize ?? TWENTY_DEFAULT_PAGE_SIZE, TWENTY_MAX_LIMIT);
+export async function listRecords(plural: string, opts: ReadOptions = {}): Promise<Record<string, unknown>[]> {
+  const pageSize = Math.min(Math.max(1, opts.pageSize ?? TWENTY_DEFAULT_PAGE_SIZE), TWENTY_MAX_LIMIT);
   const maxRecords = opts.maxRecords ?? 5000;
-  const out: T[] = [];
+  const out: Record<string, unknown>[] = [];
   let cursor: string | undefined;
+  let guard = 0;
 
   for (;;) {
+    if (++guard > 200) break;                              // 無限ループの保険
     const params: Record<string, string | number> = { limit: pageSize };
     if (opts.depth !== undefined) params.depth = opts.depth;
     if (opts.filter) params.filter = opts.filter;
     if (cursor) params.starting_after = cursor;
 
-    const payload = await twentyRequest('GET', `/rest/${plural}`, { params });
-    const items = unwrapList<T>(payload, plural);
+    const payload = await readJson(`/rest/${plural}`, params);
+    const items = unwrapList(payload, plural);
     out.push(...items);
 
-    const info = ((payload as Record<string, unknown>)?.pageInfo ?? {}) as PageInfo;
+    const info = readPageInfo(payload);
     cursor = info.hasNextPage ? info.endCursor : undefined;
     if (!cursor || items.length === 0 || out.length >= maxRecords) break;
   }
   return out;
 }
 
-/** totalCount だけを取る（limit=1, depth=0）。取れなければ null */
-export async function countRecords(plural: string): Promise<number | null> {
-  const payload = await twentyRequest('GET', `/rest/${plural}`, { params: { limit: 1, depth: 0 } });
-  const p = payload as Record<string, unknown> | null;
-  if (!p) return null;
-  if (typeof p.totalCount === 'number') return p.totalCount;
-  const data = p.data as Record<string, unknown> | undefined;
-  if (data && typeof data.totalCount === 'number') return data.totalCount;
-  return null;
+/**
+ * totalCount だけを取る。
+ *
+ * **filter は必須引数にしている。** 省略可能にしていた実装では PtAI フィルタが
+ * 落ちて companies が 5,134 件（全社）になり、対象の 126 件と桁が変わった。
+ * フィルタ不要なら明示的に null を渡すこと。
+ */
+export async function countRecords(plural: string, filter: string | null): Promise<number | null> {
+  const params: Record<string, string | number> = { limit: 1, depth: 0 };
+  if (filter) params.filter = filter;
+  const payload = await readJson(`/rest/${plural}`, params);
+  return readTotalCount(payload);
 }
 
 // ── metadata ────────────────────────────────────────────────────────────────
 
 export interface TwentyFieldMeta {
-  name:     string;
-  type:     string;
-  label?:   string;
+  name:      string;
+  type:      string;
+  label?:    string;
   isCustom?: boolean;
   isActive?: boolean;
-  options?: Array<{ value?: string }>;
+  options?:  string[];
 }
 
 export interface TwentyObjectMeta {
-  nameSingular?: string;
-  namePlural?:   string;
-  fields?:       TwentyFieldMeta[];
+  nameSingular: string;
+  namePlural?:  string;
+  fields:       TwentyFieldMeta[];
 }
 
-/** 全 object metadata（field 込み）。ページングあり */
+function toFieldMeta(v: unknown): TwentyFieldMeta | null {
+  if (!isRecord(v) || typeof v.name !== 'string' || typeof v.type !== 'string') return null;
+  const rawOpts = Array.isArray(v.options) ? v.options : [];
+  const options = rawOpts
+    .map(o => (isRecord(o) && typeof o.value === 'string' ? o.value : null))
+    .filter((x): x is string => x !== null);
+  return {
+    name: v.name,
+    type: v.type,
+    label: typeof v.label === 'string' ? v.label : undefined,
+    isCustom: typeof v.isCustom === 'boolean' ? v.isCustom : undefined,
+    isActive: typeof v.isActive === 'boolean' ? v.isActive : undefined,
+    ...(options.length ? { options } : {}),
+  };
+}
+
+/** 全 object metadata（field 込み）。unknown を検証してから返す */
 export async function listObjectMetadata(): Promise<TwentyObjectMeta[]> {
   const out: TwentyObjectMeta[] = [];
   let cursor: string | undefined;
+  let guard = 0;
+
   for (;;) {
+    if (++guard > 50) break;
     const params: Record<string, string | number> = { limit: Math.min(100, TWENTY_MAX_LIMIT) };
     if (cursor) params.starting_after = cursor;
-    const payload = await twentyRequest('GET', '/rest/metadata/objects', { params });
-    const items = unwrapList<TwentyObjectMeta>(payload, 'objects');
-    out.push(...items);
-    const info = ((payload as Record<string, unknown>)?.pageInfo ?? {}) as PageInfo;
+    const payload = await readJson('/rest/metadata/objects', params);
+    const items = unwrapList(payload, 'objects');
+
+    for (const it of items) {
+      if (typeof it.nameSingular !== 'string') continue;
+      const fields = (Array.isArray(it.fields) ? it.fields : [])
+        .map(toFieldMeta)
+        .filter((f): f is TwentyFieldMeta => f !== null && f.isActive !== false);
+      out.push({
+        nameSingular: it.nameSingular,
+        namePlural: typeof it.namePlural === 'string' ? it.namePlural : undefined,
+        fields,
+      });
+    }
+
+    const info = readPageInfo(payload);
     cursor = info.hasNextPage ? info.endCursor : undefined;
     if (!cursor || items.length === 0) break;
   }

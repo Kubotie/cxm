@@ -38,12 +38,14 @@ const APPS: AppCard[] = [
   {
     href: "/ptai-pipeline",
     title: "Ptengine AI パイプライン",
-    tagline: "PGA 拡販ボード",
+    tagline: "PtAI 拡販ボード",
     body: "Ptengine AI 追加販売の商談パイプラインとアカウントサクセス計画。",
     icon: Target,
     accent: "from-orange-500 to-orange-600",
     status: "wip",
-    note: "移植したばかりで整備中です。データは 2026-09-28 時点の固定スナップショットで、Twenty CRM とは未接続です。入力しても業務データには反映されません。",
+    // 接続状態は環境（PTAI_DATA_SOURCE）で変わるので、ここでは断定しない。
+    // 実際にどちらで動いているかは画面の先頭に出す（(ptai)/ptai-pipeline/page.tsx）。
+    note: "整備中です。業務の判断には使わないでください。接続先とデータの扱いは、開いた画面の先頭に出ます。",
   },
 ];
 

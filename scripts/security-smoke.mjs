@@ -58,7 +58,7 @@ const req = (path, { cookie, method = 'GET', headers = {}, body } = {}) =>
 const GENERAL_API = '/api/nocodb/companies';
 const ADMIN_API   = '/api/ops/ai-config';          // admin 限定
 const OPS_API     = '/api/ops/sf-data-prep/report'; // admin/ops 限定
-const PGA_API     = '/api/ptai/db';
+const PTAI_API     = '/api/ptai/db';
 const CRON_API    = '/api/batch/churn-radar';
 
 console.log(`\nセキュリティスモーク（${BASE}）\n`);
@@ -120,15 +120,15 @@ await check('Cron API は Cookie 無し・Bearer 無しでは通らない', asyn
   expect((await req(CRON_API)).status, [401, 403], 'status'));
 
 // 10
-await check('PGA の読み書き API はセッションを要求する', async () => {
-  const anon = await req(PGA_API);
+await check('PtAI の読み書き API はセッションを要求する', async () => {
+  const anon = await req(PTAI_API);
   expect(anon.status, 401, 'anon');
-  const authed = await req(PGA_API, { cookie: `cxm_session=${mint('Kubotie')}` });
+  const authed = await req(PTAI_API, { cookie: `cxm_session=${mint('Kubotie')}` });
   return expect(authed.status, 200, 'authed');
 });
-await check('PGA の RAW（顧客データ）は未認証で取れない', async () =>
+await check('PtAI の RAW（顧客データ）は未認証で取れない', async () =>
   expect((await req('/api/ptai/raw')).status, 401, 'status'));
-await check('PGA の静的 JS も未認証では取れない', async () => {
+await check('PtAI の静的 JS も未認証では取れない', async () => {
   const r = await req('/ptai-pipeline/board.js');
   return expect(r.status, [307, 302], 'status(ログインへリダイレクト)');
 });

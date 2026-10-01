@@ -6,20 +6,100 @@
 - **本レポート作成にあたりアプリのコード・スキーマ・依存関係・環境変数・Vercel 設定は一切変更していない**
 - 秘密情報の値は記載していない（環境変数は名前と用途のみ）
 
+> # ⚠️ 読む前に
+>
+> **§1 以降の本文は `8467908` 時点の調査記録であり、現在の実装状態ではない。**
+> 調査後に是正と実装が進んでいる。**現在の状態は直下の表が正しい。**
+> 本文中の指摘（未認証 API、共有パスワード、平文 Cookie、「Twenty 実装ゼロ」など）を
+> **現在も未解決であるかのように読まないこと。**
+
 ---
 
-## 1. エグゼクティブサマリー
+## 現在の状態（2026-09-30 時点）
+
+この表が現時点の事実。§1 以降の本文と食い違う場合は**この表が正しい**。
+
+| 項目 | 現在の状態 | 調査時点（`8467908`）からの変化 |
+|---|---|---|
+| 署名付きセッション（HMAC-SHA256） | **実装済み** | S-3（平文 Cookie でなりすまし可）を解消 |
+| API 認証ゲート（middleware ＋ ルート単位のガード） | **実装済み・本番反映済み** | S-1（92 本が未認証で叩けた）を解消。本番で 401 を実測確認 |
+| 共有パスワード | **ソース上の既定値を撤去。`APP_PASSWORD` を環境変数化し、値を更新済み** | S-2 を解消 |
+| Cookie の `Secure` 属性 | **本番で付与** | S-5 を解消 |
+| 公開リポジトリ上の実顧客情報 | **除去済み** | S-6 を解消 |
+| Twenty 読み取り専用クライアント（`src/lib/twenty/client.ts`） | **実装済み**（GET のみ。書き込み関数を export しない） | 「実装ゼロ」から前進 |
+| Twenty Health API（`/api/ops/twenty/health`）／Ops 画面（`/ops/twenty`） | **実装済み**（admin / ops 限定） | 同上 |
+| Twenty → RAW 互換 ViewModel（`src/lib/twenty/adapters/`） | **実装済み。ただし未切り替え** | 同上 |
+| **現在の本番 Pipeline のデータソース** | **`legacy_nocodb`**（`pga_docs/_raw` を読む。`PTAI_DATA_SOURCE` の既定） | 変わらず |
+| Twenty への書き込み | **未実装** | — |
+| Twenty のスキーマ変更・データ移行 | **未実施** | — |
+| CXM のデータストア | **引き続き NocoDB を利用**（Twenty 集約の対象外） | 変わらず |
+
+> **未解決のまま残っているもの**（是正の対象外・別途判断が要る）
+> Q6（Twenty の stage 5 段階 ⇄ ダッシュボード 8 段階の対応）／
+> **Q17 は解決（悪い方に）— Production の Twenty API キーは Admin キーで、書き込み可能。
+> 読み取り専用キーへの差し替えが未了**／
+> Q1（API キーを個人が発行できるか）／Q7（カスタムフィールド追加の承認）。
+> 一覧は [twenty-migration-plan.md](./twenty-migration-plan.md) §5。
+
+---
+
+> ## 🔄 【2026-09-30 追記】方針変更中
+>
+> **「Twenty へ全面集約」は保留になった。** 現在の方針は
+> **「短期は Ptai Pipeline 専用の NocoDB を使い、Twenty はオブジェクト・項目ごとに
+> 実測して利用可否を判定し、使える機能だけ段階的に採用する」**。
+> 実測の結果、Twenty で現時点から読み取り元にできるのは
+> **企業マスタ・PGA 担当・議事録本文の 3 つだけ**だった。
+>
+> **正本は [ptai-pipeline-data-strategy.md](./ptai-pipeline-data-strategy.md)。**
+> 本ファイルの「Twenty を唯一の正本にする」「移行後に `pga_docs` 依存を除去する」
+> という前提は、その判定が済むまで**保留**として読むこと。
+> CXM が引き続き NocoDB を利用する点は変わらない。
+
+
+> ## 【2026-09-30 追記】Twenty 集約の方針が確定した（**対象は Ptai Pipeline のみ**）
+>
+> **Ptai Pipeline の業務データは Twenty を唯一の正本とし、ダッシュボードは Twenty を操作する UI である。**
+>
+> ### 適用範囲の境界
+>
+> | | |
+> |---|---|
+> | **対象** | Ptai Pipeline（`/ptai-pipeline`、`/api/ptai/**`）の業務データ。廃止するのは `pga_docs` と `NOCODB_PGA_DOCS_TABLE_ID` への依存だけ |
+> | **対象外** | **CXM は引き続き NocoDB を主要データストアとして利用する。** `src/lib/nocodb/**`、CXM の 46 テーブル、CXM の API・画面・バッチ、Salesforce / Notion / Metabase 連携、共通認証の `staff_identify`、`NOCODB_PGA_DOCS_TABLE_ID` 以外の NocoDB 環境変数はいずれも変更しない |
+>
+> 本レポートの §4 以降には CXM の NocoDB 構成が記載されているが、**それは現状の記録であり、
+> 廃止対象ではない。** 下の撤回リストは **Ptai Pipeline についての記述**に限る。
+>
+> 本文中の以下の記述は**撤回済み**。移行計画は [twenty-migration-plan.md](./twenty-migration-plan.md) が正本。
+>
+> - Pipeline の RAW 互換 JSON を `pga_docs/_raw` へ保存する → Twenty から取得してその場で変換して返す
+> - ダッシュボードを正本として扱う → ダッシュボードは UI。保存後の正本は Twenty
+> - Notion を Pipeline の恒久的な正本として使う → 現在MRR・担当3 も最終的に Twenty へ集約
+> - `twenty_link` の対応表を作る → Twenty の id をそのまま使う
+> - Twenty と `pga_docs` を継続同期する → 移行後に Pipeline の依存を削除する
+
+---
+
+# 【以下は `8467908` 時点の調査記録（履歴）】
+
+**ここから先は 2026-09-30 の調査時点の記録であり、現在の実装状態ではない。**
+当時の判断根拠を残すために削除せず保存している。
+現在の状態は上の「現在の状態」表を、Pipeline の移行方針は
+[twenty-migration-plan.md](./twenty-migration-plan.md) を見ること。
+
+## 1. エグゼクティブサマリー（**調査時点の記録**）
 
 ### 1-1. 結論
 
 | 問い | 答え |
 |---|---|
-| Twenty 連携は実装されているか | **されていない。** 実行時に Twenty を呼ぶコードはゼロ。`/ptai-pipeline` が表示している Twenty 由来データは、2026-09-28 に手作業で取得した**静的スナップショット** |
-| 連携を始める最大の障害は何か | 技術ではなく**セキュリティ**。現状の本番は、ログインなしで顧客データが読める状態にある（§6）。この上に Twenty の書き込み権限を載せるのは危険 |
+| Twenty 連携は実装されているか | **（調査時点）されていない。** 実行時に Twenty を呼ぶコードはゼロ。`/ptai-pipeline` が表示している Twenty 由来データは、2026-09-28 に手作業で取得した**静的スナップショット** |
+| 連携を始める最大の障害は何か | **（調査時点）**技術ではなく**セキュリティ**。当時の本番は、ログインなしで顧客データが読める状態にあった（§6）。**この障害は是正済み** |
 | Twenty 側の API は使えるか | **使える。** `https://crm.ptengine.com` で REST・GraphQL・Metadata GraphQL がすべて応答する（appVersion 0.2.1）。認証トークンだけが足りない |
 | 最初に実装すべきものは何か | ①API 認可の穴を塞ぐ ②`twenty_id` ↔ アプリ内 ID の対応表 ③読み取り専用の Twenty クライアント |
 
-### 1-2. 重大な発見（詳細は §6）
+### 1-2. 重大な発見（**調査時点。S-1〜S-6 はいずれも是正済み。上の「現在の状態」表を参照**）
 
 | # | 重大度 | 内容 |
 |---|---|---|
@@ -77,7 +157,7 @@
 
 ---
 
-## 3. 現在の機能一覧
+## 3. 機能一覧（**調査時点**）
 
 ### 3-1. 共通・認証
 
@@ -193,8 +273,8 @@
 | アクション（ToDo） | **CXM** | Salesforce Task（片方向 push、`sf_todo_id` で対応付け） |
 | 連絡先 | **CXM** `company_people` | Salesforce Contact（片方向 push、`sf_contact_id`） |
 | 企業マスタ（PGA） | **Twenty**（ただし 2026-09-28 のスナップショットで凍結） | — |
-| 現在MRR・主担当 | **Notion 顧客 DB** | RAW に取り込み済み |
-| 商談フェーズ・追加MRR・到達予定・商談NA | **PGA ダッシュボード（`pga_docs/edits`）** | Twenty（未同期） |
+| 現在MRR・主担当 | 現在は Notion 顧客 DB（**移行元**）。**移行後の正本は Twenty** | — |
+| 商談フェーズ・追加MRR・到達予定・商談NA | 現在は `pga_docs/edits`（**移行元**）。**移行後の正本は Twenty** | — |
 | WHAT カタログ | Notion | CXM |
 
 ### 4-5. 既に存在する「外部 ID・同期状態」フィールド
@@ -214,7 +294,7 @@ Twenty 連携でも同じ設計を踏襲できます。
 
 ---
 
-## 5. 現在のデータフロー
+## 5. データフロー（**調査時点**）
 
 ```mermaid
 flowchart TB
@@ -310,7 +390,13 @@ sequenceDiagram
 
 ---
 
-## 6. 認証・権限・セキュリティ
+## 6. 認証・権限・セキュリティ（**調査時点。S-1〜S-6 は是正済み**）
+
+> **この節に並ぶ指摘（S-1〜S-6）はすべて是正済みで、現在の本番には存在しない。**
+> 署名付きセッション、API 認証ゲート、`APP_PASSWORD` の環境変数化、`Secure` 属性、
+> 公開リポジトリからの実顧客情報の除去は、いずれも実装・反映を確認済み。
+> 詳細は冒頭の「現在の状態」表と `docs/security-*.md` を参照。
+> 以下は**当時の状態の記録**として残している。
 
 ### S-1（Critical）API の認可欠落
 
@@ -391,7 +477,10 @@ src/app/api/auth/login/route.ts:20
 
 ---
 
-## 7. Twenty 連携の既存実装
+## 7. Twenty 連携の既存実装（**調査時点**）
+
+> 現在は読み取り専用クライアント・Health API・Ops 画面・RAW 互換アダプターが実装済み。
+> 「実装ゼロ」は当時の記述。
 
 ### 7-1. 検索結果
 
@@ -417,6 +506,27 @@ src/app/api/auth/login/route.ts:20
 | `public/ptai-pipeline/board.js:947` | 「Twenty の People への書き込みは、スキーマ承認と再接続後に行います」 | 未実装の明示 |
 | `src/lib/ptai/store.ts` | `edits.syncedAt`・`company.twentyPending`・`newcos.sync.twenty`・`twentyId` を**素通しで保存** | 枠だけあり、書き手が無い |
 
+### 7-2-b. 【2026-09-30 追記】Phase 1（読み取り専用接続）は完了した
+
+| 追加したもの | 内容 |
+|---|---|
+| `src/lib/twenty/client.ts` | **読み取り専用**の REST クライアント。GET しか発行せず、汎用 `request` も書き込み関数も export していない |
+| `src/lib/twenty/sync-policy.ts` | フィールドごとに Twenty 名・アプリ名・読み方向・将来の書き方向・正本・変換・未確定事項・競合方針を持つ |
+| `GET /api/ops/twenty/health` | 接続状態・件数・スキーマ検証・集計警告のみ（admin / ops） |
+| `GET /api/ops/twenty/raw-diff` | RAW スナップショットとの差分を**件数だけ**返す（admin / ops） |
+| `/ops/twenty` | 疎通パネル |
+
+実測結果の全量は [twenty-phase1-validation.md](./twenty-phase1-validation.md)。要点だけ:
+
+- API base は **`https://crm.ptengine.com`**（`/api` は SPA）
+- PGA 対象企業 **126 社**、フィルタ無しは **5,134 社**（混同しないこと）
+- **`companyId` / `ownerId` というフィールドは存在しない。** 正しくは `company` / `owner`（RELATION）。
+  ただし実測で 49 件中 0 件なので、社名照合は引き続き必要
+- `netMrr` と `amount` は**両方存在し、両方とも 49 件中 0 件**
+- stage は **5 段階**（NEW / SCREENING / MEETING / PROPOSAL / CUSTOMER）。資料の 4 段階は誤り
+- `noteTargets` は 114 件中 22 件（19%）。タイトル照合が暫定的に必要
+- RAW スナップショット（125 社）は Twenty（126 社）より古い。**ID の欠落・振り直しは無い**
+
 ### 7-3. 参考になる先例：Salesforce 連携
 
 Twenty 連携はゼロからではなく、`src/lib/salesforce/` の構造をなぞれます。
@@ -431,20 +541,20 @@ Twenty 連携はゼロからではなく、`src/lib/salesforce/` の構造をな
 
 ---
 
-## 8. Twenty 連携のギャップ
+## 8. Twenty 連携のギャップ（**調査時点**。現在の計画は [twenty-migration-plan.md](./twenty-migration-plan.md)）
 
 | 項目 | 現状 | 不足しているもの | 推奨方針 | 優先度 |
 |---|---|---|---|---|
 | Twenty API の認証 | 実装ゼロ。環境変数も無い | API キーの発行・保管・注入 | Read は共有キー（`TWENTY_API_URL` / `TWENTY_READ_API_KEY` を Vercel 環境変数）。Write は**操作者本人の個人キー**を NocoDB に AES-256-GCM で暗号化保存（`KEY_ENCRYPTION_SECRET`）。ブラウザには一切渡さない | **最高** |
 | オブジェクトのマッピング | RAW の短縮キー ↔ Twenty フィールドの対応表が**ドキュメントにだけ**存在 | コード上の単一の対応表 | `src/lib/twenty/sync-policy.ts` を新設し、`sync-policy.ts`（SF 版）と同じ「正本・方向・キー・変換」の形式で定義 | 高 |
-| Twenty レコード ID の保持 | Company は `pga_docs` の `doc_id` がそのまま Twenty UUID。Opportunity は `edits.opportunityId`。Person・Task・Note は**保持先が無い** | People / Task / Note 用の ID 欄、および `twenty_id ↔ company_uid` 対応表 | `pga_docs` に `links` コレクションを足すか、NocoDB に `twenty_link` テーブルを新設（`entity_type, app_id, twenty_id, last_synced_at, sync_state`） | 高 |
+| Twenty レコード ID の保持 | Company は `pga_docs` の `doc_id` がそのまま Twenty UUID | **対応表は不要**（下記の方針変更） | **~~`twenty_link` テーブルを NocoDB に新設~~ → 撤回。** Twenty を唯一の正本にするので、Twenty の id をそのまま使う。対応表が要るのは二重正本のときだけ | — |
 | 初回インポート | 手作業の 1 回きり（2026-09-28）。再現スクリプトは**リポジトリに無い**（元スクリプトは作成者のローカル） | サーバー側の取得・整形・保存処理 | `/api/batch/twenty-import` を新設し、既存の `scripts/ptai-seed-raw.mjs` が書いている `pga_docs/_raw` を置き換える。スキーマは現行 RAW 互換にして board.js を触らない | 高 |
 | 差分同期 | 無し | `updatedAt` によるカーソル | Twenty の `updatedAt` でフィルタし、`sync_cursor` を `pga_docs/settings` に保存。まず Twenty → アプリの片方向から | 中 |
 | アプリ → Twenty 書き込み | 無し（`twenty_key_missing` を返すのみ） | 書き込みクライアントとキュー | 確度「高」の項目（Tier・業種・新規企業・商談名・ニーズ）から。**ドライランのフラグを最初に入れる** | 中 |
 | Twenty → アプリ反映 | 無し | 取り込みと画面反映 | 上記の差分同期に同居。`edits` の入力値は上書きしない（フィールド単位の正本に従う） | 中 |
 | Webhook / 定期同期 | どちらも無し。Twenty 側の webhook 可否は未確認 | 起動トリガー | まず **Vercel Cron（既に 8 本の運用実績あり）** で 15〜60 分間隔。Webhook は Phase 4 以降の最適化 | 中 |
 | 競合解決 | 無し。PGA の保存は**全置換・後勝ち**（原本仕様） | フィールド単位の勝敗規則 | `sync-policy.ts` で項目ごとに正本を固定する。両側更新時は「アプリ優先＋差分をログ」を既定に | 中 |
-| 重複防止・冪等性 | 無し。NocoDB の unique 制約は API 経由では効かない（既知） | 冪等キー | 書き込み前に Twenty 側を社名＋ドメインで検索。`twenty_link` に行が無いときだけ create。同一 `app_id` の同時実行は排他 | 高 |
+| 重複防止・冪等性 | 無し | 冪等キー | 書き込み前に Twenty 側を社名＋ドメインで検索してから create。**対応表は使わない** | 高 |
 | 削除・アーカイブ | 受け取る仕組みが無い。PGA の `doc.delete()` は物理削除 | 方針そのものが未定 | **削除は同期しない**（Twenty で消えてもアプリ側は残し `sync_state='orphaned'`）を既定にし、運用で判断 | 低 |
 | リトライ・エラー処理 | シムが `unavailable` で 1 回だけ再試行。サーバー側は素の `throw` | 指数バックオフと恒久エラーの切り分け | `src/lib/notion/client.ts` の 429 バックオフ実装（`MAX_RETRY`, `CONCURRENCY`）を流用 | 中 |
 | 同期ログ・監視 | `audit_logs` / `company_mutation_logs` テーブルは**あるが Twenty 用には未使用**。`/ops/batch-logs` 画面も既存 | 同期専用のログ | 既存の `company_mutation_logs` の形式に合わせて `twenty_sync_logs` を追加し、`/ops` に一覧を出す | 中 |
@@ -453,7 +563,7 @@ Twenty 連携はゼロからではなく、`src/lib/salesforce/` の構造をな
 
 ---
 
-## 9. 推奨アーキテクチャ案
+## 9. 推奨アーキテクチャ案（**調査時点の案**。Pipeline については一部撤回済み → 冒頭の撤回リスト）
 
 ```mermaid
 flowchart LR
@@ -473,7 +583,6 @@ flowchart LR
   end
   subgraph STORE["NocoDB"]
     PGA["pga_docs"]
-    LINK["twenty_link<br/>entity_type / app_id / twenty_id<br/>last_synced_at / sync_state"]
     LOG["twenty_sync_logs"]
     CRED["user_credentials<br/>暗号化した個人キー"]
   end
@@ -490,14 +599,14 @@ flowchart LR
 **設計の要点**
 
 1. **`sync-policy.ts` を唯一の真実にする。** Salesforce 連携で既に採用されている作法。route も adapter も UI も独自判断を持たない
-2. **`twenty_link` を必ず挟む。** `doc_id = Twenty UUID` という現在の暗黙の前提は Company にしか通用せず、Person・Task・Note で破綻する
+2. **~~`twenty_link` を挟む~~ → 撤回。** Twenty を唯一の正本にするため、対応表は作らない。Twenty の id をそのまま参照する
 3. **RAW のスキーマは変えない。** `/api/ptai/raw` の出力形式を保ったまま供給元だけ差し替えれば、`board.js`（2,545 行・無編集）に手を入れずに Phase 2 が終わる
 4. **書き込みは必ずキュー経由。** 既存の `syncedAt` / `twentyPending` / `sync.twenty` を「未同期マーク」として使い、同期処理がそれを拾う
 5. **ドライランを最初から入れる。** `TWENTY_SYNC_DRY_RUN=1` でログだけ出す
 
 ---
 
-## 10. 実装ロードマップ
+## 10. 実装ロードマップ（**調査時点の案**。現行は [twenty-migration-plan.md](./twenty-migration-plan.md) §4 が正本）
 
 ### Phase 0 — Twenty の仕様・運用ルール確定
 
@@ -534,7 +643,7 @@ flowchart LR
 | | |
 |---|---|
 | 目的 | RAW スナップショットを実行時取得に置き換える |
-| 実装内容 | Company / Opportunity / Note / WorkspaceMember を取得して現行 RAW 互換の JSON を組み立て、`pga_docs/_raw` を更新する `/api/batch/twenty-import`／`twenty_link` テーブル新設／Vercel Cron に追加（日次） |
+| 実装内容 | **~~`pga_docs/_raw` を更新する~~ → 撤回。** Twenty から取得した内容をその場で RAW 互換へ変換して `/api/ptai/raw` が返す（`src/lib/twenty/adapters/`）。NocoDB には保存しない。切り替えは `PTAI_DATA_SOURCE` で行う |
 | 完了条件 | `/ptai-pipeline` の数字が手動スナップショットと一致し、翌日には Twenty の更新が反映される。`board.js` は 1 行も変えていない |
 | リスク | Opportunity の `companyId` が全件空で、現状は**商談名「PGA - 会社名」の文字列照合**で紐付けている。ここが壊れると商談が会社に付かない |
 | 依存 | Phase 1／Notion 顧客 DB（現在MRR・担当3）の突合ロジック |
@@ -547,7 +656,7 @@ flowchart LR
 | 実装内容 | 連携設定画面（個人 API キーの登録・接続テスト・削除、末尾 4 桁のみ表示）／`user_credentials` テーブル／`/api/twenty/push/*`／`/api/ptai/mcp` の `host:twenty` スタブを実装に差し替え／確度「高」の項目から（Tier・業種・新規企業・商談名・ニーズ） |
 | 完了条件 | ドライランで差分ログが出る。本番実行で「同期待ち」チップが消える。二重作成が起きない |
 | リスク | 冪等性の破れによる重複企業。Baba・Eri・Kubotie が Twenty ワークスペース未登録のため担当者が書けない |
-| 依存 | Phase 0 のスキーマ承認、Phase 2 の `twenty_link` |
+| 依存 | Phase 0 のスキーマ承認 |
 
 ### Phase 4 — 双方向の差分同期
 
@@ -571,7 +680,7 @@ flowchart LR
 
 ---
 
-## 11. リスク
+## 11. リスク（**調査時点**。セキュリティ由来のものは是正済み）
 
 | # | リスク | 影響 | 重大度 | 緩和策 |
 |---|---|---|---|---|
@@ -580,7 +689,7 @@ flowchart LR
 | R-3 | Cookie 偽装（S-3） | 承認フローの無効化 | **High** | 署名付きセッションへ |
 | R-4 | 上記が未解決のまま Twenty の書き込み権限を載せる | **CRM 本体のデータ破壊** | **Critical** | Phase 0.5 を Phase 3 の前提条件にする |
 | R-5 | PGA の保存が全置換・後勝ち | 同時編集で入力消失 | High | Phase 4 の前に楽観ロック。当面は運用で回避 |
-| R-6 | Opportunity の紐付けが社名の文字列照合 | 商談が会社に付かない | High | Phase 2 で `companyId` を埋めるか、`twenty_link` で明示 |
+| R-6 | Opportunity の紐付けが社名の文字列照合 | 商談が会社に付かない | High | Phase 2C で Twenty の `company` リレーションを埋める。実測で 49 件中 48 件は社名の完全一致で解決し、残り 1 件が要手当て |
 | R-7 | RAW 再構築スクリプトがリポジトリに無い | Phase 2 を書き起こす必要がある | Medium | 設計書（§5-3 対応表）と `reference/` から再構築。作成者のローカルに原典あり |
 | R-8 | テスト・Lint・CI がゼロ | 回帰に気づけない | Medium | Phase 5 で型チェックとビルドだけでも CI に載せる |
 | R-9 | Twenty の stage が 5 段階、ダッシュボードは 8 段階で不一致 | フェーズ同期ができない | High | Phase 0 で対応表を確定。不可なら Company のカスタム項目に持つ |
@@ -595,7 +704,7 @@ flowchart LR
 
 | 項目 | 実測結果 |
 |---|---|
-| API のホスト | **`https://crm.ptengine.com`**。`crm.ptmind.com` は SPA を返すだけで API パスが通らない |
+| API のホスト | **`https://crm.ptengine.com`**。`crm.ptmind.com` は SPA を返すだけで API パスが通らない。**`https://crm.ptengine.com/api` も SPA が返るので不可**（2026-09-30 実測） |
 | 利用可能な API 方式 | **REST（`/rest/*`）・GraphQL（`/graphql`）・Metadata GraphQL（`/metadata`）・一括（`/rest/batch`）がすべて応答** |
 | API ドキュメント | `/rest/open-api/core`・`/rest/open-api/metadata`（OpenAPI。認証が要る） |
 | バージョン | **appVersion 0.2.1** |
@@ -613,19 +722,19 @@ flowchart LR
 | Q2 | API キーによる操作は Twenty 側のどこに記録されるか（キー名・ユーザー名） | 「誰が変えたか」を CRM 側でも追えるか |
 | Q3 | **Webhook は使えるか**。使えるならどのオブジェクト・イベントか | Phase 4 を near-realtime にできるか、Cron 止まりか |
 | Q4 | レート制限の実値 | 同時実行数とバッチサイズの決定 |
-| Q5 | Opportunity の `companyId` が全件空なのは仕様か、入力漏れか。埋められるか | R-6 の根本解決 |
-| Q6 | **Opportunity の `stage`（NEW/SCREENING/MEETING/PROPOSAL）を 8 段階フェーズに揃えられるか。** 揃えられない場合、Company のカスタム項目に持つのは許容されるか | R-9。Phase 3 の中心 |
+| Q5 | ~~`companyId` が全件空~~ → **`companyId` というフィールドは存在せず、正しくは `company`（RELATION）。それも実測で 49 件中 0 件。** 埋められるかは要確認 | R-6 の根本解決 |
+| Q6 | **Opportunity の `stage` を 8 段階フェーズに揃えられるか。** 実測で **5 段階**（NEW / SCREENING / MEETING / PROPOSAL / CUSTOMER）と確定。揃えられない場合、Company のカスタム項目に持つのは許容されるか | **未解決。** R-9。Phase 3 の中心 |
 | Q7 | カスタム項目の追加は承認されるか（`aimMrr`・障壁・課金開始日・到達予定・失注理由） | Phase 3 の範囲 |
-| Q8 | Note と Company の紐付けは `noteTargets` か。日付はタイトルから抽出する規則か | 議事録タブと AI 資料の再現 |
-| Q9 | `netMrr` と `amount` のどちらが金額の正本か | 金額同期 |
-| Q10 | 契約状況フィールドの正式名（実データでは `qiYueZhuangKuang` が候補） | 一覧の「Ptengine契約中」列 |
+| Q8 | ~~Note と Company の紐付けは `noteTargets` か~~ → **`noteTargets` は 114 件中 22 件しか無い**（2026-09-30 実測）。タイトル照合が暫定的に必要。残り 24 件はどちらでも紐付かない | 議事録タブと AI 資料の再現 |
+| Q9 | ~~`netMrr` と `amount` のどちら~~ → **両方存在し、両方とも全件空**（2026-09-30 実測）。どちらを使うかは Twenty 側の運用ルール次第 | 金額同期 |
+| Q10 | ~~契約状況フィールドの正式名~~ → **`qiYueZhuangKuang`（SELECT）で確定**（2026-09-30 実測） | 一覧の「Ptengine契約中」列 |
 | Q11 | ワークスペースメンバー一覧を取るエンドポイント名 | 担当者の対応付け |
 | Q12 | Baba・Eri・Kubotie を Twenty ワークスペースに招待できるか | この 3 名の担当を書き込めるか |
 | Q13 | **どちらを正本にするか。** 項目ごとの分担（案：企業マスタ＝Twenty、商談の進行情報＝アプリ） | `sync-policy.ts` の前提 |
 | Q14 | 削除・アーカイブの扱い。Twenty で消したらアプリ側も消すか | 削除同期の方針 |
 | Q15 | 競合時のルール。両側更新でどちらを残すか | マージ規則 |
 | Q16 | 過去データの移行範囲。いつ以降の Note / Opportunity を取り込むか | 初回インポートの量 |
-| Q17 | 読み取り専用ロールのキーを発行できるか | Read 用の共有キーを最小権限にできるか |
+| Q17 | 読み取り専用ロールのキーを発行できるか。**現在使っているキーの権限は未確認**（接続できたことと権限が限定されていることは別） | Read 用の共有キーを最小権限にできるか。**未解決** |
 
 ### 12-3. 社内で決めること
 
@@ -664,6 +773,7 @@ flowchart LR
 | `https://crm.ptmind.com/rest/companies` | 200 | **SPA の HTML**（API ではない） |
 | `https://crm.ptmind.com/graphql` | 200 | **SPA の HTML** |
 | `https://crm.ptengine.com/` | 200 | Twenty の SPA |
+| `https://crm.ptengine.com/api/rest/metadata/objects` | 200 | **SPA の HTML**（API ではない。2026-09-30 実測） |
 | `https://crm.ptengine.com/rest/companies` | **403** | `{"statusCode":403,"messages":["Missing authentication token"],"error":"FORBIDDEN_EXCEPTION"}` |
 | `https://crm.ptengine.com/graphql` | 200 | `{"errors":[{"message":"Must provide query string."}]}` |
 | `https://crm.ptengine.com/metadata` | 200 | 同上（Metadata GraphQL が存在） |

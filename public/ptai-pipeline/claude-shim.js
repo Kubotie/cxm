@@ -214,7 +214,22 @@
 
   /* ── sample（Claude 呼び出し）─────────────────────────────────────────── */
 
-  var LIMITS = { maxPromptBytes: 180000, images: { maxCount: 8 } };
+  /* limits() は **サーバーが持つ**（値を 2 箇所に書かない）。
+     1 回だけ GET して覚える。取れなければ控えめな既定で続ける。
+     原本の実値は 65536 だが、こちらは揃えない（route.ts の §D を参照）。 */
+  var LIMITS_FALLBACK = { maxPromptBytes: 65536, images: { maxCount: 8 } };
+  var limitsPromise = null;
+  function getLimits() {
+    if (!limitsPromise) {
+      limitsPromise = fetch(API + '/ai', { credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          return j && typeof j.maxPromptBytes === 'number' ? j : LIMITS_FALLBACK;
+        })
+        .catch(function () { return LIMITS_FALLBACK; });
+    }
+    return limitsPromise;
+  }
 
   function fileToDataUrl(f) {
     return new Promise(function (resolve, reject) {
@@ -226,20 +241,28 @@
   }
 
   var sampleNs = {
-    limits: function () { return Promise.resolve(LIMITS); },
+    limits: function () { return getLimits(); },
     json: async function (promptOrTurns, opts) {
       opts = opts || {};
       var turns = Array.isArray(promptOrTurns)
         ? promptOrTurns.map(function (t) { return { role: t.role, content: String(t.content) }; })
         : [{ role: 'user', content: String(promptOrTurns) }];
 
+      var lim = await getLimits();
+      var maxImgs = (lim.images && lim.images.maxCount) || 0;
       var images = [];
       if (opts.images && opts.images.length) {
-        for (var i = 0; i < Math.min(opts.images.length, LIMITS.images.maxCount); i++) {
+        if (!maxImgs) throw err('images_unavailable', 'このビューでは画像を送れません');
+        for (var i = 0; i < Math.min(opts.images.length, maxImgs); i++) {
           var im = opts.images[i];
           images.push(typeof im === 'string' ? im : await fileToDataUrl(im));
         }
       }
+
+      /* onText を渡されたときだけ中継つきで呼ぶ。
+         原本は生成中に画面の文言を切り替えるためだけに使っていて、
+         引数のテキストは見ていない。欠片が届けば同じ見た目になる。 */
+      var wantStream = typeof opts.onText === 'function';
 
       var res;
       try {
@@ -247,18 +270,67 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ turns: turns, images: images }),
+          /* cache は原本と同じ扱い。false のときだけ毎回問い合わせる
+             （board.js: 組織図・計画相談・プラン生成は false、直近の動きは既定） */
+          body: JSON.stringify({
+            turns: turns, images: images, stream: wantStream,
+            cache: opts.cache === false ? false : undefined,
+          }),
           signal: opts.signal,
         });
       } catch (e) {
         if (e && e.name === 'AbortError') throw err('cancelled');
         throw err('unavailable');
       }
-      var json = await res.json().catch(function () { return {}; });
-      if (json && json.ok) return json.data;
-      throw err((json && json.code) || 'tool_error', json && json.message);
+
+      if (!wantStream) {
+        var json = await res.json().catch(function () { return {}; });
+        if (json && json.ok) return json.data;
+        throw err((json && json.code) || 'tool_error', json && json.message);
+      }
+      return await readNdjson(res, opts.onText);
     },
   };
+
+  /* NDJSON を 1 行ずつ読む。
+     {"t":"delta","v":…} → onText / {"t":"done","data":…} → 戻り値 / {"t":"error","code":…} → throw
+     **JSON の取り出しはサーバー側だけ。** ここでは組み立て直さない。 */
+  async function readNdjson(res, onText) {
+    if (!res.body) throw err('unavailable');
+    var reader = res.body.getReader();
+    var dec = new TextDecoder();
+    var buf = '', acc = '', result, failed = null;
+
+    var handle = function (raw) {
+      var s = raw.trim();
+      if (!s) return;
+      var ev;
+      try { ev = JSON.parse(s); } catch (_) { return; }   /* 途切れた行は捨てる */
+      if (ev.t === 'delta') {
+        /* 原本は {text: ここまでの全文, delta: 増分} を渡す（Utty 仕様 1-4）。
+           board.js は引数を見ていないが、形は合わせておく。 */
+        acc += ev.v;
+        try { onText({ text: acc, delta: ev.v }); } catch (_) {}
+      }
+      else if (ev.t === 'done')  result = ev.data;
+      else if (ev.t === 'error') failed = ev.code || 'tool_error';
+    };
+
+    for (;;) {
+      var r;
+      try { r = await reader.read(); }
+      catch (e) { if (e && e.name === 'AbortError') throw err('cancelled'); throw err('unavailable'); }
+      if (r.done) break;
+      buf += dec.decode(r.value, { stream: true });
+      var i;
+      while ((i = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    }
+    handle(buf);
+
+    if (failed) throw err(failed);
+    if (result === undefined) throw err('invalid_json');
+    return result;
+  }
 
   /* ── mcp ──────────────────────────────────────────────────────────────── */
 

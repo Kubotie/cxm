@@ -1,4 +1,4 @@
-// ─── Ptengine AI Pipeline Board — 原本の HTML 骨組み（source 1185〜1351行）を無編集で移植 ───
+// ─── Ptengine AI Pipeline Board — 原本の HTML 骨組み（アーティファクト Version 96）を無編集で移植 ───
 // board.js が id で掴む DOM。React は触らない（dangerouslySetInnerHTML で一度だけ流し込む）。
 export const BOARD_HTML = `
 <div class="wrap">
@@ -49,7 +49,7 @@ export const BOARD_HTML = `
       <span class="sub" id="stageSub"></span>
     </div>
     <div class="stagebar" id="stagebar"></div>
-    <div class="legend"><span><i class="dot" style="background:var(--won)"></i>契約確定（フェーズ＝契約確定）</span><span><i class="dot" style="background:var(--accent);opacity:.55"></i>期待値MRR（現在MRR × フェーズ確率）</span><span>▍ステージ境界 = 支給率 0 / 50 / 75 / 100%</span></div>
+    <div class="legend"><span><i class="dot" style="background:var(--gold)"></i>契約締結済み（フェーズ＝契約締結済み）</span><span><i class="dot" style="background:var(--accent);opacity:.55"></i>期待値MRR（現在MRR × フェーズ確率）</span><span>▍ステージ境界 = 支給率 0 / 50 / 75 / 100%</span></div>
   </section>
 
   <section class="grid g-2">
@@ -70,7 +70,7 @@ export const BOARD_HTML = `
   </section>
 
   <section class="card">
-    <div class="card-h"><h2>フェーズ別パイプライン</h2><span class="sub">8段階＋失注（暫定判定）。クリックで該当企業を表示</span></div>
+    <div class="card-h"><h2>フェーズ別パイプライン</h2><span class="sub">7段階＋失注。クリックで該当企業を表示</span></div>
     <div class="funnel f9" id="funnel"></div>
     <div class="ppanel" id="phasePanel" hidden></div>
   </section>
@@ -83,7 +83,7 @@ export const BOARD_HTML = `
   </section>
 
   <section class="card" id="feedSec">
-    <div class="card-h"><h2>新着・更新</h2><span class="sub" id="feedSub">直近14日の商談の追加・フェーズ・金額・日付・商談NA の変更</span></div>
+    <div class="card-h"><h2>新着・更新</h2><span class="sub" id="feedSub">直近14日の商談の追加・フェーズ・金額・日付・ネクストアクション の変更</span></div>
     <ol class="feed" id="feed"></ol>
     <div class="amore"><button type="button" class="btn ghost sm" id="feedMore" hidden></button></div>
   </section>
@@ -154,9 +154,9 @@ export const BOARD_HTML = `
 
   <footer>
     <b>データは Twenty CRM の実データ（取得時点のスナップショット）です。</b> 対象は Ptengine AI ステータスが入っている、または顧客ソースが PGA_TARGET の企業（Company）。案件（Opportunity）は名称「Ptengine AI - 企業名」と企業名で照合、議事録（Note）はタイトルの企業名で照合しています。
-    商談NA は商談管理タブで入力した値だけを使います。Company「Next Action」欄は行動履歴タブで参照するだけです。
+    ネクストアクションは商談管理タブで入力した値だけを使います。Company「Next Action」欄は行動履歴タブで参照するだけです。
     担当は Notion 顧客DB の「担当3」（2026-09-28 時点）を主担当として使用。担当3が空の14社は Twenty の Ptengine AI担当（SHINICHI_NAGAI→Paul、BB→Baba 等）で、共同の場合は均等に按分しています。Perry の担当はありません。
-    目標（全体・担当者別）はページ上で編集でき、保存すると閲覧者全員に共有されます（初期値：全体4,000万／Paul 1,200・Baba 1,000・Eri 800・Kubotie 600・Ava 400万円）。支給率ステージの境界は全体目標の25／50／75／100%。フェーズ確率（未商談0・初回商談10・再提案20・比較検討35・お見積55・稟議中75・契約内示90・契約確定100・失注0%）は設計 v0 の値です。フェーズは Twenty の stage に8段階の値（NOT_STARTED〜CLOSED_LOST）があればそれを使い、無ければ Ptengine AI ステータスと案件ステージから暫定判定しています。
+    目標（全体・担当者別）はページ上で編集でき、保存すると閲覧者全員に共有されます（初期値：全体4,000万／Paul 1,200・Baba 1,000・Eri 800・Kubotie 600・Ava 400万円）。支給率ステージの境界は全体目標の25／50／75／100%。フェーズは Salesforce の商談フェーズに合わせています。フェーズ確率（初回アポ実施前0・初回アポ実施済み10・トライアル開始済み30・最終見積もり提示済み55・口頭合意獲得済み80・申込用紙回収済み95・契約締結済み100・失注0%）は暫定値です。フェーズは Twenty の stage に同じ値があればそれを使い、無ければ Ptengine AI ステータスと案件ステージから暫定判定しています。
   </footer>
 </div>
 <div class="tip" id="tip" role="status" aria-live="polite"></div>

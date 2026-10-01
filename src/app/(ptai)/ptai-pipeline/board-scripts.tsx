@@ -3,9 +3,10 @@
 // ─── 原本スクリプトの読み込み ────────────────────────────────────────────────
 //
 // 順番に意味がある:
-//   1. /api/ptai/raw   … 原本 1353 行の RAW（顧客名・MRR を含むので認証必須の API 経由）
+//   1. /api/ptai/raw   … 原本の RAW 相当（顧客名・MRR を含むので認証必須の API 経由）。
+//                        PTAI_DATA_SOURCE=twenty なら Twenty と Notion から組み立てる
 //   2. claude-shim.js  … window.claude を用意する（board.js が起動時に使う）
-//   3. board.js        … 原本 1354〜3898 行
+//   3. board.js        … 原本の JS（Version 96）
 //
 // board.js はクラシックスクリプトで、トップレベルに const / let を置いている。
 // 二度実行すると再宣言で落ちるので、ドキュメントごとに 1 回だけに絞る。

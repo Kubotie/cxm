@@ -1,4 +1,4 @@
-// ─── PGA 共有ドキュメントストア（サーバー専用）────────────────────────────────
+// ─── PtAI 共有ドキュメントストア（サーバー専用）────────────────────────────────
 //
 // アーティファクトの `window.claude.use('db')`（Firestore 風の collection/doc）を
 // NocoDB の 1 テーブル `pga_docs` で置き換えるための薄い層。
@@ -22,17 +22,31 @@ const TABLE_ID  = process.env.NOCODB_PGA_DOCS_TABLE_ID ?? 'm0vfof8a1mwd75p';
 export const RAW_COLLECTION = '_raw';
 const RAW_CHUNK = 50_000;
 
-/** 原本が購読している collection。これ以外は受け付けない */
-export const PGA_COLLECTIONS = [
+/**
+ * 原本が購読している collection。これ以外は受け付けない。
+ * `minutes` は Version 96 の議事録タブが使う（Notion から取り込んだ本文のキャッシュ）。
+ */
+/**
+ * 移行元（pga_docs）に入っているコレクション。
+ *
+ * ⚠ `plans` と `chatwork` は **Twenty へ引き継がない**（2026-10-01 の決定）。
+ *   plans   … 旧プランニング（GATES・ピン）。いまの画面はサクセス管理（aplans）が主体で、
+ *             原本に残っていた旧構造。二重の計画は持たない
+ *   chatwork… 取り込み経路を議事録（Notion／Mii）に寄せる
+ *   ここに残してあるのは、**移行元を読む legacy_nocodb 経路のため**だけ。
+ *   twenty 経路では db-view が作らず、db-write が 501(retired) を返す。
+ */
+export const PTAI_COLLECTIONS = [
   'edits', 'aplans', 'orgs', 'recent', 'feed', 'newcos', 'settings', 'plans', 'chatwork',
+  'minutes',
 ] as const;
-export type PgaCollection = (typeof PGA_COLLECTIONS)[number];
+export type PtaiCollection = (typeof PTAI_COLLECTIONS)[number];
 
-export function isPgaCollection(v: string): v is PgaCollection {
-  return (PGA_COLLECTIONS as readonly string[]).includes(v);
+export function isPtaiCollection(v: string): v is PtaiCollection {
+  return (PTAI_COLLECTIONS as readonly string[]).includes(v);
 }
 
-export interface PgaRow {
+export interface PtaiRow {
   Id:            number;
   collection:    string;
   doc_id:        string;
@@ -42,7 +56,7 @@ export interface PgaRow {
   deleted?:      boolean | null;
 }
 
-export interface PgaDoc {
+export interface PtaiDoc {
   collection: string;
   id:         string;
   data:       unknown;
@@ -57,7 +71,7 @@ function recordsUrl(qs = ''): string {
   return `${BASE_URL}/api/v2/tables/${TABLE_ID}/records${qs}`;
 }
 
-export function isPgaStoreConfigured(): boolean {
+export function isPtaiStoreConfigured(): boolean {
   return Boolean(API_TOKEN && TABLE_ID);
 }
 
@@ -76,12 +90,12 @@ async function noco<T>(url: string, init?: RequestInit): Promise<T> {
  * 全ドキュメントを返す。件数は数百のオーダー（社数 125 + feed 上限）なので
  * ページングしつつ一括で取る。deleted は落とす。
  */
-export async function listAllDocs(): Promise<PgaDoc[]> {
-  const out: PgaDoc[] = [];
+export async function listAllDocs(): Promise<PtaiDoc[]> {
+  const out: PtaiDoc[] = [];
   const PAGE = 1000;                     // NocoDB の上限（memory: limit は 2000 で黙って切られる）
   for (let offset = 0; ; offset += PAGE) {
     const qs = `?limit=${PAGE}&offset=${offset}&sort=Id`;
-    const json = await noco<{ list: PgaRow[]; pageInfo?: { isLastPage?: boolean } }>(recordsUrl(qs));
+    const json = await noco<{ list: PtaiRow[]; pageInfo?: { isLastPage?: boolean } }>(recordsUrl(qs));
     for (const r of json.list) {
       if (r.deleted) continue;
       if (r.collection === RAW_COLLECTION) continue;   // RAW は /api/ptai/raw で別に返す
@@ -157,7 +171,7 @@ function pickAt(data: unknown): string | null {
 /** 分割保存された RAW を連結して 1 本の JSON 文字列で返す。未投入なら null */
 export async function getRawSnapshot(): Promise<string | null> {
   const qs = `?where=${encodeURIComponent(`(collection,eq,${RAW_COLLECTION})`)}&limit=200&sort=doc_id`;
-  const json = await noco<{ list: PgaRow[] }>(recordsUrl(qs));
+  const json = await noco<{ list: PtaiRow[] }>(recordsUrl(qs));
   if (!json.list.length) return null;
   return json.list.map(r => r.data ?? '').join('');
 }

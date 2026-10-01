@@ -1,45 +1,26 @@
 // ─── GET /api/ptai/me ─────────────────────────────────────────────────────────
 // アーティファクトの `window.claude.use('user')` の置き換え。
-//   id()      → CXM の name2（feed の by に入る）
-//   isOwner() → 契約確定の承認者かどうか（HANDOVER 10-4-5：Utty のみ）
+//   id()      → CXM の name2（feed の by、操作記録の actor に入る）
+//   isOwner() → 承認者かどうか（原本の IS_APPROVER）
 //
-// 承認者は PGA_APPROVER_EMAILS（カンマ区切り）で上書きできる。
+// 承認者の判定は src/lib/ptai/approver.ts に集約している。
+// §9-7 の回答（2026-10-01）で **固定ではなくロール**になり、既定は Utty と Kubotie。
+// 上書きは PGA_APPROVER_NAME2（カンマ区切り）または PGA_APPROVER_EMAILS。
 
 import { NextResponse } from 'next/server';
-import { getCurrentUserProfile } from '@/lib/auth/session';
+import { getPtaiIdentity } from '@/lib/ptai/approver';
 
 export const dynamic = 'force-dynamic';
 
-/**
- * 既定は staff_identify.name2 が Utty の人。
- * メールで指定したいときは PGA_APPROVER_EMAILS（カンマ区切り）を設定する。
- * 公開リポジトリなので、既定値に個人のメールアドレスは書かない。
- */
-const DEFAULT_APPROVER_NAME2 = 'Utty';
-
-function approverEmails(): string[] {
-  return (process.env.PGA_APPROVER_EMAILS ?? '')
-    .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-}
-
-function approverName2(): string {
-  return process.env.PGA_APPROVER_NAME2 ?? DEFAULT_APPROVER_NAME2;
-}
-
 export async function GET() {
-  const profile = await getCurrentUserProfile();
-  if (!profile) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });
-
-  const email  = (profile.email ?? '').toLowerCase();
-  const emails = approverEmails();
-  const isOwner = emails.length
-    ? Boolean(email) && emails.includes(email)
-    : profile.name2 === approverName2();
+  const me = await getPtaiIdentity();
+  if (!me) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });
 
   return NextResponse.json({
-    id:      profile.name2,
-    name:    profile.name || profile.name2,
-    email:   profile.email ?? null,
-    isOwner,
+    id:    me.id,
+    name:  me.name,
+    email: me.email,
+    /** 原本の `user.isOwner()` が読む名前。中身は「承認者か」 */
+    isOwner: me.isApprover,
   });
 }

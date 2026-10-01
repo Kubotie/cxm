@@ -83,12 +83,12 @@ export default function V2Layout({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* プロダクト切替。CXM と Ptengine AI パイプラインは入口だけを共有する。
-            PGA 側は移植直後で整備中なので、リンクにもその旨を出す */}
+            PtAI 側は移植直後で整備中なので、リンクにもその旨を出す */}
         <div className="flex items-center gap-1 px-1 pb-3">
           <Link href="/ptai-pipeline" title="整備中・使用不可（Twenty CRM とは未接続）"
             className="flex-1 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] text-slate-500 border border-dashed border-slate-700/70 hover:text-white hover:bg-[#1d283a] hover:border-transparent transition">
             <Target className="w-3 h-3 flex-none" />
-            <span className="truncate">PGA パイプライン</span>
+            <span className="truncate">PtAI パイプライン</span>
             <span className="flex-none text-[9px] font-semibold text-amber-500/90">整備中</span>
           </Link>
           <Link href="/apps" title="アプリ一覧"

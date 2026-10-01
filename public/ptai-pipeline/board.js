@@ -1,5 +1,7 @@
-/* ─── Ptengine AI Pipeline Board — 原本 JS（source 1354〜3898行）を無編集で移植 ───
-   唯一の変更: RAW を window.__PGA_RAW から受け取る（原本 1353 行の分離）。 */
+/* ─── Ptengine AI Pipeline Board — 原本 JS（アーティファクト Version 96）を無編集で移植 ───
+   変更は 2 箇所だけ（いずれも末尾に【移植による変更】と注記）:
+     1. RAW を window.__PGA_RAW から受け取る（原本の const RAW = {...} の分離）
+     2. ncCreateTwenty の catch を、自前 API のエラーコードに読み替える */
 const RAW = window.__PGA_RAW;
 /* ===================== 設定 ===================== */
 const TODAY = (d=>new Date(d.getFullYear(),d.getMonth(),d.getDate()))(new Date());
@@ -11,21 +13,27 @@ const CONFIG = {
   memberColor:{Paul:'#2a78d6',Baba:'#eb6834',Eri:'#1baf7a',Kubotie:'#eda100',Ava:'#e87ba4',Perry:'#8a7fd6',Utty:'#5f9ea0','未割当':'#8a8882'},
 };
 /* 商談フェーズ（PGA_Phase_Planning_Design_v0 §1-1）。Twenty の stage にこの値が入っていればそのまま使い、無ければ暫定判定する */
-const PHASES = ['NOT_STARTED','FIRST_MEETING','RE_PROPOSAL','EVALUATION','QUOTE','APPROVAL','VERBAL_COMMIT','CLOSED_WON','CLOSED_LOST'];
-const PH_JP = {NOT_STARTED:'未商談',FIRST_MEETING:'初回商談',RE_PROPOSAL:'再提案',EVALUATION:'比較検討',QUOTE:'お見積',APPROVAL:'稟議中',VERBAL_COMMIT:'契約内示',CLOSED_WON:'契約確定',CLOSED_LOST:'失注'};
-const PROB = {NOT_STARTED:0,FIRST_MEETING:.10,RE_PROPOSAL:.20,EVALUATION:.35,QUOTE:.55,APPROVAL:.75,VERBAL_COMMIT:.90,CLOSED_WON:1,CLOSED_LOST:0};
-const PCOL = {NOT_STARTED:'--p1',FIRST_MEETING:'--p2',RE_PROPOSAL:'--p3',EVALUATION:'--p4',QUOTE:'--p5',APPROVAL:'--p6',VERBAL_COMMIT:'--p7',CLOSED_WON:'--won',CLOSED_LOST:'--axis'};
+// フェーズは Salesforce の商談フェーズに合わせる（2026-09-30 Utty）。旧キーは読み込み時に置き換える
+const PHASES = ['NOT_STARTED','FIRST_MEETING','TRIAL','QUOTE','VERBAL_COMMIT','APPLICATION','CLOSED_WON','CLOSED_LOST'];
+const PH_LEGACY = {RE_PROPOSAL:'TRIAL', EVALUATION:'TRIAL', APPROVAL:'QUOTE'};
+const phN = p => PH_LEGACY[p]||p;
+const msN = m => { if(!m||typeof m!=='object') return m||null; const o={}; Object.entries(m).forEach(([k,v])=>{ const k2=phN(k); if(k==='APPROVAL'||k==='RE_PROPOSAL') return; if(v&&!o[k2]) o[k2]=v; }); return Object.keys(o).length?o:null; };
+const PH_JP = {NOT_STARTED:'初回アポ実施前',FIRST_MEETING:'初回アポ実施済み',TRIAL:'トライアル開始済み',QUOTE:'最終見積もり提示済み',VERBAL_COMMIT:'口頭合意獲得済み',APPLICATION:'申込用紙回収済み',CLOSED_WON:'契約締結済み',CLOSED_LOST:'失注',
+  RE_PROPOSAL:'トライアル開始済み',EVALUATION:'トライアル開始済み',APPROVAL:'最終見積もり提示済み'};
+const PH_SHORT = {NOT_STARTED:'初回アポ前',FIRST_MEETING:'初回アポ済',TRIAL:'トライアル',QUOTE:'最終見積',VERBAL_COMMIT:'口頭合意',APPLICATION:'申込用紙回収',CLOSED_WON:'契約締結',CLOSED_LOST:'失注'};
+const PROB = {NOT_STARTED:0,FIRST_MEETING:.10,TRIAL:.30,QUOTE:.55,VERBAL_COMMIT:.80,APPLICATION:.95,CLOSED_WON:1,CLOSED_LOST:0};
+const PCOL = {NOT_STARTED:'--p1',FIRST_MEETING:'--p2',TRIAL:'--p4',QUOTE:'--p5',VERBAL_COMMIT:'--p6',APPLICATION:'--p8',CLOSED_WON:'--gold',CLOSED_LOST:'--axis'};   // 進むほど青が濃くなり、契約締結はゴールド
 const RAW_JP = {NONE:'案件なし',NEW:'新規',SCREENING:'スクリーニング',MEETING:'商談',PROPOSAL:'提案',CUSTOMER:'顧客化'};
 const TO_PHASE_PS = ['APPO_SET','APPO_REQUESTING','INTRO_PLANNED','CONSIDERING','PASSED'];
 function phaseOf(ps, st){
-  if(PHASES.includes(st)) return {ph:st, est:false, why:'Twenty のフェーズ'};
-  return {ph:'NOT_STARTED', est:false, why:'未入力'};   // 推定はしない（2026-09-29 Utty）。フェーズはダッシュボードの入力か Twenty の8段階フェーズだけ
+  if(PHASES.includes(phN(st))) return {ph:phN(st), est:false, why:'Twenty のフェーズ'};
+  return {ph:'NOT_STARTED', est:false, why:'未入力'};   // 推定はしない（2026-09-29 Utty）。フェーズはダッシュボードの入力か Twenty のフェーズだけ
   const r=(ph,why)=>({ph,est:true,why});
   if(st==='CUSTOMER') return r('CLOSED_WON','Opportunity が顧客化');
   if(ps==='PASSED') return r('CLOSED_LOST','Ptengine AI ステータスが見送り');
-  if(ps==='CONSIDERING') return r('EVALUATION','Ptengine AI ステータスが検討中');
-  if(ps==='FDE_IN_PROGRESS'||ps==='POC_IN_PROGRESS') return r('RE_PROPOSAL','Ptengine AI ステータスが'+PS_JP[ps]+'（PoC・先行提供の開始済み）');
-  if(st==='PROPOSAL') return r('RE_PROPOSAL','Opportunity が提案');
+  if(ps==='CONSIDERING') return r('FIRST_MEETING','Ptengine AI ステータスが検討中');
+  if(ps==='FDE_IN_PROGRESS'||ps==='POC_IN_PROGRESS') return r('TRIAL','Ptengine AI ステータスが'+PS_JP[ps]+'（PoC・先行提供の開始済み）');
+  if(st==='PROPOSAL') return r('FIRST_MEETING','Opportunity が提案');
   if(st==='MEETING'||st==='SCREENING') return r('FIRST_MEETING','Opportunity が'+RAW_JP[st]);
   if(ps==='APPO_SET') return r('FIRST_MEETING','Ptengine AI ステータスがアポ確定');
   return r('NOT_STARTED', st==='NEW'?'Opportunity が新規':'案件なし・Ptengine AI ステータスが'+(PS_JP[ps]||'未設定'));
@@ -61,19 +69,18 @@ let EDITS = {};
 /* ===================== プランニング（共有DB plans/<id>） ===================== */
 let PLANS = [];
 const GATES = [
-  {k:'FIRST_MEETING', off:120, t:'初回商談 実施', tmpl:['Ptengine AI紹介MTGの日程確定','紹介資料の準備','課題ヒアリング']},
-  {k:'RE_PROPOSAL',   off:100, t:'PoC・先行提供 開始', tmpl:['PoC・先行提供の開始','利用データの反映確認','FB会の設定']},
-  {k:'EVALUATION',    off:65,  t:'価値承認・KPI合意', tmpl:['成功KPIの合意','決裁者への価値説明','FB結果を踏まえた再提案']},
-  {k:'QUOTE',         off:50,  t:'見積提示', tmpl:['見積書の作成・提示','契約条件の確認']},
-  {k:'APPROVAL',      off:35,  t:'稟議起案', tmpl:['稟議資料の提供','決裁ルートの確認']},
-  {k:'VERBAL_COMMIT', off:21,  t:'契約内示', tmpl:['内示の取得','契約書ドラフトの送付']},
+  {k:'FIRST_MEETING', off:120, t:'初回アポ 実施', tmpl:['Ptengine AI紹介MTGの日程確定','紹介資料の準備','課題ヒアリング']},
+  {k:'TRIAL',         off:100, t:'トライアル 開始', tmpl:['トライアル（PoC・先行提供）の開始','成功KPIの合意','FB会の設定']},
+  {k:'QUOTE',         off:50,  t:'最終見積もり 提示', tmpl:['見積書の作成・提示','契約条件の確認','稟議資料の提供']},
+  {k:'VERBAL_COMMIT', off:28,  t:'口頭合意 獲得', tmpl:['決裁者の口頭合意','申込用紙の送付']},
+  {k:'APPLICATION',   off:14,  t:'申込用紙 回収', tmpl:['申込用紙の回収','契約書ドラフトの送付']},
   {k:'CLOSED_WON',    off:10,  t:'契約締結', tmpl:['契約締結','課金開始日の確定']},
   {k:'BILLING',       off:0,   t:'課金開始', tmpl:['キックオフの実施','初回レポートの共有']},
 ];
 const GATE_JP = Object.fromEntries(GATES.map(g=>[g.k,g.t]));
-const GATE_SHORT = {FIRST_MEETING:'初回',RE_PROPOSAL:'PoC',EVALUATION:'KPI',QUOTE:'見積',APPROVAL:'稟議',VERBAL_COMMIT:'内示',CLOSED_WON:'締結',BILLING:'課金'};
+const GATE_SHORT = {FIRST_MEETING:'初回',TRIAL:'トライアル',QUOTE:'見積',VERBAL_COMMIT:'口頭合意',APPLICATION:'申込',CLOSED_WON:'締結',BILLING:'課金'};
 const KIND_JP = {MILESTONE:'中間ゴール',TODO:'Todo',FOLLOW_UP:'定期フォロー'};
-const TIER1_EXTRA = 14; // Tier1 は稟議中→契約内示を +14日（設計 v0 §3-1）
+const TIER1_EXTRA = 14; // Tier1 は最終見積→口頭合意（稟議）を +14日（設計 v0 §3-1）
 const dstr = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const dparse = s => { if(!s) return null; const [y,m,dd]=s.split('-').map(Number); return new Date(y,m-1,dd||1); };
 const addD = (d,n) => { const x=new Date(d); x.setDate(x.getDate()+n); return x; };
@@ -100,7 +107,7 @@ function applyPlans(d){
   const open=plansOf(d.cid).filter(p=>p.kind!=='ISSUE'&&p.status!=='DONE'&&p.due).sort((a,b)=>a.due<b.due?-1:1);
   d.planCount=((typeof APLAN==='object'&&APLAN&&APLAN[d.cid])?((APLAN[d.cid].items||[]).length+Object.keys(APLAN[d.cid].quarters||{}).length):0);
   d.issueOpen=plansOf(d.cid).filter(p=>p.kind==='ISSUE'&&p.status!=='DONE').length;
-  // 商談NA は商談（Opportunity）の入力だけを正本にする。Twenty/Notion の Next Action 欄は履歴として読むだけ
+  // ネクストアクションは商談（Opportunity）の入力だけを正本にする。Twenty/Notion の Next Action 欄は履歴として読むだけ
   const openDeals=(d.deals||[]).filter(x=>!['CLOSED_LOST','CLOSED_WON'].includes(x.ph));
   const dn=openDeals.filter(x=>x.na).sort((a,b)=>(a.naDate||'9999')<(b.naDate||'9999')?-1:1)[0];
   if(dn){ d.nd=dn.naDate||null; d.naHead=dn.na; d.naSrc='deal'; d.naDeal=dn; } else { d.nd=null; d.naHead=''; d.naSrc='none'; d.naDeal=null; }
@@ -116,7 +123,7 @@ function proposePlan(d){
   const T=dparse(d.close+'-01'); const today=TODAY;
   const cur=PHASES.indexOf(d.ph);
   const extra = d.t==='TIER1' ? TIER1_EXTRA : 0;
-  const rem=GATES.filter(g=>g.k==='BILLING' || PHASES.indexOf(g.k)>cur).map(g=>({...g, off: g.off + (extra && ['FIRST_MEETING','RE_PROPOSAL','EVALUATION','QUOTE','APPROVAL'].includes(g.k) ? extra : 0)}));
+  const rem=GATES.filter(g=>g.k==='BILLING' || PHASES.indexOf(g.k)>cur).map(g=>({...g, off: g.off + (extra && ['FIRST_MEETING','TRIAL','QUOTE'].includes(g.k) ? extra : 0)}));
   if(!rem.length) return null;
   const pins=pinsOf(d).filter(p=>rem.some(g=>g.k===p.phaseGate));
   if(pins.length) return {ok:true, pinned:true, T:d.close, rows:scheduleWithPins(rem, T, pins)};
@@ -140,7 +147,7 @@ function buildDeal0(c,i){
   const pick = (k, ev, tv) => { if(ev!==undefined && ev!==null && ev!==''){src[k]='edit';return ev;} if(tv!==undefined && tv!==null && tv!==''){src[k]='twenty';return tv;} src[k]='none'; return null; };
   const st = opp ? opp.st : 'NONE';
   let p = phaseOf(c.ps, st);
-  if(eo.phase && PHASES.includes(eo.phase)){ p={ph:eo.phase,est:false,why:'ダッシュボードで入力'}; src.ph='edit'; } else src.ph = p.est ? 'est' : 'twenty';
+  if(eo.phase && PHASES.includes(phN(eo.phase))){ p={ph:phN(eo.phase),est:false,why:'ダッシュボードで入力'}; src.ph='edit'; } else src.ph = p.est ? 'est' : 'twenty';
   const ownerTw = opp && opp.ownerId ? (MEMBER_ALIAS[RAW.members[opp.ownerId]] || RAW.members[opp.ownerId] || null) : null;
   const ownerOne = null; src.owner='notion';   // 主担当は Notion 顧客DB の「担当3」
   const m = pick('m', null, c.m||null) || 0;   // 現在MRR は Notion 顧客DB（Twenty 経由）の最新値
@@ -171,15 +178,15 @@ function buildDeal(c,i){
   if((opp && PHASES.includes(opp.st)) || DEAL_KEYS.some(k=>has(eo[k]))){   // 推定の商談は作らない。入力のあるものだけ
     deals.push({key:'main', primary:true, oid:d.oid, name: eo.name||oppName(c,opp), ph:d.ph, est:d.phEst,
       apply:d.apply, bill:d.bill, close:d.close, add:d.add||0, term:d.term, bs:null, br:d.br,
-      need: has(eo.need) ? eo.need : (opp&&opp.need||''), na: eo.na||'', naDate: eo.naDate||null, log: Array.isArray(eo.log)?eo.log:[], ms: eo.ms||null, msBase: eo.msBase||'apply', steps: Array.isArray(eo.steps)?eo.steps:[],
-      up: maxStr(opp&&opp.up, eo.updatedAt&&eo.updatedAt.slice(0,10)), src:d.src, pending: PHASES.includes(eo.pendingPhase)?eo.pendingPhase:null});
+      need: has(eo.need) ? eo.need : (opp&&opp.need||''), na: eo.na||'', naDate: eo.naDate||null, log: Array.isArray(eo.log)?eo.log:[], ms: msN(eo.ms), msBase: eo.msBase||'apply', pe: eo.pendingEdit||null, pdel: null, steps: Array.isArray(eo.steps)?eo.steps:[],
+      up: maxStr(opp&&opp.up, eo.updatedAt&&eo.updatedAt.slice(0,10)), src:d.src, pending: PHASES.includes(phN(eo.pendingPhase))?phN(eo.pendingPhase):null});
   }
   ((e&&e.deals)||[]).forEach(x=>{
     if(!x||!x.key) return;
-    deals.push({key:x.key, primary:false, oid:null, name:x.name||('Ptengine AI - '+coShort(c.n)), ph: PHASES.includes(x.phase)?x.phase:'NOT_STARTED', est:false,
+    deals.push({key:x.key, primary:false, oid:null, name:x.name||('Ptengine AI - '+coShort(c.n)), ph: PHASES.includes(phN(x.phase))?phN(x.phase):'NOT_STARTED', est:false,
       apply:x.applyDate||null, bill:x.billingDate||null, close: x.billingDate?x.billingDate.slice(0,7):(x.closeMonth||null), add:x.addMrr||0,
-      term:x.term||null, bs:null, br:x.barrier||null, need:x.need||'', na:x.na||'', naDate:x.naDate||null, log: Array.isArray(x.log)?x.log:[], ms:x.ms||null, msBase:x.msBase||'apply', steps: Array.isArray(x.steps)?x.steps:[],
-      up:(x.updatedAt||'').slice(0,10)||null, raw:x, src:{add:'edit',close:'edit',apply:'edit'}, pending: PHASES.includes(x.pendingPhase)?x.pendingPhase:null});
+      term:x.term||null, bs:null, br:x.barrier||null, need:x.need||'', na:x.na||'', naDate:x.naDate||null, log: Array.isArray(x.log)?x.log:[], ms:msN(x.ms), msBase:x.msBase||'apply', pe: x.pendingEdit||null, pdel: x.pendingDelete||null, steps: Array.isArray(x.steps)?x.steps:[],
+      up:(x.updatedAt||'').slice(0,10)||null, raw:x, src:{add:'edit',close:'edit',apply:'edit'}, pending: PHASES.includes(phN(x.pendingPhase))?phN(x.pendingPhase):null});
   });
   d.deals = deals;
   if(deals.length>1 || (deals.length===1 && !deals[0].primary)){
@@ -233,6 +240,44 @@ document.addEventListener('click', e=>{
   s2.addEventListener('keydown', ev=>{ if(ev.key==='Escape'){ ev.stopPropagation(); done=true; renderDeals(); if(openId!==null) renderDrawer(); } });
 }, true);
 
+/* ---- 受注済み（契約締結済み）の商談：変更・削除は承認者（Utty）の承認が必要 ---- */
+const wonLocked = x => !!x && x.ph==='CLOSED_WON' && !IS_APPROVER;
+function rawDeal(d,key){ const e=EDITS[d.cid]||{}; return key==='main' ? (e.opp||{}) : ((e.deals||[]).find(y=>y.key===key)||{}); }
+const PE_F=[['name','商談名'],['phase','フェーズ',v=>PH_JP[v]],['addMrr','追加MRR',v=>v?man(v):''],['applyDate','申込完了日',v=>mdj(v)],['billingDate','課金開始日',v=>mdj(v)],['closeMonth','課金開始月',v=>v?v.replace('-','/'):''],['term','契約期間',v=>v?v+'か月':''],['barrier','障壁'],['need','ニーズ'],['na','ネクストアクション'],['naDate','アクション期日',v=>mdj(v)],['lostReason','失注理由'],['lostDetail','失注理由の詳細'],['ms','到達予定',v=>msText(v)]];
+function peDiff(d,y){ const r=rawDeal(d,y.key), p=y.pe||{}; const f0=(f,v)=>((f?f(v):v)||'—');
+  return PE_F.filter(([k,,f])=>k==='ms'?msText(p[k])!==msText(r[k]):JSON.stringify(p[k]??null)!==JSON.stringify(r[k]??null)).map(([k,l,f])=>({l, from:f0(f,r[k]), to:f0(f,p[k])})); }
+function aprBox(d,y){
+  if(!y.pe && !y.pdel) return '';
+  const req=y.pdel||y.pe, at=req&&req.requestedAt?mdj(req.requestedAt.slice(0,10)):'';
+  const diff=y.pe?peDiff(d,y):[]; const id=`${d.id}|${esc(y.key)}`;
+  return `<div class="aprbox"><div class="aprh"><span class="aprt">承認待ち</span><b>${y.pdel?'この商談の削除':'受注済み商談の内容変更'}</b>${at?`<span class="dim">${at} 申請</span>`:''}</div>
+    ${diff.length?`<ul class="aprd">${diff.map(x=>`<li><span class="l">${esc(x.l)}</span>${x.from==='—'?'<span class="dim">未入力</span>':`<s>${esc(String(x.from))}</s>`}<i aria-hidden="true">→</i><b>${esc(String(x.to))}</b></li>`).join('')}</ul>`:''}
+    <div class="apra">${IS_APPROVER?`<button type="button" class="btn sm" data-peok="${id}">${y.pdel?'削除を承認':'変更を承認'}</button><button type="button" class="btn ghost sm" data-peno="${id}">却下</button>`:`<span class="dim">Utty が承認すると反映されます</span><button type="button" class="btn ghost sm" data-peno="${id}">申請を取り消す</button>`}</div></div>`;
+}
+async function decidePe(d,key,ok){
+  const y=d.deals.find(q=>q.key===key); if(!y) return;
+  if(ok && !IS_APPROVER) return;
+  if(y.pdel){
+    if(ok){ const body=phaseBody(d,key,{}); body.deals=body.deals.filter(q=>q.key!==key); editDeal=null; DEAL_OPEN=null; await saveEditDoc(d, body, '削除を承認しました'); }
+    else await saveEditDoc(d, phaseBody(d,key,{pendingDelete:null}), IS_APPROVER?'削除の申請を却下しました':'削除の申請を取り消しました');
+    return;
+  }
+  if(!y.pe) return;
+  if(!ok){ await saveEditDoc(d, phaseBody(d,key,{pendingEdit:null}), IS_APPROVER?'変更の申請を却下しました':'変更の申請を取り消しました'); return; }
+  const {requestedAt, requestedBy, ...vals}=y.pe; const r=rawDeal(d,key);
+  const patch={}; PE_F.forEach(([k])=>{ patch[k]= k in vals ? vals[k] : null; });
+  if(vals.msBase) patch.msBase=vals.msBase;
+  if(patch.phase && patch.phase!==y.ph) patch.log=logAdd(y,{t:'ph',from:y.ph,to:patch.phase});
+  if((patch.barrier||'')!==(r.barrier||'') && patch.barrier) patch.log=logAdd({log:patch.log||y.log},{t:'br',text:patch.barrier});
+  patch.pendingEdit=null; patch.pendingPhase=null; patch.approvedAt=new Date().toISOString();
+  await saveEditDoc(d, phaseBody(d,key,patch), '変更を承認しました');
+}
+document.addEventListener('click', e=>{
+  const b=e.target.closest('[data-peok],[data-peno]'); if(!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const [id,key]=(b.dataset.peok||b.dataset.peno).split('|'); decidePe(DEALS[+id], key, !!b.dataset.peok);
+}, true);
+
 /* 契約確定の商談：課金開始日を過ぎたら現在MRR に上乗せ（d.m は AI 契約前の MRR として扱う） */
 const billStart = x => x.bill || (x.close ? x.close+'-01' : null);
 function mrrLift(d){
@@ -262,7 +307,7 @@ function rulesHtml(){
   return `<div class="rtip"><b>計上ルール</b><ol>
     <li><b>数える額</b>：合算MRR ＝ 現在MRR（Notion 顧客DB の最新値）＋（見込）追加MRR（Ptengine AI の商談）</li>
     <li><b>足切り</b>：会社ごとの追加MRR が <b>10万円以上</b> の会社だけ算入。10万円未満の会社は合算MRR ごと数えない</li>
-    <li><b>確定</b>：フェーズが「契約確定」になった時点で計上（契約確定への変更は Utty の承認が必要）。期限は <b>${dueTxt}</b></li>
+    <li><b>確定</b>：フェーズが「契約締結済み」になった時点で計上（契約締結済みへの変更は Utty の承認が必要）。期限は <b>${dueTxt}</b></li>
     <li><b>担当</b>：主担当は Notion の「担当3」。共同担当は人数で均等に按分</li>
     <li><b>支給率</b>：目標の ${pct(st[0].at)} で ${st[0].rate}、${pct(st[1].at)} で ${st[1].rate}、${pct(st[2].at)} で ${st[2].rate}（それ未満は0%）</li>
     <li><b>期待値MRR</b>：足切り（10万円以上）を通った会社の合算MRR × フェーズの確率（${probs}）</li>
@@ -321,7 +366,7 @@ async function ncSyncTwenty(n){
   try{ const r=await mcpNs.callTool('host:twenty','execute_tool',{toolName:'create_one_company', arguments:args},{cache:false});
     const p=r&&r.payload; const txt=JSON.stringify(p||r&&r.content||''); if(p&&p.success===false) return {ok:false, why:'Twenty：'+(p.message||'作成できませんでした')};
     const m=txt.match(/"id"\s*:\s*"([0-9a-f-]{36})"/); return {ok:true, id:m?m[1]:null};
-  /* 【移植による変更 1/1】HANDOVER 12-4「Claude が同期する」→「アプリが同期する」の読み替え。
+  /* 【移植による変更 2/2】HANDOVER 12-4「Claude が同期する」→「アプリが同期する」の読み替え。
      自前 API のエラーコード（twenty_key_missing / twenty_key_invalid / twenty_unavailable）を
      同じ趣旨の文言に割り当てる。原本の分岐と結果（queued:true）は変えていない。 */
   }catch(e){ const c=e&&e.code;
@@ -421,10 +466,10 @@ function renderKpis(){
   const stage=CONFIG.stages.filter(s=>w>=s.at).length; const next=CONFIG.stages[Math.min(stage,3)];
   document.getElementById('kpis').innerHTML=`
    <div class="card kpi hero"><div class="label">目標 合算MRR <span class="qi rq" data-tip="${esc(rulesHtml())}" tabindex="0" aria-label="計上ルール">?</span></div><div class="val num">${tgt?man(tgt):'—'}<small>円</small></div><div class="foot">${view==='team'?(allocGap()>0?'<b style="color:var(--plane)">⚠ 配分不足 '+man(allocGap())+'</b>':''):tgt?'全体の '+Math.round(tgt/CONFIG.targetMrr*100)+'%':'目標配分なし'}</div><button type="button" class="editbtn" data-edit>目標を編集</button></div>
-   ${kpiCard('var(--won)','確定MRR', `<b>確定MRR</b>フェーズ「契約確定」で、確定した追加MRR が会社で10万円以上の会社の合算MRR。${view==='team'?`<br>次のステージ（支給率 ${next.rate}）まで ${man(Math.max(0,next.at-w))}円`:''}`, man(w), '円', `${cnt(ds,d=>d.ph==='CLOSED_WON')}社${view==='team'&&next.at>w?`・次ステージまで ${man(next.at-w)}`:''}`)}
+   ${kpiCard('var(--gold)','確定MRR', `<b>確定MRR</b>フェーズ「契約締結済み」で、確定した追加MRR が会社で10万円以上の会社の合算MRR。${view==='team'?`<br>次のステージ（支給率 ${next.rate}）まで ${man(Math.max(0,next.at-w))}円`:''}`, man(w), '円', `${cnt(ds,d=>d.ph==='CLOSED_WON')}社${view==='team'&&next.at>w?`・次ステージまで ${man(next.at-w)}`:''}`)}
    ${kpiCard('var(--accent)','期待値MRR', `<b>期待値MRR</b>（見込）追加MRR が10万円以上の会社の合算MRR × フェーズの確率。<br>追加MRR を入力済み：${cnt(ds,d=>d.add>0)}社`, man(e), '円', tgt?`目標の ${Math.round(e/tgt*100)}%`:'')}
-   ${kpiCard('var(--p1)','商談中の合算MRR', `<b>商談中の合算MRR</b>初回商談〜契約内示の会社のうち、（見込）追加MRR が10万円以上の会社の合算MRR（確率を掛けない額）。すべて契約になった場合の最大額です。<br>商談中 ${inDeal.length}社`, man(p), '円', `${inQ.length}社${tgt?`・目標の ${Math.round(p/tgt*100)}%`:''}`)}
-   ${kpiCard('var(--crit)','商談NA 期限超過', `<b>商談NA 期限超過</b>商談（Opportunity）の商談NA で、期日が過ぎている件数。サクセスの Todo は含みません。<br>商談中で商談NA が未入力：${noNa}社`, overdue, '件', noNa?`NA 未入力 ${noNa}社`:'', overdue?'var(--crit)':'')}`;
+   ${kpiCard('var(--p1)','商談中の合算MRR', `<b>商談中の合算MRR</b>初回アポ実施済み〜申込用紙回収済みの会社のうち、（見込）追加MRR が10万円以上の会社の合算MRR（確率を掛けない額）。すべて契約になった場合の最大額です。<br>商談中 ${inDeal.length}社`, man(p), '円', `${inQ.length}社${tgt?`・目標の ${Math.round(p/tgt*100)}%`:''}`)}
+   ${kpiCard('var(--crit)','ネクストアクション期限超過', `<b>ネクストアクション期限超過</b>商談（Opportunity）のネクストアクションで、期日が過ぎている件数。サクセスの Todo は含みません。<br>商談中でネクストアクションが未入力：${noNa}社`, overdue, '件', noNa?`ネクストアクション未入力 ${noNa}社`:'', overdue?'var(--crit)':'')}`;
 }
 
 function kpiCard(color, label, tip, val, unit, foot, valColor){
@@ -539,12 +584,14 @@ document.querySelectorAll('[data-fm]').forEach(b=>b.onclick=()=>{fcMode=b.datase
 function renderFunnel(){
   const ds=scope(); const maxAmt=Math.max(...PHASES.map(s=>sum(ds.filter(d=>d.ph===s),total)),1);
   document.getElementById('funnel').innerHTML=PHASES.map(s=>{const l=ds.filter(d=>d.ph===s); const amt=sum(l,total), ex=sum(l,expected);
-    return `<div class="fcol ${s==='CLOSED_LOST'?'lost':''}" role="button" tabindex="0" data-ph="${s}" aria-pressed="${phaseFilter===s}">
-      <div class="ph"><i style="background:var(${PCOL[s]})"></i>${PH_JP[s]}</div>
+    const PH_2L={NOT_STARTED:['初回アポ','実施前'],FIRST_MEETING:['初回アポ','実施済み'],TRIAL:['トライアル','開始済み'],QUOTE:['最終見積もり','提示済み'],VERBAL_COMMIT:['口頭合意','獲得済み'],APPLICATION:['申込用紙','回収済み'],CLOSED_WON:['契約','締結済み']};
+    const n=PHASES.indexOf(s)+1, lost=s==='CLOSED_LOST';
+    return `<div class="fcol ${lost?'lost':''} ${l.length?'':'zero'}" role="button" tabindex="0" data-ph="${s}" aria-pressed="${phaseFilter===s}" data-tip="${esc(`<b>${PH_JP[s]}</b>${l.length}社　現在MRR ${man(amt)}<br>確率 ${Math.round(PROB[s]*100)}%　期待値 ${man(ex)}<br>クリックでこのフェーズの企業を表示`)}">
+      <div class="ph">${lost?'':`<span class="no num">${n}</span>`}<span class="nm">${(PH_2L[s]||[PH_JP[s],''])[0]}${(PH_2L[s]||[])[1]?`<small>${PH_2L[s][1]}</small>`:''}</span></div>
       <div class="cnt num">${l.length}<small>社</small></div>
       <div class="fb"><i style="width:${amt/maxAmt*100}%;background:var(${PCOL[s]})"></i></div>
-      <div class="amt num">現在MRR <b>${man(amt)}</b></div>
-      <div class="pr num">確率 ${Math.round(PROB[s]*100)}% → 期待値 ${man(ex)}</div></div>`;}).join('');
+      <div class="amt num"><small>現在MRR</small><b>${man(amt)}</b></div>
+      <div class="pr num"><small>期待値</small>${man(ex)}<span>${Math.round(PROB[s]*100)}%</span></div></div>`;}).join('');
   document.querySelectorAll('.fcol').forEach(c=>{const f=()=>{const s=c.dataset.ph;phaseFilter=phaseFilter===s?null:s;FS.phase=new Set(phaseFilter?[phaseFilter]:[]);saveFS();msSummary();renderFunnel();renderDeals();};c.onclick=f;c.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();f();}};});
   renderPhasePanel();
 }
@@ -552,7 +599,7 @@ function flagsOf(d){
   const f=[]; const late=d.nd&&ymd(d.nd)<TODAY&&ACTIVE_PS.includes(d.ps);
   if(late) f.push(['crit',`期限超過 ${days(TODAY,ymd(d.nd))}日`]);
   const mm=null;
-  if(ACTIVE_PS.includes(d.ps)&&!d.na) f.push(['warn','商談NA 未入力']);
+  if(ACTIVE_PS.includes(d.ps)&&!d.na) f.push(['warn','ネクストアクション未入力']);
   if(d.ps==='STAY') f.push(['','ステイ']);
   if(d.owners.length>1) f.push(['split','共同 '+d.owners.join('・')]);
   return f;
@@ -594,16 +641,17 @@ function renderAlerts(){
   const who=d=>d.owners.join('・');
   const push=(cat,lv,d,t,dd,tab,v)=>items.push({cat,lv,id:d.id,t,d:dd,o:who(d),v:v??d.m,tab});
   ds.forEach(d=>{
+    (d.deals||[]).filter(x=>x.pe||x.pdel).forEach(x=>push('apr','apr',d, x.pdel?'受注済み商談の削除の承認待ち':'受注済み商談の変更の承認待ち', `${d.n}：${x.name}`,'edit', d.m+2e9));
     (d.deals||[]).filter(x=>x.pending&&x.pending!==x.ph).forEach(x=>push('apr','apr',d,`${PH_JP[x.pending]}の承認待ち`,`${d.n}：${x.name}（${PH_JP[x.ph]} → ${PH_JP[x.pending]}）`,'sum',d.m+2e9));
     (d.deals||[]).filter(x=>!['CLOSED_WON','CLOSED_LOST','NOT_STARTED'].includes(x.ph)).forEach(x=>{
-      const miss=[!x.add&&'（見込）追加MRR', !x.apply&&'申込完了日', !x.na&&'商談NA', x.na&&!x.naDate&&'NA期日'].filter(Boolean);
+      const miss=[!x.add&&'（見込）追加MRR', !x.apply&&'申込完了日', !x.na&&'ネクストアクション', x.na&&!x.naDate&&'アクション期日'].filter(Boolean);
       if(miss.length) push('deal','warn',d,`<span class="atag dl">商談</span>${miss.join('・')}が未入力`,`${d.n}：${x.name.replace(/^Ptengine AI\s*[-－]\s*/,'')}（${PH_JP[x.ph]}）`,'edit', d.m+(x.add||0)); });
     (d.deals||[]).forEach(x=>{ const L=msLate(x); if(!L) return;
       push('pace','crit',d,`<span class="atag dl">商談</span>${PH_JP[L.p]}の予定より${L.days}日遅れ（今は${PH_JP[x.ph]}）`,`${d.n}：${x.br?'障壁：'+x.br:'障壁が未入力'}`,'edit',d.m+(x.add||0)+1); });
     const open=plansOf(d.cid).filter(p=>p.status!=='DONE');
     open.filter(p=>p.kind==='ISSUE').forEach(p=>push('issue','warn',d,`未解決イシュー（${p.itype||'課題'}）`,`${d.n}：${p.title}`,'sum'));
     (d.sxOpen||[]).forEach(x=>{ if(x.dueStr<T) push('late','crit',d,`<span class="atag sx">サクセス</span>Todo の期限超過 ${days(TODAY,ymd(x.dueStr))}日`,`${d.n}：${x.text}`,'plan',d.m); else if(x.dueStr<=W) push('week','warn',d,`<span class="atag sx">サクセス</span>${x.dueStr.slice(5).replace('-','/')} まで`,`${d.n}：${x.text}`,'plan'); });
-    (d.deals||[]).filter(x=>!['CLOSED_WON','CLOSED_LOST'].includes(x.ph)&&x.na&&x.naDate).forEach(x=>{ if(x.naDate<T) push('late','crit',d,`<span class="atag dl">商談</span>NA の期限超過 ${days(TODAY,ymd(x.naDate))}日`,`${d.n}：${x.na}`,'edit',d.m+1); else if(x.naDate<=W) push('week','warn',d,`<span class="atag dl">商談</span>${x.naDate.slice(5).replace('-','/')} まで`,`${d.n}：${x.na}`,'edit'); });
+    (d.deals||[]).filter(x=>!['CLOSED_WON','CLOSED_LOST'].includes(x.ph)&&x.na&&x.naDate).forEach(x=>{ if(x.naDate<T) push('late','crit',d,`<span class="atag dl">商談</span>ネクストアクションの期限超過 ${days(TODAY,ymd(x.naDate))}日`,`${d.n}：${x.na}`,'edit',d.m+1); else if(x.naDate<=W) push('week','warn',d,`<span class="atag dl">商談</span>${x.naDate.slice(5).replace('-','/')} まで`,`${d.n}：${x.na}`,'edit'); });
     if(d.ph==='CLOSED_WON'||d.ph==='CLOSED_LOST') return;
     const dealing=!['NOT_STARTED','CLOSED_WON','CLOSED_LOST'].includes(d.ph);
     if(dealing && !aimOf(d) && !(d.add>=AI_MIN)) push('aim','warn',d,'（目標）追加MRR が未入力',`${d.n}（${PH_JP[d.ph]}・現在MRR ${man(d.m)}）`,'edit');
@@ -636,7 +684,7 @@ function renderDeals(){
   const key={co:d=>d.n,o:d=>d.owners.join(),t:d=>d.t||'Z',ps:d=>PS.indexOf(d.ps),st:d=>PHASES.indexOf(d.ph),m:d=>d.m,add:d=>d.add,aim:d=>{const g=goalAdd(d);return g?(d.m+g)*goalCtx().w(d)+1e12:aimOf(d);},tot:total,cl:d=>d.close||'9999',ap:d=>d.apply||'9999',br:d=>(d.bs?BS_OPTS.indexOf(d.bs):9)+(d.br||'~'),pr:d=>PROB[d.ph],exp:expected,ind:d=>d.ind||'',pot:d=>(potOf(d)||{prio:-1}).prio,nd:d=>d.nd||'9999',le:d=>d.le}[sortKey];
   ds.sort((x,y)=>{const a=key(x),b=key(y);return (a>b?1:a<b?-1:0)*sortDir;});
   const th=(k,l,r,t,tp)=>`<th class="${r?'r':''}" data-k="${k}" ${t?`title="${t}"`:''} ${tp?`data-tip="${esc(tp)}"`:''} ${sortKey===k?`aria-sort="${sortDir>0?'ascending':'descending'}"`:''}>${l}${sortKey===k?(sortDir>0?' ▲':' ▼'):''}</th>`;
-  const head=`<thead><tr>${th('co','企業／商談')}${th('o','担当')}${th('t','Tier')}${th('st','フェーズ')}${th('m','現在MRR',1)}${th('aim','（目標）追加MRR',1,'この会社で追加したいMRR。クリックで入力')}${th('add','（見込）追加MRR',1,'商談で見込んでいる追加MRR（商談の入力から）')}${th('tot','合算MRR',1)}${th('ap','申込完了日')}${th('cl','課金開始日')}${th('exp','期待値MRR',1)}${th('br','商談障壁')}${th('ind','業種')}${th('pot','ポテンシャル <span class="qi">?</span>',0,'',POT_HEAD_TIP)}<th>ニーズ</th><th>商談NA</th>${th('nd','NA期日')}${th('le','更新日')}</tr></thead>`;
+  const head=`<thead><tr>${th('co','企業／商談')}${th('o','担当')}${th('t','Tier')}${th('st','フェーズ')}${th('m','現在MRR',1)}${th('aim','（目標）追加MRR',1,'この会社で追加したいMRR。クリックで入力')}${th('add','（見込）追加MRR',1,'商談で見込んでいる追加MRR（商談の入力から）')}${th('tot','合算MRR',1)}${th('ap','申込完了日')}${th('cl','課金開始日')}${th('exp','期待値MRR',1)}${th('br','商談障壁')}${th('ind','業種')}${th('pot','ポテンシャル <span class="qi">?</span>',0,'',POT_HEAD_TIP)}<th>ニーズ</th><th>ネクストアクション</th>${th('nd','アクション期日')}${th('le','更新日')}</tr></thead>`;
   const sig=[view,sortKey,sortDir,...['fStatus','fQ'].map(id=>document.getElementById(id).value),...Object.values(FS).map(v=>[...v].sort().join(',')),missingOnly].join('|');
   if(sig!==pageSig){ page=1; pageSig=sig; }
   const pages=Math.max(1,Math.ceil(ds.length/pageSize)); page=Math.min(Math.max(1,page),pages);
@@ -648,13 +696,13 @@ function renderDeals(){
   const rows=ds.map(d=>{const late=d.nd&&d.nd<dstr(TODAY), soon=d.nd&&!late&&days(ymd(d.nd),TODAY)<=7;
     const nD=d.deals.length, open=nD>0&&EXPANDED.has(d.cid);
     const par=`<tr data-id="${d.id}" class="par${open?' open':''}">
-      <td class="co" title="${esc(d.n)}">${nD?`<button type="button" class="caret" data-caret="${d.cid}" aria-expanded="${open}" aria-label="${open?'商談を閉じる':'商談を開く'}">${open?'▼':'▶'}</button>`:''}${esc(d.n)}<span class="cmeta">${nD?`<span class="chip dcnt">商談 ${nD}件</span><button type="button" class="adddeal ico" data-add="${d.id}" aria-label="商談を追加" title="商談を追加">＋</button>`:`<button type="button" class="adddeal" data-add="${d.id}" title="この会社にはまだ商談がありません">＋商談を追加</button>`}${d.icp?`<span class="cm">${esc(d.icp.replace('_',' '))}</span>`:''}${d.cs?'<span class="cm">Ptengine契約中</span>':''}${RAW.companies[d.id]&&RAW.companies[d.id].newco?(()=>{ const sy=RAW.companies[d.id].sync||{}; const ok=sy.notion==='done'&&sy.twenty==='done'; return `<span class="chip ${ok?'ncok':'unsync'}" title="Notion：${sy.notion==='done'?'作成済み':'未作成'}／Twenty：${sy.twenty==='done'?'作成済み':'同期待ち'}">${ok?'新規':'新規・未同期'}</span>`; })():''}</span></td>
+      <td class="co" title="${esc(d.n)}">${nD?`<button type="button" class="caret" data-caret="${d.cid}" aria-expanded="${open}" aria-label="${open?'商談を閉じる':'商談を開く'}">${open?'▼':'▶'}</button>`:''}${esc(d.n)}<span class="cmeta">${nD?`<span class="chip dcnt">商談 ${nD}件</span><button type="button" class="adddeal ico" data-add="${d.id}" aria-label="商談を追加" title="商談を追加">＋</button>`:`<button type="button" class="adddeal" data-add="${d.id}" title="この会社にはまだ商談がありません">＋商談を追加</button>`}${RAW.companies[d.id]&&RAW.companies[d.id].newco?(()=>{ const sy=RAW.companies[d.id].sync||{}; const ok=sy.notion==='done'&&sy.twenty==='done'; return `<span class="chip ${ok?'ncok':'unsync'}" title="Notion：${sy.notion==='done'?'作成済み':'未作成'}／Twenty：${sy.twenty==='done'?'作成済み':'同期待ち'}">${ok?'新規':'新規・未同期'}</span>`; })():''}</span></td>
       <td>${d.owners.map(o=>`<span class="ownerchip"><i style="background:${CONFIG.memberColor[o]}"></i>${o}</span>`).join('<br>')}</td>
       <td class="num">${TIER_JP(d.t)}</td>
       <td title="${nD>1?'いちばん進んでいる商談のフェーズ':''}"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}</td>
       <td class="r num">${(()=>{ const L=mrrLift(d);
         if(L.live) return `${man(L.now)}<span class="mrrup" title="AI 契約前 ${man(L.base)} ＋ Ptengine AI ${man(L.live)}">＋${man(L.live)}</span>`;
-        if(L.next) return `${man(d.m)}<span class="mrrnext" title="契約確定。課金開始で ${man(L.base+L.next)} になります">${L.nextDate?mdj(L.nextDate)+'〜':''} ${man(L.base+L.next)}</span>`;
+        if(L.next) return `${man(d.m)}<span class="mrrnext" title="契約締結済み。課金開始で ${man(L.base+L.next)} になります">${L.nextDate?mdj(L.nextDate)+'〜':''} ${man(L.base+L.next)}</span>`;
         return man(d.m); })()}</td>
       <td class="r num aimc">${aimCell(d)}</td>
       <td class="r num">${d.add?man(d.add):'<span class="dim">—</span>'}</td>
@@ -681,7 +729,7 @@ function renderDeals(){
       <td></td><td></td>
       <td class="r num">${x.add?man(x.add)+(x.src&&x.src.add==='edit'&&x.primary?'<span class="chip estm">入力</span>':''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
       <td></td>
-      <td class="num">${x.apply?dateCell(x.apply.slice(5).replace('-','/'), x.apply<dstr(TODAY)&&!['CLOSED_WON','CLOSED_LOST','VERBAL_COMMIT'].includes(x.ph), x.apply.slice(0,4)!==String(TODAY.getFullYear())?`<span class="dim">'${x.apply.slice(2,4)}</span>`:''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
+      <td class="num">${x.apply?dateCell(x.apply.slice(5).replace('-','/'), x.apply<dstr(TODAY)&&!['CLOSED_WON','CLOSED_LOST','VERBAL_COMMIT','APPLICATION'].includes(x.ph), x.apply.slice(0,4)!==String(TODAY.getFullYear())?`<span class="dim">'${x.apply.slice(2,4)}</span>`:''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
       <td class="num">${x.close?dateCell(x.close.replace('-','/'), x.close<ymOf(TODAY)&&!fin, ''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
       <td class="r num">${man(dealExp(x))}</td>
       <td class="brc">${x.bs||x.br?`${x.bs?`<span class="chip bs-${BS_OPTS.indexOf(x.bs)}">${esc(x.bs)}</span>`:''}${x.br?`<div class="brt" title="${esc(x.br)}">${esc(x.br)}</div>`:''}`:(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
@@ -745,12 +793,12 @@ function initFilters(){
 const GAPS=[
  {lv:'serious',t:'Opportunity と企業一覧の対応',why:`Twenty の Opportunity ${new Set(DEALS.filter(d=>d.oid).map(d=>d.oid)).size}件は「会社」欄がすべて空のため、案件名（Ptengine AI - 企業名）と企業名の一致で紐づけている。企業一覧 ${DEALS.length}社のうち Opportunity があるのは ${DEALS.filter(d=>d.oid).length}社。残りは「案件未作成」と表示。マネーフォワードはアカウント1・2の2社が同じ Opportunity を共有、ビズリーチは同名の Opportunity が2件（ToB／ToC）。`,fix:'Opportunity の <code>company</code> を設定（同期で一括設定可）。商談中なのに案件がない企業は Opportunity を作成'},
  {lv:'serious',t:'追加MRR・合算MRR',why:'Opportunity の Net MRR が48件すべて空。「入力」タブで追加MRRを入れると合算MRR（現在＋追加）で計算する。足切り（追加10万以上）の判定は未実装。',fix:'「入力」タブ、または Opportunity の <code>netMrr</code> を入力'},
- {lv:'crit',t:'お見積以降のフェーズ・確定MRR',why:'CRM の値からは「比較検討」までしか判定できない。お見積・稟議中・契約内示・契約確定は0件。元モックで契約確定だったブレインスリープ等も CRM では「提案」のまま。',fix:'Opportunity の <code>stage</code> を8段階に置き換えて各担当者が入力'},
+ {lv:'crit',t:'最終見積以降のフェーズ・確定MRR',why:'CRM の値からは「トライアル開始済み」までしか判定できない。最終見積もり提示済み以降は0件。元モックで契約確定だったブレインスリープ等も CRM では「提案」のまま。',fix:'Opportunity の <code>stage</code> を Salesforce と同じフェーズに置き換えて各担当者が入力'},
  {lv:'serious',t:'有料化予定月別のグラフ',why:'Opportunity の Close date が48件すべて空のため、今はグラフが空。案件詳細の「入力」タブで入れた予定月・追加MRRから描画する（Twenty への書き込みは同期時）。',fix:'「入力」タブ、または Opportunity の <code>closeDate</code>・<code>netMrr</code> を入力'},
- {lv:'serious',t:'8段階フェーズ（暫定判定）',why:'Twenty の stage はまだ5段階。Ptengine AI ステータス（見送り→失注、検討中→比較検討、FDE/PoC進行→再提案、アポ確定→初回商談）と案件ステージ（提案→再提案、商談・スクリーニング→初回商談、それ以外→未商談）から暫定で判定している。',fix:'Opportunity の <code>stage</code> に NOT_STARTED〜CLOSED_LOST を追加すると、その値を優先して表示'},
+ {lv:'serious',t:'商談フェーズ（暫定判定）',why:'Twenty の stage はまだ5段階。Ptengine AI ステータス（見送り→失注、FDE/PoC進行→トライアル開始済み、検討中・アポ確定→初回アポ実施済み）と案件ステージ（提案・商談・スクリーニング→初回アポ実施済み、それ以外→初回アポ実施前）から暫定で判定している。',fix:'Opportunity の <code>stage</code> に NOT_STARTED・FIRST_MEETING・TRIAL・QUOTE・VERBAL_COMMIT・APPLICATION・CLOSED_WON・CLOSED_LOST を追加すると、その値を優先して表示'},
  {lv:'serious',t:'主担当と目標配分',why:'Opportunity の Owner が全件空。「入力」タブで主担当を入れると按分をやめてその人に計上する。今は Notion の担当3で割り振り済み。ただし Twenty のワークスペースに Baba・Eri・Kubotie がいないため、この3名の担当は Twenty に書き込めない。',fix:'3名を Twenty に招待し、Opportunity の <code>owner</code> を設定'},
  {lv:'serious',t:'契約期間・障壁（状態／内容）',why:'対応するフィールドが CRM に無い（元モックは Notion の値）。障壁未把握アラートと契約期間・LTVは表示できない。',fix:'Opportunity にフィールド追加（例：<code>contractTerm</code>・<code>barrierStatus</code>・<code>barrier</code>）'},
- {lv:'warn',t:'Next Action の期限',why:'プランに未完了の項目がある案件は、その最も早い期日を商談NA にしている。プランがない案件だけ、CRM の Next Action 本文の先頭日付（m/d）から推定している。',fix:'各案件でプランニングを作成'},
+ {lv:'warn',t:'Next Action の期限',why:'プランに未完了の項目がある案件は、その最も早い期日をネクストアクションにしている。プランがない案件だけ、CRM の Next Action 本文の先頭日付（m/d）から推定している。',fix:'各案件でプランニングを作成'},
  {lv:'warn',t:'プランニングの Twenty 反映',why:'プランニング（中間ゴール・Todo・定期フォロー）はダッシュボード側に保存している。Twenty の Task は0件で、種別・進捗％の項目もまだない。',fix:'同期時に Task として書き込み。種別・進捗％は PR #265 の項目追加後'},
  {lv:'warn',t:'顧客サクセス（AI-Ready・OR組織・証拠充足・ゴール）',why:'対応するフィールドが CRM に無い。サクセスプラン、商談先行アラート、サクセストラックは作成不可。',fix:'Company に AI-Ready 系フィールドを追加するか、Notion を正本のまま参照'},
  {lv:'warn',t:'議事録の紐づけ',why:'Note 114件は人（Person）にのみ紐づき、会社・案件とは未リンク。タイトルの企業名で照合しているため取りこぼし・誤照合があり得る（例：マネーフォワード2アカウントで共有）。直近の議事録は 7/3 まで。',fix:'Note を Company / Opportunity にリンク'},
@@ -793,7 +841,7 @@ function renderDrawer(){
       if(L.live) return `<div>現在MRR<b>${man(L.now)}</b><span class="ds-sub">${man(L.base)} → ${man(L.now)}（<span class="up">＋${man(L.live)}</span> Ptengine AI）</span>${bar}</div>`;
       if(L.next) return `<div>現在MRR<b>${man(L.base)}</b><span class="ds-sub">${L.nextDate?mdj(L.nextDate)+' から':'課金開始後'} ${man(L.base+L.next)}（<span class="up">＋${man(L.next)}</span>）</span>${bar}</div>`;
       return `<div>現在MRR<b>${man(d.m)}</b></div>`; })()}<div>（見込）追加MRR<b>${d.add?man(d.add):'未入力'}</b></div><div>合算MRR<b>${man(total(d))}</b></div><div>期待値<b>${man(expected(d))}</b></div></div>
-    <div class="tabs" role="tablist">${[['sum','要約'],['org','組織図'],['edit','商談管理'],['plan','サクセス管理'],['hist','行動履歴'],['notes','議事録']].map(([k,l])=>`<button role="tab" data-t="${k}" aria-selected="${dTab===k}">${l}${k==='plan'?` <span class="sub">${(d.sxOpen||[]).length||''}</span>`:k==='edit'?` <span class="sub">${missingCount(d)?'未入力 '+missingCount(d):''}</span>`:k==='hist'?` <span class="sub">${d.hist.length}</span>`:k==='notes'?` <span class="sub">${d.notes.length}</span>`:k==='org'?` <span class="sub">${(orgOf(d)||{nodes:[]}).nodes.filter(n=>n.kind==='person').length||''}</span>`:''}</button>`).join('')}</div>`;
+    <div class="tabs" role="tablist">${[['sum','要約'],['org','組織図'],['edit','商談管理'],['plan','サクセス管理'],['hist','行動履歴'],['notes','議事録']].map(([k,l])=>`<button role="tab" data-t="${k}" aria-selected="${dTab===k}">${l}${k==='plan'?` <span class="sub">${(d.sxOpen||[]).length||''}</span>`:k==='edit'?` <span class="sub">${missingCount(d)?'未入力 '+missingCount(d):''}</span>`:k==='hist'?` <span class="sub">${actHist(d).filter(e=>!e.planned).length||''}</span>`:k==='notes'?` <span class="sub">${d.notes.length}</span>`:k==='org'?` <span class="sub">${(orgOf(d)||{nodes:[]}).nodes.filter(n=>n.kind==='person').length||''}</span>`:''}</button>`).join('')}</div>`;
   head.querySelector('.close').onclick=closeDeal;
   head.querySelector('#dFull').onclick=()=>{ drawerFull=!drawerFull; drawer.classList.toggle('full',drawerFull); try{localStorage.setItem('pgaBoard.drawerFull',drawerFull?'1':'');}catch(_){} renderDrawer(); };
   head.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{dTab=b.dataset.t;renderDrawer();});
@@ -801,7 +849,7 @@ function renderDrawer(){
   if(dTab==='sum'){
     const fl=flags.filter(([c])=>c!=='crit');
     inner=`<div class="sx">${fl.length?`<div class="flags">${fl.map(([c,l])=>`<span class="chip ${c}">${c&&c!=='split'?'<i></i>':''}${esc(l)}</span>`).join('')}</div>`:''}
-      ${sumOverview(d)}${sumRecent(d)}${sumDeals(d)}${sumKeyDates(d)}${sumInfo(d)}</div>`;
+      ${sumInfo(d)}${sumOverview(d)}${sumRecent(d)}${sumDeals(d)}${sumKeyDates(d)}</div>`;
   } else if(dTab==='org'){
     inner=orgTab(d);
   } else if(dTab==='plan'){
@@ -809,22 +857,26 @@ function renderDrawer(){
   } else if(dTab==='edit'){
     inner=editForm(d);
   } else if(dTab==='hist'){
-    inner=`<div class="sec"><h3>行動履歴 <span class="sub">Company「Next Action」欄の日付付きログを時系列化（新しい順）</span></h3>
-    ${(()=>{const dn=plansOf(d.cid).filter(p=>p.status==='DONE').sort((a,b)=>(b.doneAt||'')<(a.doneAt||'')?-1:1);return dn.length?`<div class="ph3" style="margin-top:10px">プランで完了した項目</div><ul class="tl" style="margin-top:8px">${dn.map(p=>`<li class="done"><span class="pin">✓</span><div class="d"><span>${(p.doneAt||p.due||'').slice(5,10).replace('-','/')}</span><span class="chip"><i></i>${KIND_JP[p.kind]}</span></div><div class="body">${esc(p.title)}</div></li>`).join('')}</ul><div class="ph3">CRM の Next Action 欄の記録</div>`:'';})()}
-    <ul class="tl" style="margin-top:14px">${d.hist.map(h=>`<li class="${h.planned?'plan':'done'}"><span class="pin">${h.planned?'':'✓'}</span><div class="d"><span>${h.ds}</span>${h.planned?'<span class="chip"><i></i>予定</span>':''}</div><div class="body">${esc(h.text)}</div></li>`).join('')||'<li class="empty">記録がありません</li>'}</ul></div>`;
+    inner=histTab(d);
   } else {
-    inner=`<div class="sec"><h3>議事録 <span class="sub">Twenty の Note（タイトルの企業名で照合）</span></h3>
-    ${d.notes.map(n=>`<div class="note"><div class="nh"><span class="d num">${n.d||'—'}</span><b>${esc(n.t)}</b><span class="src">Twenty Note</span></div><div class="md">${esc(n.md.replace(/\n{3,}/g,'\n\n'))||'（本文なし）'}</div></div>`).join('')||'<div class="empty">この企業名を含む Note はありません。</div>'}</div>`;
+    inner=minutesTab(d);
   }
   body.innerHTML=inner;
   if(dTab==='edit') wireEditForm(d);
   if(dTab==='plan') wireAplan(d);
   if(dTab==='sum') wireKeyDates(d);
   if(dTab==='org') wireOrgTab(d);
+  if(dTab==='notes') wireMinutes(d);
+  if(dTab==='hist') wireHist(d);
 }
 
 /* ===================== 組織図 ===================== */
-const ORG_SEED = {"セイコーエプソン":{"genAt":"2026-09-28","genBy":"Claude（repo の組織資料3本から生成）","sources":["20260824_organization（組織の全体像・公開情報の裏取り）","20260901_keyperson-analysis（8/31 山田課長同席 MTG を踏まえた構造）","20260820_project-brief"],"nodes":[{"id":"ceo","kind":"person","name":"吉田 潤吉","title":"代表取締役社長","parent":null,"role":"","stance":"不明","contact":"未接触","conf":"公開","st":"est","note":"","src":"適時開示 2026-02-20"},{"id":"hq","kind":"dept","name":"経営管理DX本部","title":"2026-04-01 新設（旧 経営管理本部＋旧 DX推進本部の統合）。約500名規模","parent":"ceo","conf":"公開","st":"est","note":"本部内の横連携ができていない（2026-04-01 顧客発言）","src":"適時開示・8/24 組織資料"},{"id":"shigemura","kind":"person","name":"繁村 治","title":"本部長・執行役員（CIO兼CFO的立場）","parent":"hq","role":"最終決裁者","stance":"不明","contact":"未接触","conf":"公開","st":"est","note":"関心：ナレッジが会社に残る状態。仮説検証を組織のスキルに／SaaS と内製の仕分け／ナレッジをツールに蓄積。9/14 は不参加","src":"適時開示・9/1 キーパーソン分析"},{"id":"maruyama","kind":"person","name":"丸山 進","title":"副本部長・執行役員（旧 DX推進本部長）","parent":"hq","role":"影響者","stance":"不明","contact":"未接触","conf":"公開","st":"est","note":"佐藤部長との実務上の分担は未確認","src":"適時開示"},{"id":"yamanaka","kind":"person","name":"山中 剛","title":"副本部長・執行役員","parent":"hq","role":"","stance":"不明","contact":"未接触","conf":"公開","st":"est","note":"管掌領域は未確認（旧 Pシステムソリューションズ事業部長）","src":"適時開示"},{"id":"syskikaku","kind":"dept","name":"システム企画部","title":"旧 DX戦略推進部が解消され発足。AI戦略・AI倫理チェック・利用ツールの認定・許可","parent":"hq","conf":"社内","st":"est","note":"ツール認定を握るため、継続・拡張時に関与する可能性","src":"8/31 MTG 山田課長発言"},{"id":"itkikaku","kind":"dept","name":"IT企画設計部","title":"部門長4〜5名が領域を分担。セキュリティは所管外","parent":"hq","conf":"社内","st":"est","note":"","src":"8/31 MTG 山田課長発言"},{"id":"infra","kind":"dept","name":"インフラ・オフィスIT","title":"部門長①（氏名未確認）","parent":"itkikaku","conf":"社内","st":"est","note":"","src":"8/31 MTG"},{"id":"sato","kind":"person","name":"佐藤 部長","title":"IT企画設計部 部門長②（Web＋CRM）。2026-04 着任","parent":"itkikaku","role":"決裁者","stance":"慎重","contact":"接点あり","conf":"社内","st":"est","note":"ミッションは Salesforce の国内外展開（普及率・利用率）。「Ptengine が本当に最適かフラットに評価せよ」と宿題。9/14 が初対面。毎年9月下旬に下半期計画を策定","src":"9/1 キーパーソン分析・8/24 組織資料"},{"id":"yamada","kind":"person","name":"山田 真也","title":"課長（Web 領域）","parent":"sato","role":"技術評価者","stance":"推進","contact":"接点あり","conf":"社内","st":"est","note":"Web は制作を手放し「事業部のカスタマーサクセス集団」へ。事業側を説得できるデータの裏付けを求める。8/31 に最も協業意欲を示した","src":"8/31 MTG・9/1 キーパーソン分析"},{"id":"miyazawa","kind":"person","name":"宮澤 容子","title":"Web 領域 担当","parent":"yamada","role":"推進者","stance":"推進","contact":"接点あり","conf":"社内","st":"est","note":"Champion（主）。Webアナリスト資格。Ptengine 一つであらゆることができる状態を希望","src":"8/20 project brief"},{"id":"takahashi","kind":"person","name":"高橋 和章","title":"Web 領域 担当","parent":"yamada","role":"推進者","stance":"推進","contact":"接点あり","conf":"社内","st":"est","note":"Champion（代替）・Coach。週3〜4日利用。8/17 に佐藤部長へ上申し ¥8M を通した","src":"8/20 project brief・8/24 組織資料"},{"id":"webteam","kind":"group","name":"Web制作メンバー（6名）","title":"鬼頭 伸幸 ほか","parent":"yamada","role":"利用者","stance":"不明","contact":"接点あり","conf":"社内","st":"est","note":"","src":"8/24 組織資料"},{"id":"erp","kind":"dept","name":"ERP（SAP導入）","title":"部門長③（氏名未確認）","parent":"itkikaku","conf":"社内","st":"est","note":"","src":"8/31 MTG"},{"id":"subsc","kind":"dept","name":"サブスクリプション事業構築メンバー","title":"","parent":"itkikaku","conf":"社内","st":"est","note":"","src":"8/31 MTG"},{"id":"aicenter","kind":"dept","name":"AI開発・分析技術センター","title":"2026-04 新設（技術側の AI 組織）","parent":"ceo","conf":"公開","st":"est","note":"経営管理DX本部（応用側）との住み分けは未確認","src":"機構改革 2026-03"},{"id":"otsuka","kind":"person","name":"大塚 勇","title":"センター長・執行役員（材料・加工プロセス開発センター長 兼務）","parent":"aicenter","role":"","stance":"不明","contact":"未接触","conf":"公開","st":"est","note":"","src":"適時開示"},{"id":"bu","kind":"group","name":"事業部（実際の利用者）","title":"支援スコープは 2026-05-19 に産業領域へ集中","parent":"ceo","conf":"社内","st":"est","note":"事業部側に直接の接点がない（多層化の課題）","src":"8/20 資料"},{"id":"techform","kind":"dept","name":"テックフォルム事業部（射出成形機）","title":"主軸。2週に1回の打ち合わせ","parent":"bu","role":"利用者","contact":"接点あり","conf":"社内","st":"est","note":"","src":"8/20 資料"},{"id":"sensing","kind":"dept","name":"センシング事業部","title":"2026-05-19 に支援対象へ追加","parent":"bu","role":"利用者","contact":"接点あり","conf":"社内","st":"est","note":"","src":"8/20 資料"},{"id":"semi","kind":"dept","name":"半導体（タイミングデバイス）","title":"利用頻度が最も高い。ABテスト・月1レポート","parent":"bu","role":"利用者","contact":"接点あり","conf":"社内","st":"est","note":"","src":"8/20 資料"}],"questions":["佐藤部長と丸山副本部長の実務上の分担","山中副本部長の管掌領域","部門長①③の氏名","システム企画部の責任者（ツール認定の窓口）","AI開発・分析技術センターと IT企画設計部の住み分け"]}};
+/* 【移植による変更 3/3】ORG_SEED を空にした（2026-10-01）。
+   原本はここに実在顧客 1 社の組織図（氏名 21 件）を JSON で持っていたが、
+   このリポジトリは public なので置けない。中身は Twenty の testPerson へ移した
+   （scripts/ptai-org-seed-migrate.mjs）。orgOf() は ORGS[cid] を先に見るので、
+   移行済みなら seed は呼ばれず、画面の見え方は変わらない。 */
+const ORG_SEED = {};
 let ORGS = {};            // cid -> {nodes, questions, genAt, genBy, sources, history, updatedAt}
 const ORGUI = {};         // cid -> {sel, ai:{busy,draft,diff,msg,memo,files}, adding}
 const DM_ROLES=['最終決裁者','決裁者'];
@@ -1148,7 +1200,7 @@ function renderGoal(){
   const el=document.getElementById('goalSum');
   el.innerHTML=`<div class="ghead"><span class="gkind" data-tip="${esc('<b>計画の積み上げ</b>各社の「現在MRR ＋ 目標として狙う追加MRR」の合計です（実績ではありません）。（目標）追加MRR と（見込）追加MRR の大きい方を使い、10万円以上の会社だけ数えます。<br>実績は上の「確定MRR」を見てください')}">計画</span><span class="glab">目標の積み上げ</span><span class="gnow">${man(tot)}</span>${G.tgt?`<span class="gtgt">/ 目標 ${man(G.tgt)}</span><span class="gpct ${gap?'':'done'}">${pct}%</span><span class="ggap">${gap?`あと<b>${man(gap)}</b>`:'<b>目標に到達</b>'}</span>`:'<span class="gtgt">目標は未設定</span>'}</div>
     <div class="gbar" role="img" aria-label="計画の積み上げ ${man(tot)}円（目標 ${man(G.tgt)}円）。内訳 契約済み ${man(G.won)}円・商談中 ${man(G.deal)}円・まだ商談なし ${man(G.aim)}円"><i class="g1" style="left:0;width:${x(G.won)}%"></i><i class="g2" style="left:${x(G.won)}%;width:${x(G.deal)}%"></i><i class="g3" style="left:${x(G.won+G.deal)}%;width:${x(G.aim)}%"></i>${ticks}</div>
-    <div class="gleg"><span class="gleg-l">内訳</span><span><i class="sw" style="background:var(--won)"></i>契約済み <b>${man(G.won)}</b></span><span><i class="sw" style="background:var(--accent)"></i>商談中 <b>${man(G.deal)}</b></span><span><i class="sw" style="background:color-mix(in oklab,var(--accent) 40%,transparent)"></i>まだ商談なし <b>${man(G.aim)}</b></span><span style="margin-left:auto">${G.n}社</span></div>`;
+    <div class="gleg"><span class="gleg-l">内訳</span><span><i class="sw" style="background:var(--gold)"></i>契約済み <b>${man(G.won)}</b></span><span><i class="sw" style="background:var(--accent)"></i>商談中 <b>${man(G.deal)}</b></span><span><i class="sw" style="background:color-mix(in oklab,var(--accent) 40%,transparent)"></i>まだ商談なし <b>${man(G.aim)}</b></span><span style="margin-left:auto">${G.n}社</span></div>`;
   const go=()=>{ sortKey='aim'; sortDir=-1; renderDeals(); };
   el.onclick=go; el.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } };
 }
@@ -1273,7 +1325,7 @@ function sumOverview(d){
   const late = d.nd && ymd(d.nd)<TODAY && !['CLOSED_WON','CLOSED_LOST'].includes(d.ph);
   const dd = d.nd ? (late ? `${days(TODAY,ymd(d.nd))}日超過` : days(ymd(d.nd),TODAY)===0 ? '今日' : `あと${days(ymd(d.nd),TODAY)}日`) : '';
   const sx=d.sxNext, sxLate=sx&&sx.dueStr<dstr(TODAY);
-  const next = `<div class="sx-ovnexts"><div class="sx-ovnext ${late?'late':''}"><span class="atag dl">商談</span><span class="t">${d.naHead?esc(d.naHead):'<span class="dim">商談NA 未設定</span>'}</span>${d.nd?`<span class="num d">${fmtMD(d.nd)}<em>${dd}</em></span>`:''}</div>
+  const next = `<div class="sx-ovnexts"><div class="sx-ovnext ${late?'late':''}"><span class="atag dl">商談</span><span class="t">${d.naHead?esc(d.naHead):'<span class="dim">ネクストアクション未設定</span>'}</span>${d.nd?`<span class="num d">${fmtMD(d.nd)}<em>${dd}</em></span>`:''}</div>
     <div class="sx-ovnext sx2 ${sxLate?'late':''}"><span class="atag sx">サクセス</span><span class="t">${sx?esc(sx.text):'<span class="dim">Todo なし</span>'}</span>${sx?`<span class="num d">${fmtMD(sx.dueStr)}${sxLate?'<em>超過</em>':''}</span>`:''}</div></div>`;
   if(!o){
     return `<section class="sx-ov empty"><header class="sx-h"><h3>取り組みサマリー</h3><button type="button" class="sx-ai" data-recent ${ui.busy?'disabled':''}><span aria-hidden="true">✦</span>${ui.busy?'作成中…':'AI でサマリーを作成'}</button></header>
@@ -1290,7 +1342,7 @@ function sumNext(d){
   const dd = d.nd ? (late ? `${days(TODAY,ymd(d.nd))}日超過` : days(ymd(d.nd),TODAY)===0 ? '今日' : `あと${days(ymd(d.nd),TODAY)}日`) : '';
   return `<div class="sx-next ${late?'late':''} ${d.naHead?'':'empty'}">
     <div class="sx-lab">次の一手</div>
-    <div class="sx-next-t">${d.naHead?esc(d.naHead):'未設定。入力タブで商談NA を入れてください'}</div>
+    <div class="sx-next-t">${d.naHead?esc(d.naHead):'未設定。入力タブでネクストアクションを入れてください'}</div>
     ${d.nd?`<div class="sx-next-d"><span class="num">${fmtMD(d.nd)}</span><span class="sx-due">${dd}</span></div>`:''}
   </div>`;
 }
@@ -1330,7 +1382,7 @@ function sumDeals(d){
         ${f('課金開始日', x.close?x.close.replace('-','/'):'<span class="dim">—</span>')}
         ${f('期待値', man(dealExp(x)))}
       </div>
-      ${na.t?`<div class="sx-dna ${late?'late':''}"><span class="sx-lab">商談NA</span><span class="t">${esc(na.t)}</span>${na.date?`<span class="num d">${fmtMD(na.date)}${late?' 超過':''}</span>`:''}</div>`:''}
+      ${na.t?`<div class="sx-dna ${late?'late':''}"><span class="sx-lab">ネクストアクション</span><span class="t">${esc(na.t)}</span>${na.date?`<span class="num d">${fmtMD(na.date)}${late?' 超過':''}</span>`:''}</div>`:''}
     </article>`; }).join('');
   return `<section class="sx-sec"><header class="sx-sh"><h3>商談 <span class="sx-cnt">${d.deals.length}</span></h3>
       ${d.deals.length?`<span class="sx-meta">合算MRR <b class="num">${man(total(d))}</b>・期待値 <b class="num">${man(expected(d))}</b>${d.add&&d.add<AI_MIN?'<span class="sx-warn">追加MRR 10万円未満のため目標に数えません</span>':''}</span>`:''}
@@ -1407,7 +1459,7 @@ function dealsSection(d){
       <td>${na.t?esc(na.t.length>40?na.t.slice(0,40)+'…':na.t):'<span class="dim">—</span>'}</td>
       <td class="num ${late?'late':''}">${na.date?na.date.slice(5).replace('-','/'):'—'}</td></tr>`; }).join('');
   return `<div class="sec"><h3>商談 <span class="sub">${d.deals.length}件。行をクリックで入力</span><button type="button" class="adddeal" data-dnew style="margin-left:auto">＋商談を追加</button></h3>
-    ${d.deals.length?`<div class="dealwrap"><table class="dealtbl"><thead><tr><th>商談名</th><th>フェーズ</th><th class="r">（見込）追加MRR</th><th>申込完了日</th><th>課金開始日</th><th class="r">確率</th><th class="r">期待値</th><th>商談NA</th><th>NA期日</th></tr></thead><tbody>${rows}</tbody>
+    ${d.deals.length?`<div class="dealwrap"><table class="dealtbl"><thead><tr><th>商談名</th><th>フェーズ</th><th class="r">（見込）追加MRR</th><th>申込完了日</th><th>課金開始日</th><th class="r">確率</th><th class="r">期待値</th><th>ネクストアクション</th><th>アクション期日</th></tr></thead><tbody>${rows}</tbody>
     <tfoot><tr><td colspan="2">会社の合計（現在MRR ${man(d.m)} を含む期待値）</td><td class="r num">${man(d.add)}</td><td></td><td></td><td class="r num">${Math.round(PROB[d.ph]*100)}%</td><td class="r num">${man(expected(d))}</td><td colspan="2"></td></tr></tfoot></table></div>`:'<p class="empty">商談はまだありません。「＋商談を追加」から作成できます（同期時に Twenty の Opportunity を作成）。</p>'}</div>`;
 }
 document.getElementById('dBody').addEventListener('click',e=>{
@@ -1421,10 +1473,10 @@ function selDealKey(d){
   if(editDeal && d.deals.some(x=>x.key===editDeal)) return editDeal;
   return d.deals[0] ? d.deals[0].key : 'main';
 }
-const PH_FLOW=['FIRST_MEETING','RE_PROPOSAL','EVALUATION','QUOTE','APPROVAL','VERBAL_COMMIT','CLOSED_WON'];
+const PH_FLOW=['FIRST_MEETING','TRIAL','QUOTE','VERBAL_COMMIT','APPLICATION','CLOSED_WON'];
 /* ---- 到達予定（マイルストーン）：申込完了日 or 課金開始日から逆算して自動提案 ---- */
-const MS_PH=['EVALUATION','QUOTE','APPROVAL','VERBAL_COMMIT'];
-const MS_OFF={EVALUATION:49,QUOTE:35,APPROVAL:21,VERBAL_COMMIT:10};   // 申込完了日の何日前か
+const MS_PH=['TRIAL','QUOTE','VERBAL_COMMIT'];   // ゴールの「申込用紙回収済み」は申込完了日そのもの
+const MS_OFF={TRIAL:49,QUOTE:35,VERBAL_COMMIT:10};   // 申込完了日の何日前か
 const MS_BILL_GAP=14;                                                  // 課金開始日を基準にするときは申込完了＝課金開始の14日前とみなす
 const reachedPh=(x,p)=>x.ph==='CLOSED_WON'||(PH_FLOW.indexOf(x.ph)>=PH_FLOW.indexOf(p));
 const toFri=dt=>{ const w=dt.getDay(); if(w===6) dt.setDate(dt.getDate()-1); if(w===0) dt.setDate(dt.getDate()-2); return dt; };
@@ -1474,7 +1526,7 @@ function logRow(y){
 async function completeNa(d,key,note){
   const x=d.deals.find(y=>y.key===key); if(!x||!x.na) return;
   const log=logAdd(x,{t:'na',text:x.na,due:x.naDate||null,note:note||null,ph:x.ph});
-  await saveEditDoc(d, phaseBody(d,key,{na:null,naDate:null,log}), 'NA を完了しました。次の NA を入れてください');
+  await saveEditDoc(d, phaseBody(d,key,{na:null,naDate:null,log}), 'アクションを完了しました。次のネクストアクションを入れてください');
   DEAL_OPEN=d.cid+'|'+key; editDeal=key; renderDrawer();
   setTimeout(()=>{ const t=document.getElementById('efNa'); if(t){ t.scrollIntoView({block:'center'}); t.focus(); } },30);
 }
@@ -1504,18 +1556,153 @@ function msRow(y){
   if(bd) chips.push(`<span class="m" title="逆算の基準"><b>${bl}</b><span class="num">${mdj(bd)}</span></span>`);
   return `<div class="dms"><span class="lab">到達予定</span>${chips.join('<span class="sep">›</span>')}</div>`;
 }
+/* ---- 道のり：到達予定と経過を1本の時間軸にまとめる ---- */
+const JR_SEEN=new Set();
+const JR_FLAG='<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 15V1.5M3 2h9.5l-2 3.25 2 3.25H3" fill="currentColor" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+const JG_OPEN=new Set();
+function jrTip(e){
+  const md=mdj(dstr(new Date(e.at)));
+  if(e.t==='na'){ const late=e.due&&dstr(new Date(e.at))>e.due;
+    return `<b>ネクストアクション完了</b> ${md}<br>${esc(e.text||'')}${e.note?`<br>結果：${esc(e.note)}`:''}${e.due?`<br>期日 ${mdj(e.due)}（${late?'期日を過ぎて完了':'期日内に完了'}）`:''}`; }
+  if(e.t==='br') return `<b>障壁を更新</b> ${md}<br>${esc(e.text||'（内容なし）')}`;
+  return '';
+}
+function jrList(y,L){
+  if(!L.length) return '';
+  const ld=ts=>dstr(new Date(ts)), md=ts=>mdj(ld(ts)), T=dstr(TODAY);
+  // フェーズごとの区間に分ける：フェーズが進んだ記録で区切り、その間のアクション・障壁をまとめる
+  const firstPh=L.find(e=>e.t==='ph'), firstNa=L.find(e=>e.t==='na'&&e.ph);
+  const seg=[{ph: phN(firstPh?firstPh.from:(firstNa?firstNa.ph:y.ph)), from:ld(L[0].at), items:[], end:null}];
+  L.forEach(e=>{
+    const cur=seg[seg.length-1];
+    if(e.t==='ph'){ cur.end={to:phN(e.to), at:ld(e.at)}; seg.push({ph:phN(e.to), from:ld(e.at), items:[], end:null}); return; }
+    if(e.t!=='na'&&e.t!=='br') return;
+    let g=cur; if(e.t==='na'&&e.ph&&phN(e.ph)!==cur.ph){ const h=[...seg].reverse().find(q=>q.ph===phN(e.ph)); if(h) g=h; }
+    g.items.push(e);
+  });
+  const CAP=3;
+  const item=e=>{
+    if(e.t==='na'){ const late=e.due&&ld(e.at)>e.due;
+      return `<li class="na"><i class="ji"></i><span class="jt"><b>${esc(e.text)}</b>${e.note?`<small>${esc(e.note)}</small>`:''}</span><span class="jd num">${e.due?`<em class="${late?'late':''}">${late?'期日超過で完了':'期日内'}</em>`:''}${md(e.at)}</span></li>`; }
+    return `<li class="br"><i class="ji"></i><span class="jt"><b>障壁を更新</b>${e.text?`<small>${esc(e.text)}</small>`:''}</span><span class="jd num">${md(e.at)}</span></li>`;
+  };
+  const vis=seg.map((g,i)=>({...g,i})).filter(g=>g.items.length||g.i===seg.length-1||(g.end&&g.end.at>g.from));
+  const groups=vis.map((g,j)=>{
+    const now=!g.end && !['CLOSED_WON','CLOSED_LOST'].includes(y.ph), last=j===vis.length-1;
+    const gk=y.key+'|'+g.i, full=JG_OPEN.has(gk);
+    const open = last ? true : full;                     // 過去のフェーズは閉じておき、見出しをクリックで開く
+    const to=g.end?g.end.at:T, span=days(ymd(to),ymd(g.from));
+    const nNa=g.items.filter(e=>e.t==='na').length;
+    let out='';
+    if(g.end){ const plan=y.ms&&y.ms[g.end.to]; const dd=plan?days(ymd(g.end.at),ymd(plan)):null;
+      out=`<span class="jgo"><i>✓</i>${esc(PH_JP[g.end.to]||g.end.to)}<span class="num">${mdj(g.end.at)}</span>${dd!==null?`<em class="${dd>0?'late':'ok'}">${dd===0?'予定どおり':dd>0?`予定より${dd}日遅い`:`予定より${-dd}日早い`}</em>`:''}</span>`; }
+    else if(now) out=`<span class="jgo now">いまここ</span>`;
+    const list = !open ? [] : (last&&!full ? g.items.slice(-CAP) : g.items);
+    const rest = g.items.length-list.length;
+    const canToggle = !last && g.items.length>0;
+    const head=`<b>${esc(PH_JP[g.ph]||g.ph||'—')}</b><span class="jgm">${nNa?`アクション <b class="num">${nNa}</b>件`:'アクションなし'}</span><span class="jgd num">${mdj(g.from)}〜${now?'今日':mdj(to)}　${now?`${span+1}日目`:`${span}日`}</span>${out}`;
+    return `<section class="jg ${now?'now':''} ${g.end?'done':''} ${open?'open':''}">
+      ${canToggle?`<button type="button" class="jgh" data-jg="${esc(gk)}" aria-expanded="${open}"><i class="jgc" aria-hidden="true">›</i>${head}</button>`:`<header class="jgh">${head}</header>`}
+      ${list.length?`<ol>${list.map(item).join('')}</ol>`:''}${last&&(rest>0||full)&&g.items.length>CAP?`<button type="button" class="jgmore" data-jg="${esc(gk)}">${full?'直近3件だけ表示':`ほか ${rest}件を表示`}</button>`:''}</section>`;
+  });
+  return `<div class="jrlog" aria-label="フェーズごとの経過">${groups.join('')}</div>`;
+}
+document.addEventListener('click', e=>{
+  const b=e.target.closest('[data-jg]'); if(!b) return;
+  e.preventDefault(); const k=b.dataset.jg; JG_OPEN.has(k)?JG_OPEN.delete(k):JG_OPEN.add(k);
+  const sc=b.closest('.jrlog'); const top=sc?sc.scrollTop:0; renderDrawer();
+});
+
+function jrRow(y){
+  const won=y.ph==='CLOSED_WON', lost=y.ph==='CLOSED_LOST';
+  const L=(y.log||[]).slice().sort((a,b)=>a.at<b.at?-1:1);
+  const T=dstr(TODAY), ld=ts=>dstr(new Date(ts)), tt=s=>new Date(s+'T00:00:00').getTime();
+  const m=y.ms||{}, hasMs=MS_PH.some(p=>m[p]);
+  const bd = won ? (y.apply||null) : (y.msBase==='bill' ? (y.bill||null) : y.apply);
+  const bl = !won && y.msBase==='bill' ? '課金開始' : '申込用紙回収';
+  const goalR = bl==='課金開始' ? won : reachedPh(y,'APPLICATION');
+  const list=jrList(y,L);
+  if(lost) return list?`<div class="jr"><div class="jrh"><span class="lab">経過</span></div>${list}</div>`:'';
+  if(!hasMs && !bd && !won) return `<div class="jr"><div class="jrh"><span class="lab">道のり</span><span class="jrempty">到達予定が未設定です（申込完了日を入れると自動で入ります）</span></div>${list}</div>`;
+  // 節目：スタート → 4つのフェーズ → ゴール（申込完了）
+  const actual={}; L.forEach(e=>{ if(e.t==='ph' && !actual[phN(e.to)]) actual[phN(e.to)]=ld(e.at); });
+  // 過去（到達済み・遅れ）は今日の左、これからは右。今日も1つの節目として等間隔に並べる
+  const st=[]; MS_PH.forEach(p=>{ const r=won||reachedPh(y,p); if(!m[p]&&!r) return; st.push({k:p, name:PH_SHORT[p], full:PH_JP[p], r, plan:m[p]||null, act:actual[p]||null, d:(r&&actual[p])||m[p]||null}); });
+  if(bd) st.push({k:'goal', name:bl, full:bl==='課金開始'?'課金開始':PH_JP.APPLICATION, r:goalR, d:bd, plan:bd});
+  let pd=null; st.forEach(x=>{ if(x.r){ if(!x.d||(pd&&x.d<pd)) x.d=pd; if(x.d) pd=x.d; } });
+  const past=st.filter(x=>x.r||(x.plan&&x.plan<T)), fut=st.filter(x=>!past.includes(x));
+  past.forEach(x=>{ if(!x.d||x.d>T) x.d=T; });
+  const nodes=[];
+  const first=[T, ...L.map(e=>ld(e.at)), ...past.map(x=>x.d)].sort()[0];
+  if(first<T) nodes.push({k:'start', name:'スタート', d:first, act:first});
+  nodes.push(...past); if(!won) nodes.push({k:'now', name:'今日', d:T});
+  nodes.push(...fut);
+  for(let i=1;i<nodes.length;i++){ if(!nodes[i].d || nodes[i].d<nodes[i-1].d) nodes[i].d=nodes[i-1].d; }
+  const n=nodes.length, P=nodes.map((_,i)=>n>1?i/(n-1)*100:0), D=nodes.map(x=>tt(x.d));
+  const posOf=s=>{ const v=tt(s); if(v<=D[0]) return 0;
+    for(let i=0;i<n-1;i++){ if(v<=D[i+1]) return D[i+1]===D[i]?P[i+1]:P[i]+(P[i+1]-P[i])*(v-D[i])/(D[i+1]-D[i]); }
+    return 100; };
+  // 状態
+  let nextK=null, lateK=null;
+  nodes.forEach(x=>{ if(x.k==='start'||x.k==='now') { x.cls=x.k; return; }
+    if(x.r){ x.cls='done'; return; }
+    if(x.plan && x.plan<T){ x.cls='late'; lateK=x; return; }
+    if(!nextK){ x.cls='next'; nextK=x; } else x.cls='';
+  });
+  const ni=nodes.findIndex(x=>x.k==='now'); const pt = won||ni<0 ? 100 : P[ni];
+  const nodeHtml=nodes.map((x,i)=>{
+    const pos=i===0?'first':i===n-1?'last':'';
+    const icon = x.k==='goal' ? (won?'✓':JR_FLAG) : (x.k==='start'||x.k==='now') ? '' : x.r ? '✓' : x.cls==='late' ? '!' : '';
+    const dt = x.k==='start' ? (x.act?mdj(x.act):'') : x.k==='now' ? mdj(T) : x.r ? mdj(x.act||x.plan||'') : mdj(x.plan||x.d);
+    let em='';
+    if(x.k!=='start'&&x.k!=='now'){
+      if(x.r) em = x.act&&x.plan ? (()=>{ const dd=days(ymd(x.act),ymd(x.plan)); return dd===0?'予定どおり':dd>0?`${dd}日遅れで到達`:`${-dd}日早く到達`; })() : '到達';
+      else if(x.plan) em = x.cls==='late' ? `${days(TODAY,ymd(x.plan))}日遅れ` : relDay(x.plan);
+    }
+    const tip = x.k==='now' ? `今日 ${mdj(T)}` : x.k==='start' ? (x.act?`記録の始まり ${mdj(x.act)}`:'') : `${x.full||x.name}：${x.r?'到達済み':x.plan?('予定 '+mdj(x.plan)):''}${em?'（'+em+'）':''}`;
+    return `<div class="jn ${x.k==='goal'?'goal':''} ${x.cls} ${pos}" style="left:${P[i].toFixed(2)}%;${PCOL[x.k]&&x.k!=='goal'?`--nc:var(${PCOL[x.k]})`:''}" data-tip="${esc(esc(tip))}"><span class="jnn">${esc(x.name)}</span><i class="jnd">${icon}</i><span class="jnt num">${dt||'&nbsp;'}</span>${em?`<em>${esc(em)}</em>`:''}</div>`;
+  }).join('');
+  // 経過の点（NA 完了・障壁）と、次の NA の予定
+  const stack={};
+  const dot=(cls,s,tip)=>{ const p=posOf(s); const kk=p.toFixed(1); const k2=stack[kk]=(stack[kk]||0)+1; const off=(k2-1)*9+(p<0.5?13:0); return `<span class="je ${cls}" style="left:calc(${p.toFixed(2)}% + ${off}px)" data-tip="${esc(tip)}"></span>`; };
+  const evHtml=L.filter(e=>e.t==='na'||e.t==='br').map(e=>dot(e.t, ld(e.at), jrTip(e))).join('')
+    + (!won && y.na && y.naDate ? dot('plan', y.naDate<T?T:y.naDate, `<b>次のネクストアクション</b> 期日 ${mdj(y.naDate)}${y.naDate<T?'（期日超過）':''}<br>${esc(y.na)}`) : '');
+  const nowHtml='';
+  // 見出し
+  let lead, lc='';
+  if(won){ lead='受注しました'; lc='won'; }
+  else if(lateK){ lead=`${lateK.name}が ${days(TODAY,ymd(lateK.plan))}日遅れています`; lc='late'; }
+  else if(nextK && nextK.k!=='goal'){ const r=days(ymd(nextK.plan),TODAY); lead = `次は${nextK.name}　${r===0?'今日':`あと${r}日`}`; }
+  else if(bd){ const r=days(ymd(bd),TODAY); lead = `${bl}まで ${r===0?'今日':`あと${r}日`}`; }
+  else lead='';
+  const sub=[];
+  if(!won && !hasMs) sub.push(`<span class="dim">到達予定は未設定です（商談の入力で自動で入ります）</span>`);
+  const since=new Date(TODAY); since.setDate(since.getDate()-14); const S=dstr(since);
+  const recent=L.filter(e=>e.t==='na'&&ld(e.at)>=S).length;
+  if(recent) sub.push(`<span class="mo">直近2週間でアクション ${recent}件完了</span>`);
+  const phAt=[...L].reverse().find(e=>e.t==='ph'&&phN(e.to)===y.ph);
+  if(!won && phAt){ const k=days(TODAY,ymd(ld(phAt.at))); sub.push(`<span>${PH_JP[y.ph]}に入って ${k}日</span>`); }
+  const prize = y.add ? `<span class="jrprize ${won?'won':''}">${won?'獲得':'ゴールで'}<b>＋${man(y.add)}</b>/月</span>` : '';
+  const grow = !JR_SEEN.has(y.key+'|'+(y.ph||'')); JR_SEEN.add(y.key+'|'+(y.ph||''));
+  return `<div class="jr ${won?'won':''}" style="--p:${pt.toFixed(2)}%">
+    <div class="jrh"><div class="jrhl"><span class="lab">道のり</span>${lead?`<b class="jrlead ${lc}">${esc(lead)}</b>`:''}${sub.length?`<span class="jrsub">${sub.join('')}</span>`:''}</div>${prize}</div>
+    <div class="jrrail ${grow?'grow':''}" role="img" aria-label="${esc(nodes.filter(x=>x.k!=='start'&&x.k!=='now').map(x=>`${x.name} ${mdj(x.r&&x.act?x.act:(x.plan||x.d))}${x.r?' 到達':''}`).join('、'))}"><div class="jrtrack"><i class="jrfill"></i></div>${evHtml}${nodeHtml}${nowHtml}</div>
+    ${list}</div>`;
+}
 const relDay = s => { const n=days(ymd(s),TODAY); return n<0?`${-n}日超過`:n===0?'今日':`あと${n}日`; };
 function dealSum(d,y){
   if(y.ph==='CLOSED_LOST') return `<div class="dsum lost"><span class="dim">失注</span></div>`;
+  if(y.ph==='CLOSED_WON'){ const bl=y.bill||(y.close?y.close+'-01':null); const L=(y.log||[]).slice().sort((a,b)=>a.at<b.at?-1:1);
+    return `<div class="dsum wonc"><div class="dwon"><i aria-hidden="true">✓</i><b>受注しました</b>${y.apply?`<span><small>申込完了</small><b class="num">${mdj(y.apply)}</b></span>`:''}${bl?`<span><small>課金開始</small><b class="num">${mdj(bl)}</b>${bl>dstr(TODAY)?`<em>${relDay(bl)}</em>`:''}</span>`:''}${y.add?`<span class="amt"><b class="num">＋${man(y.add)}</b>/月</span>`:''}</div>${aprBox(d,y)}${jrList(y,L)}</div>`; }
   const T=dstr(TODAY), idx=PH_FLOW.indexOf(y.ph), next=idx>=0&&idx<PH_FLOW.length-1?PH_FLOW[idx+1]:(y.ph==='NOT_STARTED'?PH_FLOW[0]:null);
   const bar=`<div class="dflow" aria-label="フェーズ ${PH_JP[y.ph]}">${PH_FLOW.map((p,i)=>`<i class="${i<idx?'done':i===idx?'cur':''}" title="${PH_JP[p]}"></i>`).join('')}</div>
     <div class="dflow-l"><b>${PH_JP[y.ph]}</b>${next&&y.ph!=='CLOSED_WON'?`<span>次は ${PH_JP[next]}</span>`:''}</div>`;
   const date=(l,v)=>v?`<span class="ddate ${v<T&&y.ph!=='CLOSED_WON'&&l==='申込完了'?'late':''}"><small>${l}</small><b class="num">${mdj(v)}</b>${y.ph!=='CLOSED_WON'?`<em>${relDay(v)}</em>`:''}</span>`:`<span class="ddate none"><small>${l}</small><b>—</b></span>`;
   const bill = y.bill || (y.close?y.close+'-01':null);
   const naLate=y.na&&y.naDate&&y.naDate<T;
-  const na = y.ph==='CLOSED_WON' ? '' : `<div class="dna ${naLate?'late':''} ${y.na?'':'empty'}"><span class="atag dl">NA</span><span class="t">${y.na?esc(y.na):'商談NA が未設定です'}</span>${y.naDate?`<span class="num d">${mdj(y.naDate)}<em>${relDay(y.naDate)}</em></span>`:y.na?'<span class="d dim">期日なし</span>':''}${y.na?`<button type="button" class="nadone" data-nadone="${esc(y.key)}" title="この NA を完了にして履歴に残す">✓ 完了</button>`:''}</div>`;
+  const na = y.ph==='CLOSED_WON' ? '' : `<div class="dna ${naLate?'late':''} ${y.na?'':'empty'}"><span class="atag dl">ネクストアクション</span><span class="t">${y.na?esc(y.na):'未設定です。商談の入力で次の一手を入れてください'}</span>${y.naDate?`<span class="num d">${mdj(y.naDate)}<em>${relDay(y.naDate)}</em></span>`:y.na?'<span class="d dim">期日なし</span>':''}${y.na?`<button type="button" class="nadone" data-nadone="${esc(y.key)}" data-tip="このアクションを完了にして、道のりの経過に残します">✓ 完了</button>`:''}</div>`;
   const bar2 = y.ph==='CLOSED_WON' ? '' : `<div class="dbr ${y.br?'known':'unk'}"><span class="atag br">障壁</span><span class="t">${y.br?esc(y.br):'<span class="dim">障壁の内容が未入力です</span>'}</span></div>`;
-  return `<div class="dsum">${bar}<div class="ddates">${date('申込完了',y.apply)}${date('課金開始',bill)}</div>${msRow(y)}${na}${bar2}${logRow(y)}</div>`;
+  return `<div class="dsum">${aprBox(d,y)}${bar}<div class="ddates">${date('申込完了',y.apply)}${date('課金開始',bill)}</div>${jrRow(y)}${na}${bar2}</div>`;
 }
 function editForm(d){
   const opt=(arr,cur,lab=x=>x)=>['<option value="">（未選択）</option>',...arr.map(v=>`<option value="${v}" ${v===cur?'selected':''}>${esc(lab(v))}</option>`)].join('');
@@ -1528,14 +1715,14 @@ function editForm(d){
     phase: r.phase||'', apply: r.applyDate||'', bill: r.billingDate||'', close: isMain&&!r.billingDate?(r.closeMonth||''):'',
     add: r.addMrr ? Math.round(r.addMrr/10000) : (isMain&&x&&x.src&&x.src.add==='twenty' ? Math.round(x.add/10000) : ''),
     term: r.term?String(r.term):'', bs:r.barrierStatus||'', br:r.barrier||'', need: has(r.need)?r.need:(x?x.need:''),
-    na:r.na||'', naDate:r.naDate||'', lost:r.lostReason||'', lostD:r.lostDetail||'', ms:r.ms||{}, msBase:r.msBase||'apply'
+    na:r.na||'', naDate:r.naDate||'', lost:r.lostReason||'', lostD:r.lostDetail||'', ms:msN(r.ms)||{}, msBase:r.msBase||'apply'
   };
-  const xr = x || {ph:(r.phase||'NOT_STARTED')};
+  const xr = x || {ph:phN(r.phase||'NOT_STARTED')};
   const badge = k => isMain&&x ? srcBadge(k,d) : '';
   const chips = d.deals.map(y=>`<button type="button" data-dsel="${esc(y.key)}" aria-pressed="${y.key===key}" title="${esc(y.name)}">${esc(y.name.replace(/^Ptengine AI - /,''))}</button>`).join('')
     + `<button type="button" class="new" data-dsel="new" aria-pressed="${key==='new'||(isMain&&!x)}">＋商談を追加</button>`;
   const isOpen = x ? DEAL_OPEN===d.cid+'|'+key : editDeal==='new';
-  const FIELDS = isOpen ? `<div class="dbody">
+  const FIELDS = isOpen ? `<div class="dbody">${wonLocked(x)?`<div class="lockn"><b>受注済みの商談です。</b>ここで保存した変更と削除は、Utty が承認すると反映されます。${x.pe||x.pdel?'すでに承認待ちの申請があります（新しく保存すると置き換わります）。':''}</div>`:''}
     <div class="efrow wide"><label for="efName">商談名</label><input id="efName" type="text" value="${esc(v.name)}" style="font:inherit;font-size:13px;padding:6px 8px;border-radius:7px;border:1px solid var(--ring);background:var(--surface);color:var(--ink);width:100%" placeholder="Ptengine AI - 企業名（部門名）"></div>
     <div class="efrow"><label for="efPhase">フェーズ</label><select id="efPhase">${opt(PHASES,(x&&x.pending)||v.phase,p=>PH_JP[p]+(p==='CLOSED_WON'&&!IS_APPROVER?'（承認が必要）':''))}</select>${badge('ph')}${isMain&&x&&x.est?`<span class="efhint">暫定：${PH_JP[x.ph]}</span>`:''}</div>
     <div class="efrow"><label for="efAdd">追加MRR</label><span class="inwrap"><input id="efAdd" type="number" min="0" step="1" inputmode="numeric" value="${v.add}"><em>万円</em></span>${badge('add')}</div>
@@ -1545,22 +1732,25 @@ function editForm(d){
     <div class="msbox" id="msBox" data-saved="${MS_PH.some(p=>v.ms[p])?'1':''}">
       <div class="msh"><span class="mt">到達予定</span><span class="qi" data-tip="${esc(MS_TIP)}">?</span>
         <span class="msseg" role="radiogroup" aria-label="逆算の基準">${[['apply','申込完了',v.apply],['bill','課金開始',v.bill]].map(([k,l,dv])=>`<label><input type="radio" name="msBase" value="${k}" ${v.msBase===k?'checked':''}>${l}<b data-msb="${k}">${dv?mdj(dv):'<i>未入力</i>'}</b></label>`).join('')}</span></div>
-      <ol class="mstl">${MS_PH.map(p=>{ const r=reachedPh(xr,p); return `<li class="${r?'done':''}" data-p="${p}"><span class="dt"></span><span class="pl">${PH_JP[p]}</span>${r?'<span class="dv">到達済み</span><span class="sb"></span>':`<label class="dv none"><span class="dvt">—</span><input type="date" data-ms="${p}" value="${esc(v.ms[p]||'')}" ${v.ms[p]?'data-manual="1"':''} tabindex="0" aria-label="${PH_JP[p]}の予定日"></label><span class="sb"></span>`}</li>`; }).join('')}
+      <ol class="mstl">${MS_PH.map(p=>{ const r=reachedPh(xr,p); return `<li class="${r?'done':''}" data-p="${p}"><span class="dt"></span><span class="pl" title="${PH_JP[p]}">${PH_SHORT[p]||PH_JP[p]}</span>${r?'<span class="dv">到達済み</span><span class="sb"></span>':`<label class="dv none"><span class="dvt">—</span><input type="date" data-ms="${p}" min="2020-01-01" max="2099-12-31" value="${esc(v.ms[p]||'')}" ${v.ms[p]?'data-manual="1"':''} tabindex="0" aria-label="${PH_JP[p]}の予定日"></label><span class="sb"></span>`}</li>`; }).join('')}
         <li class="base"><span class="dt"></span><span class="pl" id="msBaseL">申込完了</span><span class="dv" id="msBaseD">—</span><span class="sb">基準</span></li></ol>
       <div class="msf"><span id="msNote"></span><button type="button" id="msReset" hidden>↺ 基準から引き直す</button></div>
     </div>
     <div class="efrow"><label for="efTerm">契約期間</label><select id="efTerm">${opt(['12','24','36'],v.term,y=>y+'か月')}</select>${badge('term')}</div>
     <div class="efrow wide"><label for="efBr">障壁の内容</label><textarea id="efBr" rows="2">${esc(v.br)}</textarea></div>
     <div class="efrow wide"><label for="efNeed">ニーズ</label><textarea id="efNeed" rows="3">${esc(v.need)}</textarea></div>
-    <div class="efrow wide"><label for="efNa">商談NA</label><textarea id="efNa" rows="2" placeholder="この商談を前に進める次の1手（例：見積を提出し稟議の日程を確認）">${esc(v.na)}</textarea></div>
-    <div class="efrow"><label for="efNaDate">NA期日</label><input id="efNaDate" type="date" value="${esc(v.naDate)}"><span class="efhint">期日を過ぎると要対応に出ます</span></div>
+    <div class="efrow wide"><label for="efNa">ネクストアクション</label><textarea id="efNa" rows="2" placeholder="この商談を前に進める次の1手（例：見積を提出し稟議の日程を確認）">${esc(v.na)}</textarea></div>
+    <div class="efrow"><label for="efNaDate">アクション期日</label><input id="efNaDate" type="date" value="${esc(v.naDate)}"><span class="efhint">期日を過ぎると要対応に出ます</span></div>
     <div class="efsub">失注のとき</div>
     <div class="efrow"><label for="efLost">失注理由</label><select id="efLost">${opt(LOST_OPTS,v.lost)}</select><span class="efhint">選択肢は仮（SF の失注理由に後で揃える）</span></div>
     <div class="efrow wide"><label for="efLostD">失注理由の詳細</label><textarea id="efLostD" rows="2">${esc(v.lostD)}</textarea></div>
-    ${!isMain&&!isNew?`<div class="edact" style="justify-content:flex-start;margin-top:4px"><button type="button" class="btn ghost sm" id="efDel">この商談を削除</button></div>`:''}
+    ${!isMain&&!isNew?`<div class="edact deldock" id="efDelDock"><button type="button" class="dellink" id="efDel">${wonLocked(x)?'この商談の削除を申請':'この商談を削除'}</button></div>`:''}
 </div>` : '';
-  const head = (y,open) => `<button type="button" class="dhead" data-dsel="${esc(y.key)}" aria-expanded="${open}"><span class="dcar" aria-hidden="true">${open?'▾':'▸'}</span><span class="dh-n">${esc(y.name)}</span><span class="chip ph" style="background:var(${PCOL[y.ph]});${y.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[y.ph]}</span>${y.pending&&y.pending!==y.ph?'<span class="chip estm">承認待ち</span>':''}<span class="dh-m num">${y.add?man(y.add):'—'}</span><span class="dh-m num">${y.apply?mdj(y.apply):'—'}</span><span class="dh-m num">${y.close?y.close.replace('-','/'):'—'}</span></button>`;
-  const dealList = d.deals.map(y=>`<div class="dcard ${y.key===key&&isOpen?'open':''}">${head(y, y.key===key&&isOpen)}${dealSum(d,y)}${y.key===key&&isOpen?FIELDS:''}</div>`).join('')
+  const head = (y,open,no) => `<button type="button" class="dhead" data-dsel="${esc(y.key)}" aria-expanded="${open}"><span class="dcar" aria-hidden="true">${open?'▾':'▸'}</span>${no?`<span class="dno num">商談${no}</span>`:'<span></span>'}<span class="dh-n" title="${esc(y.name)}">${esc(y.name.replace(/^Ptengine AI\s*[-－]\s*/,''))}</span><span class="chip ph" style="background:var(${PCOL[y.ph]});${y.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[y.ph]}</span>${(y.pending&&y.pending!==y.ph)||y.pe||y.pdel?'<span class="chip estm">承認待ち</span>':''}<span class="dh-m"><small>追加MRR</small><b class="num">${y.add?man(y.add):'—'}</b></span><span class="dh-m"><small>申込</small><b class="num">${y.apply?mdj(y.apply):'—'}</b></span><span class="dh-m"><small>課金</small><b class="num">${y.close?y.close.replace('-','/'):'—'}</b></span></button>`;
+  const dOrd = y => y.ph==='CLOSED_WON'?1:y.ph==='CLOSED_LOST'?2:0;
+  const nAct=d.deals.filter(y=>!dOrd(y)).length, nWon=d.deals.filter(y=>dOrd(y)===1).length, nLost=d.deals.filter(y=>dOrd(y)===2).length;
+  const dcount = d.deals.length>1 ? `<div class="dcount"><span>商談 <b class="num">${d.deals.length}</b>件</span>${nAct?`<span class="c act">進行中 ${nAct}</span>`:''}${nWon?`<span class="c won">受注 ${nWon}</span>`:''}${nLost?`<span class="c lost">失注 ${nLost}</span>`:''}</div>` : '';
+  const dealList = dcount + d.deals.slice().sort((a,b)=>dOrd(a)-dOrd(b)).map((y,di)=>`<div class="dcard ${y.key===key&&isOpen?'open':''} ${['','won','lost'][dOrd(y)]}" style="--pc:var(${PCOL[y.ph]})">${head(y, y.key===key&&isOpen, d.deals.length>1?di+1:0)}${dealSum(d,y)}${y.key===key&&isOpen?FIELDS:''}</div>`).join('')
     + `<button type="button" class="dhead new" data-dsel="new" aria-expanded="${!x&&isOpen}"><span class="dcar" aria-hidden="true">${!x&&isOpen?'▾':'＋'}</span><span class="dh-n">商談を追加</span></button>` + (!x&&isOpen?FIELDS:'');
   const legend = isNew ? '新しい商談' : isMain ? (d.oid?esc(d.opp.raw):'Twenty に未作成（同期時に作成）') : 'ダッシュボードで追加（同期時に Opportunity を作成）';
   return `<form id="efForm" class="ef" novalidate>
@@ -1574,13 +1764,13 @@ ${dealList}
 }
 /* ===================== 新着・更新（商談の変更ログ） ===================== */
 var USERNS=null, MYID=null, FEED=[], feedAll=false;
-const FEED_F=[['ph','フェーズ',v=>PH_JP[v]||'—'],['add','（見込）追加MRR',v=>v?man(v):'—'],['apply','申込完了日',v=>v?mdj(v):'—'],['bill','課金開始日',v=>v?mdj(v):'—'],['na','商談NA',v=>v||'—'],['naDate','NA期日',v=>v?mdj(v):'—'],['br','障壁',v=>v?(v.length>40?v.slice(0,40)+'…':v):'—'],['ms','到達予定',msText]];
+const FEED_F=[['ph','フェーズ',v=>PH_JP[v]||'—'],['add','（見込）追加MRR',v=>v?man(v):'—'],['apply','申込完了日',v=>v?mdj(v):'—'],['bill','課金開始日',v=>v?mdj(v):'—'],['na','ネクストアクション',v=>v||'—'],['naDate','アクション期日',v=>v?mdj(v):'—'],['br','障壁',v=>v?(v.length>40?v.slice(0,40)+'…':v):'—'],['ms','到達予定',msText]];
 function dealDiff(before, after){
   const ev=[]; const bm=new Map((before||[]).map(x=>[x.key,x]));
   (after||[]).forEach(x=>{ const o=bm.get(x.key);
     if(!o){ ev.push({kind:'new', deal:x.name, key:x.key, to:`${PH_JP[x.ph]}${x.add?'・'+man(x.add):''}`}); return; }
     const nl=(x.log||[]).length>(o.log||[]).length ? (x.log||[])[(x.log||[]).length-1] : null;
-    if(nl&&nl.t==='na'){ ev.push({kind:'nadone', deal:x.name, key:x.key, label:'NA 完了', from:'', to:nl.text+(nl.note?`（${nl.note}）`:'')}); if(!x.na) return; }
+    if(nl&&nl.t==='na'){ ev.push({kind:'nadone', deal:x.name, key:x.key, label:'アクション完了', from:'', to:nl.text+(nl.note?`（${nl.note}）`:'')}); if(!x.na) return; }
     const naCh=(o.na||null)!==(x.na||null), ndCh=(o.naDate||null)!==(x.naDate||null);
     FEED_F.forEach(([f,l,fmt])=>{ if(f==='naDate'&&naCh) return; const a=o[f]||null, b=x[f]||null; if(JSON.stringify(a)!==JSON.stringify(b)) ev.push({kind:f, deal:x.name, key:x.key, label:l, from:fmt(a), to:fmt(b)+(f==='na'&&x.naDate?`（期日 ${mdj(x.naDate)}）`:'')}); }); });
   (before||[]).forEach(o=>{ if(!(after||[]).some(x=>x.key===o.key)) ev.push({kind:'del', deal:o.name, key:o.key}); });
@@ -1605,7 +1795,7 @@ async function renderFeed(){
   const what=r=> r.kind==='newco' ? `<b>企業を追加</b>（${esc(r.to||'')}）` : r.kind==='new' ? `<b>商談を追加</b>（${esc(r.to||'')}）`
     : r.kind==='del' ? `<b>商談を削除</b>`
     : r.kind==='ph' ? `<b>フェーズ</b> ${esc(r.from)} → <b class="to">${esc(r.to)}</b>`
-    : r.kind==='na' ? `<b>商談NA</b> を更新：<span class="q">${esc(r.to)}</span>`
+    : r.kind==='na' ? `<b>ネクストアクション</b> を更新：<span class="q">${esc(r.to)}</span>`
     : `<b>${esc(r.label||'')}</b> ${esc(r.from)} → <b class="to">${esc(r.to)}</b>`;
   const ic={newco:'◆',new:'＋',del:'－',ph:'⇢',na:'→',add:'¥',apply:'📅',bill:'📅',naDate:'📅',bs:'!',br:'!',ms:'◇',co:'▣',nadone:'✓'};
   el.innerHTML = show.length ? show.map(r=>`<li data-fid="${esc(r.cid)}" role="button" tabindex="0"><span class="fi fi-${esc(r.kind)}">${ic[r.kind]||'•'}</span>
@@ -1644,7 +1834,7 @@ function wireMs(d){
       const sb=li.querySelector('.sb'); const late=i.value&&i.value<dstr(TODAY);
       sb.className='sb'+(i.value&&!i.dataset.manual?' auto':''); sb.textContent=!i.value?'':late?relDay(i.value):i.dataset.manual?'変更済み':'自動'; });
     const note=document.getElementById('msNote'), anyMan=ins.some(i=>i.dataset.manual);
-    note.textContent = !bd ? `${b==='bill'?'課金開始日':'申込完了日'}を入れると自動で入ります` : '日付をクリックで変更できます';
+    note.textContent = !bd ? `${b==='bill'?'課金開始日':'申込完了日'}を入れると自動で入ります` : '日付は直接入力か、カレンダーのアイコンから変更できます';
     document.getElementById('msReset').hidden=!(bd&&anyMan);
   };
   const fill=(force)=>{
@@ -1658,8 +1848,8 @@ function wireMs(d){
   ['efApply','efBill'].forEach(id=>{ const el=document.getElementById(id); if(el) el.addEventListener('change',()=>fill(false)); });
   const ph=document.getElementById('efPhase'); if(ph&&!x0) ph.addEventListener('change',()=>fill(false));
   ins.forEach(i=>{ const lab=i.parentNode;
-    lab.addEventListener('click',e=>{ e.preventDefault(); try{ i.showPicker(); }catch(_){ i.style.pointerEvents='auto'; i.focus(); } });
-    lab.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); try{ i.showPicker(); }catch(_){} } });
+    // 埋め込み表示では showPicker() が使えないため、日付欄そのものを操作できるようにする（カレンダーのアイコン・直接入力）
+    lab.addEventListener('click',e=>{ if(e.target===i) return; e.preventDefault(); i.focus(); try{ i.showPicker(); }catch(_){} });
     i.addEventListener('change',()=>{ if(i.value) i.dataset.manual='1'; else delete i.dataset.manual; paint(); }); });
   document.getElementById('msReset').onclick=()=>fill(true);
   if(box.dataset.saved) paint(); else fill(false);
@@ -1682,16 +1872,25 @@ function wireEditForm(d){
   const prev=EDITS[d.cid]||{};
   const baseBody=()=>({companyId:d.cid, companyName:d.n, opportunityId:d.oid||null, opp:{...(prev.opp||{})}, company:{...(prev.company||{})}, deals:[...(prev.deals||[])], updatedAt:new Date().toISOString(), syncedAt:null});
   const del=document.getElementById('efDel');
-  if(del) del.onclick=async()=>{
-    if(del.dataset.arm!=='1'){ del.dataset.arm='1'; del.textContent='もう一度押すと削除します（取り消せません）'; del.classList.add('warn'); return; }
-    const body=baseBody(); body.deals=body.deals.filter(y=>y.key!==key); editDeal=null;
-    await saveEditDoc(d, clean(body), '商談を削除しました');
+  if(del) del.onclick=()=>{
+    const dock=document.getElementById('efDelDock');
+    const lk=wonLocked(d.deals.find(y=>y.key===key));
+    dock.innerHTML=lk ? `<div class="delc" role="alertdialog" aria-label="商談の削除の申請"><span><b>この商談の削除を申請しますか？</b>受注済みのため、Utty が承認すると削除されます</span><button type="button" class="btn sm danger" data-delok>削除を申請</button><button type="button" class="btn ghost sm" data-delno>やめる</button></div>`
+      : `<div class="delc" role="alertdialog" aria-label="商談の削除の確認"><span><b>この商談を削除しますか？</b>入力内容と経過も消え、元に戻せません</span><button type="button" class="btn sm danger" data-delok>削除する</button><button type="button" class="btn ghost sm" data-delno>やめる</button></div>`;
+    dock.querySelector('[data-delno]').onclick=()=>{ dock.innerHTML=''; dock.appendChild(del); del.focus(); };
+    dock.querySelector('[data-delok]').onclick=async()=>{
+      if(lk){ await saveEditDoc(d, phaseBody(d,key,{pendingDelete:{requestedAt:new Date().toISOString(), requestedBy:MYID||null}}), '削除を申請しました（承認者：Utty）'); return; }
+      const body=baseBody(); body.deals=body.deals.filter(y=>y.key!==key); editDeal=null;
+      await saveEditDoc(d, clean(body), '商談を削除しました');
+    };
+    dock.querySelector('[data-delno]').focus();
   };
   f.addEventListener('submit',async ev=>{
     ev.preventDefault();
     const v=id=>{ const el=document.getElementById(id); return el?el.value.trim():''; }; const man2y=x=>x===''?null:Math.round(parseFloat(x)*10000);
     const hasDeal=!!document.getElementById('efName');
-    const curX=d.deals.find(y=>y.key===key); const curPh=curX?curX.ph:null; let newPh=v('efPhase')||null; let pendPh=null;
+    const curX=d.deals.find(y=>y.key===key); const curPh=curX?curX.ph:null; let newPh=v('efPhase')||null; let pendPh=null; const formPh=newPh;
+    const locked = hasDeal && key!=='new' && wonLocked(curX);
     if(newPh && curPh && !IS_APPROVER && needsApproval(curPh,newPh)){ pendPh=newPh; newPh = key==='main' ? ((EDITS[d.cid]&&EDITS[d.cid].opp&&EDITS[d.cid].opp.phase)||null) : curPh; }
     else if(newPh && !curPh && !IS_APPROVER && newPh==='CLOSED_WON'){ pendPh=newPh; newPh=null; }
     const deal={name:v('efName')||null, phase:newPh, pendingPhase:pendPh, applyDate:v('efApply')||null, billingDate:v('efBill')||null, addMrr:man2y(v('efAdd')), term:v('efTerm')?+v('efTerm'):null,  barrier:v('efBr')||null, need:v('efNeed')||null, na:v('efNa')||null, naDate:v('efNaDate')||null, lostReason:v('efLost')||null, lostDetail:v('efLostD')||null, ...msRead()};
@@ -1714,6 +1913,13 @@ function wireEditForm(d){
       body.opp=clean({...body.opp, ...common});
       if(key==='new'){ savedKey=newId(); body.deals.push(clean({key:savedKey, ...deal, updatedAt:now})); }
       else body.deals=body.deals.map(y=>y.key===key?clean({key, ...deal, steps:y.steps, updatedAt:now}):y);
+    }
+    if(locked){   // 受注済み：値は書き換えず、変更内容を承認待ちとして保存
+      const src = key==='main' ? body.opp : (body.deals.find(y=>y.key===key)||{});
+      const pe={}; PE_F.forEach(([k])=>{ if(src[k]!==undefined&&src[k]!==null) pe[k]=src[k]; }); pe.phase=formPh||curPh; if(src.msBase) pe.msBase=src.msBase;
+      const probe={key, pe}; if(!peDiff(d,probe).length){ const m=document.getElementById('efMsg'); if(m) m.textContent='変更はありません'; return; }
+      pe.requestedAt=now; pe.requestedBy=MYID||null;
+      await saveEditDoc(d, phaseBody(d,key,{pendingEdit:pe}), '変更を承認待ちにしました（承認者：Utty）'); return;
     }
     body.deals=body.deals.map(clean);
     editDeal=savedKey; DEAL_OPEN=null; if(key==='new'||!(DEALS[d.id].deals||[]).length) EXPANDED.add(d.cid);
@@ -1770,7 +1976,7 @@ function planTab(d){
     <div class="eyebrow" style="margin-bottom:6px">案件ゴール</div>
     <div class="plgoal">${d.close?`<b>${d.close.replace('-','年')}月</b> 課金開始`:'<b>有料化予定月が未入力</b>'}　現在 <span class="chip ph" style="background:var(${PCOL[d.ph]})">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}
       <label class="sub" for="plClose" style="margin-left:auto">予定月 <input id="plClose" type="month" value="${esc(d.close||'')}"></label></div>
-    <div class="line">商談NA：${nx?`<b>${esc(nx.title)}</b>　期日 <b class="num">${nx.due.slice(5).replace('-','/')}</b>${nx.due<dstr(TODAY)?'（<b style="color:var(--crit)">期限超過</b>）':''}`:'プランに未完了の項目がありません'}</div>
+    <div class="line">ネクストアクション：${nx?`<b>${esc(nx.title)}</b>　期日 <b class="num">${nx.due.slice(5).replace('-','/')}</b>${nx.due<dstr(TODAY)?'（<b style="color:var(--crit)">期限超過</b>）':''}`:'プランに未完了の項目がありません'}</div>
   </div>`;
   let proposal='';
   if(d.ph==='CLOSED_LOST') proposal='<div class="note1 bad">失注のため逆算はしません。定期フォローは「入力」タブのフォロー間隔で自動作成されます。</div>';
@@ -1932,17 +2138,118 @@ async function mcpRead(server, tool, input){
 }
 const stripHtml = h => String(h||'').replace(/<br\s*\/?>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/\n{3,}/g,'\n\n').trim();
 const ymdOf = ts => { const d=new Date(ts*1000); return dstr(d); };
-async function notionMinutes(d){
+async function notionMinutes(d,opt){
   const key=shortName(d.n); const k4=key.slice(0,Math.min(4,key.length));
   const r=await mcpRead('Notion','notion-search',{query:key, page_size:15});
   if(!r.ok) return {ok:false, why:r.why, items:[]};
-  const hits=((r.payload&&r.payload.results)||[]).filter(x=>x.type==='page' && (x.title||'').includes(k4) && (/JP_Docs/.test(x.path||'') || /^\d{8}_/.test(x.title||'') || /MTG|議事録|【社[内外]】|打ち?合わ?せ|定例/.test(x.title||'')) && !/Company Database/.test(x.path||'')).sort((a,b)=>(b.timestamp||'')<(a.timestamp||'')?-1:1).slice(0,4);
+  const hits=((r.payload&&r.payload.results)||[]).filter(x=>x.type==='page' && (x.title||'').includes(k4) && (/JP_Docs/.test(x.path||'') || /^\d{8}_/.test(x.title||'') || /MTG|議事録|【社[内外]】|打ち?合わ?せ|定例/.test(x.title||'')) && !/Company Database/.test(x.path||'')).sort((a,b)=>(b.timestamp||'')<(a.timestamp||'')?-1:1).slice(0,opt&&opt.max||4);
   const items=[];
   for(const h of hits){ const f=await mcpRead('Notion','notion-fetch',{id:h.url||h.id}); if(!f.ok) continue;
     const t=typeof f.payload==='string'?f.payload:((f.payload&&f.payload.text)||'');
     const m=t.match(/<content>([\s\S]*?)<\/content>/); const body=stripHtml((m?m[1]:t).replace(/<properties>[\s\S]*?<\/properties>/,'').replace(/<ancestor-path>[\s\S]*?<\/ancestor-path>/,''));
-    items.push({type:'議事録（Notion）', date:(h.timestamp||'').slice(0,10), title:h.title, text:body}); }
+    items.push({type:'議事録（Notion）', date:(h.timestamp||'').slice(0,10), title:h.title, text:body, url:h.url||null}); }
   return {ok:true, items};
+}
+/* ===================== 行動履歴：商談の経過・サクセス・議事録・CRM の記録を1本の時系列に ===================== */
+let HIST_F='all';
+const HIST_K={deal:'商談',sx:'サクセス',mtg:'議事録',crm:'CRM'};
+function actHist(d){
+  const ev=[]; const ld=ts=>ts?dstr(new Date(ts)):'';
+  (d.deals||[]).forEach(x=>{ const dn=(x.name||'').replace(/^Ptengine AI\s*[-－]\s*/,'');
+    (x.log||[]).forEach(e=>{
+      if(e.t==='na') ev.push({date:ld(e.at), k:'deal', ic:'✓', label:'ネクストアクション完了', text:e.text||'', sub:e.note?'結果：'+e.note:'', deal:dn});
+      else if(e.t==='ph') ev.push({date:ld(e.at), k:'deal', ic:'↗', label:'フェーズが進んだ', text:`${PH_JP[phN(e.from)]||'—'} → ${PH_JP[phN(e.to)]||'—'}`, deal:dn, strong:true});
+      else if(e.t==='br') ev.push({date:ld(e.at), k:'deal', ic:'!', label:'障壁を更新', text:e.text||'', deal:dn});
+    });
+    if(x.na) ev.push({date:x.naDate||dstr(TODAY), k:'deal', ic:'', label:'次のネクストアクション', text:x.na, deal:dn, planned:true});
+  });
+  (apOf(d).items||[]).filter(it=>it.done).forEach(it=>ev.push({date:ld(it.doneAt)||it.due||'', k:'sx', ic:'✓', label:it.t==='exp'?'アカウント攻略を完了':'活用・サクセスを完了', text:it.text||''}));
+  plansOf(d.cid).filter(p=>p.status==='DONE').forEach(p=>ev.push({date:(p.doneAt||p.due||'').slice(0,10), k:'sx', ic:'✓', label:'プランを完了', text:p.title||''}));
+  const md=(MIN_UI[d.cid]&&MIN_UI[d.cid].doc)||{};
+  [...(((md.mii||{}).items)||[]).map(x=>({...x,src:'Mii'})), ...(((md.notion||{}).items)||[]).map(x=>({...x,src:'Notion'}))].forEach(x=>ev.push({date:(x.date||'').slice(0,10), k:'mtg', ic:'', label:`打ち合わせ（${x.src}）`, text:x.title||''}));
+  d.notes.forEach(n=>{ if(n.d) ev.push({date:n.d.slice(0,10), k:'mtg', ic:'', label:'打ち合わせ（Twenty）', text:n.t||''}); });
+  d.hist.forEach(h=>ev.push({date:dstr(h.date), k:'crm', ic:h.planned?'':'✓', label:h.planned?'CRM の予定':'CRM の記録', text:h.text, planned:!!h.planned}));
+  return ev.filter(e=>e.date).sort((a,b)=>b.date<a.date?-1:b.date>a.date?1:0);
+}
+function histTab(d){
+  const all=actHist(d), T=dstr(TODAY);
+  const cnt=k=>all.filter(e=>k==='all'||e.k===k).length;
+  const list=all.filter(e=>HIST_F==='all'||e.k===HIST_F);
+  const fut=list.filter(e=>e.planned||e.date>T), past=list.filter(e=>!(e.planned||e.date>T));
+  const byMonth={}; past.forEach(e=>{ const m=e.date.slice(0,7); (byMonth[m]=byMonth[m]||[]).push(e); });
+  const row=e=>`<li class="hk-${e.k} ${e.planned?'plan':''} ${e.strong?'strong':''}"><span class="hp" aria-hidden="true">${e.ic}</span><span class="hd num">${mdj(e.date)}</span><div class="hb"><div class="hl"><span class="htag">${HIST_K[e.k]}</span><b>${esc(e.label)}</b>${e.deal?`<span class="hdeal">${esc(e.deal)}</span>`:''}</div>${e.text?`<div class="ht">${esc(e.text)}</div>`:''}${e.sub?`<div class="hs">${esc(e.sub)}</div>`:''}</div></li>`;
+  const chips=['all','deal','sx','mtg','crm'].map(k=>`<button type="button" class="hf" data-hf="${k}" aria-pressed="${HIST_F===k}">${k==='all'?'すべて':HIST_K[k]} <span class="num">${cnt(k)}</span></button>`).join('');
+  return `<div class="sec"><div class="hhead"><h3>行動履歴</h3><span class="sub">商談の経過・サクセスの完了・打ち合わせ・CRM の記録を新しい順に並べています</span></div>
+    <div class="hfs" role="group" aria-label="種類で絞り込む">${chips}</div>
+    ${fut.length?`<div class="hmon">これから</div><ol class="htl">${fut.sort((a,b)=>a.date<b.date?-1:1).map(row).join('')}</ol>`:''}
+    ${Object.keys(byMonth).map(m=>`<div class="hmon">${+m.slice(0,4)}年${+m.slice(5,7)}月</div><ol class="htl">${byMonth[m].map(row).join('')}</ol>`).join('')}
+    ${!list.length?`<div class="empty">${HIST_F==='all'?'まだ記録がありません。商談管理でネクストアクションを完了にしたり、フェーズを進めたりすると、ここに残ります。':'この種類の記録はありません。'}</div>`:''}</div>`;
+}
+function wireHist(d){
+  const u=minUi(d); if(!u.loaded){ minutesLoad(d).then(()=>{ if(openId!==null&&dTab==='hist'&&DEALS[openId]===d) renderDrawer(); }); }
+  document.querySelectorAll('[data-hf]').forEach(b=>b.onclick=()=>{ HIST_F=b.dataset.hf; renderDrawer(); });
+}
+/* ===================== 議事録：Mii・Notion の最新版を「更新」で取り込む ===================== */
+const MIN_UI={};   // cid -> {busy,msg,loaded,doc}
+const minUi = d => MIN_UI[d.cid] || (MIN_UI[d.cid]={busy:false,msg:'',loaded:false,doc:null});
+const MIN_CAP=6000;   // 1件あたりの保存文字数
+async function minutesLoad(d){ const u=minUi(d); if(!db){ u.loaded=true; return; }
+  try{ const sn=await db.doc('minutes/'+d.cid).get(); u.doc=sn.exists?sn.data():null; }catch(_){ } u.loaded=true; }
+const titleDate = t => { const m=String(t||'').match(/(20\d{2})(\d{2})(\d{2})/); return m?`${m[1]}-${m[2]}-${m[3]}`:''; };
+function notionBody(t){
+  const m=String(t||'').match(/<content>([\s\S]*?)<\/content>/); let b=m?m[1]:String(t||'');
+  b=b.replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/\[\\\[\d+\\\]\]\([^)]*\)/g,'').replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'$1')
+     .replace(/<\/td>\s*/g,'　').replace(/<\/tr>/g,'\n').replace(/<(unknown|empty-block|col|colgroup|\/colgroup)[^>]*\/?>/g,'')
+     .replace(/\*\*/g,'').replace(/^\s*<\/?(columns|column|callout|table|tr|td)[^>]*>\s*$/gm,'');
+  return stripHtml(b).replace(/^[\t ]+/gm,m=>m.replace(/\t/g,'  ')).replace(/\n{3,}/g,'\n\n').trim();
+}
+async function notionMinutesList(d){
+  const key=shortName(d.n); const k4=key.slice(0,Math.min(4,key.length));
+  const r=await mcpRead('Notion','notion-search',{query:key, page_size:25});
+  if(!r.ok) return {ok:false, why:r.why, items:[]};
+  const hits=((r.payload&&r.payload.results)||[]).filter(x=>x.type==='page' && (x.title||'').includes(k4)
+      && !/Company Database|顧客管理DB|Archive/.test(x.path||'') && !/account ?plan|アカウントプラン|Research|調査/i.test(x.title||'')
+      && (/^\d{8}/.test(x.title||'') || /MTG|議事録|定例|打ち?合わ?せ|ミーティング|【社[内外]】/.test(x.title||'') || /議事録/.test(x.highlight||'')))
+    .map(x=>({...x, date: titleDate(x.title) || (x.timestamp||'').slice(0,10)}))
+    .sort((a,b)=>b.date<a.date?-1:b.date>a.date?1:0).slice(0,6);
+  const items=[];
+  for(const h of hits){ const f=await mcpRead('Notion','notion-fetch',{id:h.url||h.id}); if(!f.ok) continue;
+    const t=typeof f.payload==='string'?f.payload:((f.payload&&f.payload.text)||'');
+    items.push({title:h.title||'', date:h.date, url:(h.url||'').replace(/\?pvs=\d+$/,'')||null, text:notionBody(t).slice(0,MIN_CAP)}); }
+  return {ok:true, items};
+}
+async function minutesRefresh(d){
+  const u=minUi(d); if(u.busy) return; u.busy=true; u.msg='Notion の議事録を探しています…'; renderDrawer();
+  await minutesLoad(d);                                      // Mii は Claude が同期した分を読み直す
+  const nm=await notionMinutesList(d);
+  const prev=u.doc||{};
+  const doc={...prev, companyId:d.cid, companyName:d.n};
+  if(nm.ok){ doc.notion={fetchedAt:new Date().toISOString(), items:nm.items}; u.msg=`Notion から ${nm.items.length}件を取り込みました`; }
+  else u.msg='Notion を読めませんでした：'+nm.why;
+  u.doc=doc;
+  if(nm.ok && db){ try{ await db.doc('minutes/'+d.cid).set(doc); }catch(e){ u.msg+='（共有への保存はできませんでした。この画面には表示中）'; } }
+  u.busy=false; renderDrawer();
+}
+function minutesTab(d){
+  const u=minUi(d), doc=u.doc||{};
+  const mii=(doc.mii&&doc.mii.items)||[], no=(doc.notion&&doc.notion.items)||[];
+  const all=[...mii.map(x=>({...x,src:'Mii'})), ...no.map(x=>({...x,src:'Notion'})), ...d.notes.map(n=>({title:n.t,date:n.d||'',text:n.md||'',src:'Twenty'}))]
+    .sort((a,b)=>(b.date||'')<(a.date||'')?-1:(b.date||'')>(a.date||'')?1:0);
+  const fmtAt=t=>t?new Date(t).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+  const st=[`<span>Mii ${doc.mii?`${mii.length}件・${fmtAt(doc.mii.syncedAt)} 同期`:'未同期'}</span>`, `<span>Notion ${doc.notion?`${no.length}件・${fmtAt(doc.notion.fetchedAt)} 更新`:'未取得'}</span>`, `<span>Twenty ${d.notes.length}件</span>`].join('');
+  const card=(x,i)=>{ const body=String(x.summary||x.text||'').replace(/\n{3,}/g,'\n\n').trim();
+    return `<details class="mnote" ${i===0?'open':''}><summary><span class="d num">${x.date?mdj(x.date.slice(0,10)):'—'}</span><b>${esc(x.title||'（無題）')}</b>${i===0?'<span class="mnew">最新</span>':''}<span class="msrc s-${x.src}">${x.src}</span></summary>
+      <div class="md">${esc(body)||'（本文なし）'}</div>${x.url?`<a class="mopen" href="${esc(x.url)}" target="_blank" rel="noopener">${x.src}で開く ↗</a>`:''}</details>`; };
+  return `<div class="sec"><div class="mhead"><h3>議事録</h3><span class="mstat">${st}</span>
+      <button type="button" class="btn sm" id="minRefresh" ${u.busy?'disabled':''}>${u.busy?'更新中…':'↻ 最新に更新'}</button></div>
+    ${u.msg?`<p class="mmsg" role="status">${esc(u.msg)}</p>`:''}
+    ${!doc.mii?`<p class="mnote-i">Mii の議事録はページから直接は読めないため、Claude が Mii から同期した分を表示します。同期したいときはチャットで「Mii の議事録を同期して」と依頼してください。</p>`:''}
+    ${all.length?all.map(card).join(''):`<div class="empty">議事録はまだありません。「最新に更新」で Notion から取り込めます。</div>`}</div>`;
+}
+function wireMinutes(d){
+  const u=minUi(d);
+  if(!u.loaded){ minutesLoad(d).then(()=>{ if(openId!==null&&dTab==='notes'&&DEALS[openId]===d) renderDrawer(); }); }
+  const b=document.getElementById('minRefresh'); if(b) b.onclick=()=>minutesRefresh(d);
 }
 async function intercomChats(d){
   const r=await mcpRead('Intercom','search',{query:`object_type:conversations q:"${shortName(d.n)}" limit:10`});
@@ -2000,9 +2307,9 @@ const AI_INSTR = `あなたは Ptmind の Ptengine AI拡販チームのプラン
 ルール：
 - conversationsAndMinutes（議事録・チャット・メール・Intercom の会話・CRM の行動ログ）に書かれている発言や約束、決定事項、次回の予定を根拠にし、各項目の source に根拠（例「9/17 議事録」「8月 Teams チャット」「9/10 Intercom」）を書く。会話から読み取れない推測は source を「推定」にする。
 - 会話の中で先方が挙げた期限・社内イベント（稟議の時期、予算期、担当者の異動など）があれば、それを日程に反映する。
-- 商談の中間ゴール gate は次のどれか：FIRST_MEETING, RE_PROPOSAL, EVALUATION, QUOTE, APPROVAL, VERBAL_COMMIT, CLOSED_WON, BILLING。現在のフェーズより後のものだけ。
+- 商談の中間ゴール gate は次のどれか：FIRST_MEETING（初回アポ実施済み）, TRIAL（トライアル開始済み）, QUOTE（最終見積もり提示済み）, VERBAL_COMMIT（口頭合意獲得済み）, APPLICATION（申込用紙回収済み）, CLOSED_WON（契約締結済み）, BILLING。現在のフェーズより後のものだけ。
 - サクセスの中間ゴール key は S1〜S7（S1 成功の定義・KPI合意／S2 データ整備完了／S3 現場利用開始／S4 初回成果／S5 役職者が価値を承認／S6 定着／S7 拡大）。まだ達成していないものだけ。
-- 商談を進める前提としてサクセスを置く（お見積の前に S1・S2、稟議の前に S4、契約締結の前に S5）。前提が間に合わない日程なら、その旨を risks に書く。
+- 商談を進める前提としてサクセスを置く（最終見積もり提示の前に S1・S2、口頭合意の前に S4、契約締結の前に S5）。前提が間に合わない日程なら、その旨を risks に書く。
 - 期日は today 以降の YYYY-MM-DD。ruleBasedProposal（標準日数による逆算）を出発点にし、会話から分かる事情があれば調整して理由を書く。
 - 有料化予定月（closeMonth）が未入力なら、会話から推定できれば closeMonth に YYYY-MM で入れる。
 - pins（釘）はユーザーが固定した中間ゴール。期日も内容も変えず、それを前提に前後の中間ゴールを配置する。sales/success に同じ gate を出す場合は釘と同じ期日にする。
@@ -2189,15 +2496,17 @@ function aplanTab(d){
       <div class="ap-ms">${months}</div></div>`; };
   const fut=qs.filter(q=>qIdx(q)>=curQ), endMrr=d.m+(fut.length?cumTo(fut[fut.length-1]):0), goalMrr=aimOf(d)?d.m+aimOf(d):null, capMrr=pot?d.m+pot.cap:null;
   const tmax=Math.max(endMrr, goalMrr||0, capMrr||0, d.m, 1);
-  const col=(l,v,cls='')=>`<div class="ap-tc ${cls}"><div class="ap-tb"><span style="height:${Math.max(4,v/tmax*100)}%"></span></div><b class="num">${man(v)}</b><small>${l}</small></div>`;
+  const col=(l,v,cls='',i=0)=>`<div class="ap-tc ${cls} ${goalMrr&&v>=goalMrr&&cls!=='now'?'hit':''} ${capMrr&&v>capMrr?'over':''}" style="--tone:var(--p${Math.min(8,4+i)})"><div class="ap-tb"><span style="height:${Math.max(4,v/tmax*100)}%"></span></div><b class="num">${man(v)}</b><small>${l}</small></div>`;
+  const line=(v,cls,lab)=>v?`<i class="ap-tl ${cls}" style="bottom:calc(var(--tbase) + var(--th) * ${(v/tmax).toFixed(4)})" aria-hidden="true"><span>${lab} ${man(v)}</span></i>`:'';
+  const over=capMrr&&endMrr>capMrr?endMrr-capMrr:0;
   const trend=`<div class="ap-trend"><div class="ap-th"><span>合計MRR の推移</span><b class="num">${man(d.m)} → ${man(endMrr)}</b><em class="num">＋${man(endMrr-d.m)}</em>
-      ${goalMrr?`<span class="ap-tg ${endMrr>=goalMrr?'ok':''}">目標 ${man(goalMrr)}${endMrr>=goalMrr?' 到達':` まで あと${man(goalMrr-endMrr)}`}</span>`:''}${capMrr?`<span class="ap-tg cap">上限 ${man(capMrr)}</span>`:''}</div>
-    <div class="ap-tcs">${col('現在',d.m,'now')}${fut.map(q=>col(qLabel(q).t.replace(/^\d{2}/,"'"),d.m+cumTo(q))).join('')}</div></div>`;
+      ${goalMrr?`<span class="ap-tg ${endMrr>=goalMrr?'ok':''}">目標 ${man(goalMrr)}${endMrr>=goalMrr?' 到達':` まで あと${man(goalMrr-endMrr)}`}</span>`:''}${over?`<span class="ap-tg over">計画が上限を ${man(over)} 超えています</span>`:''}</div>
+    <div class="ap-tcs">${line(capMrr,'cap','上限')}${line(goalMrr,'goal','目標')}${col('現在',d.m,'now')}${fut.map((q,i)=>col(qLabel(q).t.replace(/^\d{2}/,"'"),d.m+cumTo(q),'',i+1)).join('')}</div></div>`;
   const legend=`<div class="ap-leg"><span><i class="kd-budget"></i>予算策定</span><span><i class="kd-fiscal"></i>決算</span><span><i class="kd-renewal"></i>契約更新</span><span><i class="kd-apply"></i>申込</span><span><i class="kd-bill"></i>課金開始</span><span class="ap-sp"></span>
     <span class="ap-sum">4四半期の狙い <b class="num">＋${man(aimSum)}</b>${aimOf(d)?` ／（目標）追加MRR <b class="num">${man(aimOf(d))}</b>`:''}${pot?` ／ 上限 <b class="num">${man(pot.cap)}</b>`:''}</span></div>`;
   const road=`<section class="ap-road"><header class="ap-h"><h3>四半期ロードマップ</h3><span class="sx-meta">どんなサクセス状態を作り、いつ、いくら狙うか</span>
       <span class="ap-nav"><button type="button" data-qoff="-1" aria-label="前の四半期">‹</button><button type="button" data-qoff="1" aria-label="次の四半期">›</button></span></header>
-    <div class="ap-qs">${qs.map(qcard).join('')}</div>${trend}${legend}</section>`;
+    ${trend}<div class="ap-qs">${qs.map(qcard).join('')}</div>${legend}</section>`;
   // ---- month detail
   const ym=ui.sel, mi=mItems(ym), pm=prog(mi), aiM=aiI.filter(x=>x.m===ym && !x.closed && !items.some(y=>y.m===x.m&&y.text===x.text));
   const wk=w=>wkLabel(ym,w);

@@ -23,7 +23,7 @@ const NOTION_VERSION    = '2022-06-28';
 const INTERCOM_BASE = 'https://api.intercom.io';
 
 /**
- * PGA顧客管理DB に接続されているのは TOKEN_NOTION 側（2026-09-30 実測。
+ * PtAI顧客管理DB に接続されているのは TOKEN_NOTION 側（2026-09-30 実測。
  * TOKEN_NOTION_2 は What 管理ページ用で、この data source には 404）。
  * CXM 本体とは優先順が逆なので、ここで別に持つ。PGA_NOTION_TOKEN で上書きできる。
  */
@@ -49,15 +49,65 @@ export async function POST(req: NextRequest) {
     if (server === 'Notion')   return NextResponse.json({ ok: true, payload: await notion(tool, input) });
     if (server === 'Intercom') return NextResponse.json({ ok: true, payload: await intercom(tool, input) });
     if (server === 'host:twenty') {
-      // Phase 1 は Twenty への書き込みを持たない。原本の「同期待ち」経路に落とす
-      // （HANDOVER 12-3-2・12-4：キー未登録のときと同じ扱い）。
-      return fail('twenty_key_missing', 'Twenty の個人 API キーが未登録です');
+      // ═══════════════════════════════════════════════════════════════════
+      //  原本はここで Twenty の **既存 Company** を作る（create_one_company）。
+      //  いまの設計では作らない。理由は 2 つ:
+      //    1. アカウント情報の正本は **Notion**（§9-1）。会社は Notion に作る。
+      //       board.js は直前に ncSyncNotion で Notion ページを作っており、
+      //       新しい経路（raw-view）は Notion から会社を組み立てる。
+      //       Twenty に Company を作っても**ダッシュボードには出ない**。
+      //    2. PtAI が書けるのは `test*` だけ（§7）。既存 Company は対象外で、
+      //       twenty-test/client.ts が assertWritable で弾く。
+      //
+      //  2026-10-01 まで `twenty_key_missing`（＝キー未設定）を返していたが、
+      //  キーは設定済みなので**理由として誤り**。原本の「同期待ち」表示に落ちる
+      //  コードのうち、キーのせいだと誤解させないものへ変える。
+      //
+      //  ⚠ 画面には「Twenty：同期待ち」と出るが、**待っている処理は無い。**
+      //     board.js を変えずに文言を直す方法が無いため、次の版で
+      //     「Twenty に作成する」手順自体を外すのが本筋（Utty 判断）。
+      // ═══════════════════════════════════════════════════════════════════
+      await logTwentySkip(tool, input);
+      return fail('not_in_manifest', '新規会社は Notion に作ります（Twenty の Company は作りません）');
     }
     return fail('not_in_manifest', `${server} は未対応です`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (/not_connected/.test(msg)) return fail('server_not_connected', msg);
     return fail('tool_error', msg.slice(0, 200), true);
+  }
+}
+
+/**
+ * 「Twenty に会社を作らなかった」ことを操作ログに残す（§6）。
+ * 画面には「同期待ち」としか出ないので、**あとで追えるようにここで記録する。**
+ * 失敗しても会社追加そのものは Notion 側で成立しているので握りつぶす。
+ */
+async function logTwentySkip(tool: string, input: Record<string, unknown>): Promise<void> {
+  try {
+    const [{ getPtaiIdentity }, { actorStampFor }, { upsertByExternalId }, { TEST_OBJECTS }] =
+      await Promise.all([
+        import('@/lib/ptai/approver'),
+        import('@/lib/ptai/staff'),
+        import('@/lib/ptai/twenty-test/client'),
+        import('@/lib/ptai/twenty-test/schema'),
+      ]);
+    const me = await getPtaiIdentity();
+    if (!me) return;
+    const who = await actorStampFor(me.id, me.name);
+    const LOG = TEST_OBJECTS.operationLog;
+    // 会社名は入れない（顧客データを操作ログに残さない）。種別と件数だけ
+    await upsertByExternalId(LOG.plural, LOG.singular,
+      `ui:newco:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`, {
+        name: '新規会社の Twenty 作成を省略（Notion が正本）',
+        at: new Date().toISOString(), actor: who.name2, action: 'sync',
+        object: 'company', recordId: null,
+        field: String((input as { toolName?: unknown }).toolName ?? tool),
+        from: null, to: null, source: 'ui',
+        message: 'アカウント情報の正本は Notion。Twenty の既存 Company は作成しない',
+      }, who);
+  } catch {
+    // 記録に失敗しても会社追加は成立している
   }
 }
 

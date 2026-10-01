@@ -9,13 +9,22 @@
 //   DELETE ?path=col/doc        doc.delete
 //
 // 認証は署名済みセッション（cxm_session）。ログイン済みなら書ける＝原本と同じ権限モデル。
+//
+// ただし **承認が要る変更だけはサーバーでも確認する**（仕様書 §4-2）。
+// 画面側の `IS_APPROVER` チェックだけでは、API を直接叩けば誰でも
+// 「契約締結済み」にできてしまうため。
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'crypto';
 import { getUserUidFromCookie } from '@/lib/auth/session';
 import {
-  listAllDocs, setDoc, addDoc, deleteDoc, isPgaCollection, isPgaStoreConfigured,
+  listAllDocs, setDoc, addDoc, deleteDoc, isPtaiCollection, isPtaiStoreConfigured,
 } from '@/lib/ptai/store';
+import { getPtaiIdentity } from '@/lib/ptai/approver';
+import { assertStageChangeAllowed } from '@/lib/ptai/edit-guard';
+import { getPtaiDataSource } from '@/lib/twenty/data-source';
+import { buildDbView } from '@/lib/ptai/db-view';
+import { writeDoc, addDocNew } from '@/lib/ptai/db-write';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,7 +42,9 @@ async function requireUser(): Promise<string | null> {
 
 export async function GET(req: NextRequest) {
   if (!(await requireUser())) return unauthorized();
-  if (!isPgaStoreConfigured()) {
+
+  const source = getPtaiDataSource();
+  if (source === 'legacy_nocodb' && !isPtaiStoreConfigured()) {
     return NextResponse.json({ error: 'store_not_configured' }, { status: 503 });
   }
 
@@ -44,10 +55,16 @@ export async function GET(req: NextRequest) {
     return new NextResponse(memo.body, { headers: { 'Content-Type': 'application/json' } });
   }
 
-  const docs = await listAllDocs();
-  const collections: Record<string, Array<{ id: string; data: unknown }>> = {};
-  for (const d of docs) {
-    (collections[d.collection] ||= []).push({ id: d.id, data: d.data });
+  // twenty 経路: Twenty test* ＋ Notion から組み立てる。pga_docs は読まない
+  let collections: Record<string, Array<{ id: string; data: unknown }>> = {};
+  if (source === 'twenty') {
+    const view = await buildDbView();
+    collections = view.collections;
+  } else {
+    const docs = await listAllDocs();
+    for (const d of docs) {
+      (collections[d.collection] ||= []).push({ id: d.id, data: d.data });
+    }
   }
 
   const rev = createHash('sha1').update(JSON.stringify(collections)).digest('hex').slice(0, 16);
@@ -58,11 +75,37 @@ export async function GET(req: NextRequest) {
   return new NextResponse(body, { headers: { 'Content-Type': 'application/json' } });
 }
 
+
 export async function PUT(req: NextRequest) {
-  if (!(await requireUser())) return unauthorized();
+  const me = await getPtaiIdentity();
+  if (!me) return unauthorized();
   const body = await req.json().catch(() => ({})) as { path?: string; data?: unknown };
   const parsed = parsePath(body.path);
   if (!parsed) return NextResponse.json({ error: 'invalid_argument' }, { status: 400 });
+
+  // twenty 経路: Twenty test* ＋ Notion へ振り分ける。承認ガードは db-write が通す
+  if (getPtaiDataSource() === 'twenty') {
+    const r = await writeDoc(parsed.collection, parsed.docId, body.data ?? null, me);
+    memo = null;
+    if (!r.ok) {
+      console.warn('[ptai/db] 保存できず', JSON.stringify({ error: r.error, collection: parsed.collection }));
+      return NextResponse.json({ error: r.error, message: r.message }, { status: r.status });
+    }
+    console.info('[ptai/db] 保存', JSON.stringify({ collection: parsed.collection, ...r.changes }));
+    return NextResponse.json({ ok: true, changes: r.changes });
+  }
+
+  // 承認が要る変更（契約締結済みへの出入り）は承認者だけ。§4-2
+  if (parsed.collection === 'edits') {
+    const docs = await listAllDocs();
+    const before = docs.find(d => d.collection === 'edits' && d.id === parsed.docId)?.data ?? null;
+    const verdict = assertStageChangeAllowed(before, body.data ?? null, me.isApprover);
+    if (!verdict.ok) {
+      // 対象の商談キーだけ返す。顧客名や本文は返さない
+      console.warn('[ptai/db] 承認が要る変更を拒否', JSON.stringify({ reason: verdict.reason, deals: verdict.deals }));
+      return NextResponse.json({ error: 'approver_required', reason: verdict.reason }, { status: 403 });
+    }
+  }
 
   await setDoc(parsed.collection, parsed.docId, body.data ?? null);
   memo = null;
@@ -70,10 +113,18 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await requireUser())) return unauthorized();
+  const me = await getPtaiIdentity();
+  if (!me) return unauthorized();
   const body = await req.json().catch(() => ({})) as { collection?: string; data?: unknown };
-  if (!body.collection || !isPgaCollection(body.collection)) {
+  if (!body.collection || !isPtaiCollection(body.collection)) {
     return NextResponse.json({ error: 'invalid_argument' }, { status: 400 });
+  }
+
+  if (getPtaiDataSource() === 'twenty') {
+    const r = await addDocNew(body.collection, body.data ?? null, me);
+    memo = null;
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status });
+    return NextResponse.json({ ok: true, id: r.id });
   }
   const id = await addDoc(body.collection, body.data ?? null);
   memo = null;
@@ -84,6 +135,14 @@ export async function DELETE(req: NextRequest) {
   if (!(await requireUser())) return unauthorized();
   const parsed = parsePath(req.nextUrl.searchParams.get('path'));
   if (!parsed) return NextResponse.json({ error: 'invalid_argument' }, { status: 400 });
+
+  // twenty 経路で doc.delete を使うのは原本では plans だけ。plans は実データ 0 件で廃止予定
+  if (getPtaiDataSource() === 'twenty') {
+    return NextResponse.json(
+      { error: 'not_supported', message: 'この経路では doc.delete を使いません' },
+      { status: 501 },
+    );
+  }
 
   await deleteDoc(parsed.collection, parsed.docId);
   memo = null;
@@ -98,6 +157,6 @@ function parsePath(path: string | null | undefined): { collection: string; docId
   const collection = path.slice(0, i);
   const docId = path.slice(i + 1);
   if (!docId || docId.includes('/')) return null;
-  if (!isPgaCollection(collection)) return null;
+  if (!isPtaiCollection(collection)) return null;
   return { collection, docId };
 }
