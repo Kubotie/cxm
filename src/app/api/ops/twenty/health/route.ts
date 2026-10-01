@@ -42,6 +42,7 @@ import { getPtaiDataSource } from '@/lib/twenty/data-source';
 import { TEST_OBJECTS, type TestObjectKey } from '@/lib/ptai/twenty-test/schema';
 import { listTargetRows } from '@/lib/ptai/notion/client';
 import { listPtaiStaff } from '@/lib/ptai/staff';
+import { DEFAULT_APPROVER_NAME2 } from '@/lib/ptai/approver-policy';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -64,6 +65,7 @@ export interface TwentyHealthResult {
    * 操作者の名寄せ。Twenty の `createdBy` を本人に紐付けられる人数。
    * **メールアドレス以外は返さない**（名前は name2 のみ）。
    */
+  /** staff は **Pipeline 利用者の人数**（CXM だけの人は数えない） */
   identity: { staff: number; linkedToTwenty: number; unlinked: string[] };
   /** Phase 1 で見ていた既存オブジェクト。**Pipeline は使っていない**（参考値） */
   counts: {
@@ -179,10 +181,13 @@ export async function GET(_req: NextRequest): Promise<NextResponse<TwentyHealthR
 
   // ── 2c. 目標の正本（Notion 専用 DB）────────────────────────────────────────
   const notionTargets: TwentyHealthResult['notionTargets'] = { ok: false, rows: null, message: null };
+  // Pipeline を実際に使う人（目標 DB のメンバー行＋承認者）。名寄せの対象はこの人たち
+  const ptaiMembers = new Set<string>(DEFAULT_APPROVER_NAME2);
   try {
     const rows = await listTargetRows();
     notionTargets.ok = true;
     notionTargets.rows = rows.length;
+    for (const r of rows) if (r.name2) ptaiMembers.add(r.name2);
     if (rows.length === 0) {
       warnings.push('Notion の目標 DB が空です。チーム目標とメンバー別目標を入れてください');
     }
@@ -199,12 +204,17 @@ export async function GET(_req: NextRequest): Promise<NextResponse<TwentyHealthR
   const identity: TwentyHealthResult['identity'] = { staff: 0, linkedToTwenty: 0, unlinked: [] };
   try {
     const staff = await listPtaiStaff();
-    identity.staff = staff.length;
-    identity.linkedToTwenty = staff.filter(s => s.workspaceMemberId).length;
-    identity.unlinked = staff.filter(s => !s.workspaceMemberId).map(s => s.name2);
+    // ⚠ staff_identify には CXM だけを使う人も入っている。
+    //    **Pipeline を使う人だけ**を見ないと、関係ない未紐付が警告に並ぶ。
+    const mine = ptaiMembers.size
+      ? staff.filter(s => ptaiMembers.has(s.name2))
+      : staff;
+    identity.staff = mine.length;
+    identity.linkedToTwenty = mine.filter(s => s.workspaceMemberId).length;
+    identity.unlinked = mine.filter(s => !s.workspaceMemberId).map(s => s.name2);
     if (identity.unlinked.length) {
       warnings.push(
-        `Twenty に席が無い利用者が ${identity.unlinked.length} 名います（${identity.unlinked.join(', ')}）。`
+        `Twenty に席が無い Pipeline 利用者が ${identity.unlinked.length} 名います（${identity.unlinked.join(', ')}）。`
         + 'この人たちの作成レコードは createdBy が名前の文字列だけになり、Twenty 上で本人に紐付きません',
       );
     }
