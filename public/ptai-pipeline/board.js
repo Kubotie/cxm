@@ -351,10 +351,10 @@ const AI_MIN = 100000;
    ⚠ ③ の係数は **PROB（Salesforce の DefaultProbability）とは別物**。
      Kubotie 指示: Goal Shared 30 / Qualified Champion 50 / Evaluating 70 /
                    Probable 90 / Won 100。
-     Verbal は指示が無かったので Probable(90) と Won(100) の間を取って 95 とした。
+     Verbal は上げず Probable と同じ 90（2026-10-02 Kubotie）。
      変えるときはここだけ直せばよい。                                        */
 const FORECAST = {INACTIVE:0, ACTIVE:0, GOAL_SHARED:.30, QUALIFIED_CHAMPION:.50,
-  EVALUATING:.70, PROBABLE:.90, VERBAL:.95, WON:1, CLOSED_WON:1, ADMIN_CLOSE:0, CLOSED_LOST:0};
+  EVALUATING:.70, PROBABLE:.90, VERBAL:.90, WON:1, CLOSED_WON:1, ADMIN_CLOSE:0, CLOSED_LOST:0};
 
 /* 期初MRR。RAW の bm（Notion の「期初MRR」）。無い会社は増減 0 として扱う */
 const BASE_MRR = {};
@@ -370,6 +370,8 @@ const m2 = d => (d.deals&&d.deals.length)
 const m3 = d => (d.deals&&d.deals.length)
   ? openDealsOf(d).reduce((t,x)=>t+(x.add||0)*(FORECAST[x.ph]||0),0)
   : (d.add||0)*(FORECAST[d.ph]||0);
+/* 商談がある会社か。パイプラインで現在MRR を会社 1 回だけ足すのに使う */
+const inPipe = d => (d.deals&&d.deals.length) ? openDealsOf(d).length>0 : (d.add||0)>0;
 /* 受注した商談の金額（Won ＋ 受注(Closed Won)）。すでに現在MRR に入っているぶん */
 const WON_SET = ['WON','CLOSED_WON'];
 const wonAmt = d => (d.deals&&d.deals.length)
@@ -550,7 +552,10 @@ function renderKpis(){
      確定      ＝ 受注した商談の金額（Won ＋ 受注(Closed Won)）
      コミット  ＝ Probable 以上の商談の金額
      チャレンジ＝ Qualified Champion 以上の商談の金額
-     パイプライン ＝ ②（商談）追加MRR の合算 ＋ 現在MRR − 受注した商談の金額
+     パイプライン ＝ ②（商談）追加MRR の合算
+                    ＋ 商談がある会社の現在MRR（**会社ごとに 1 回だけ**。
+                      1 社に商談が 2 件あっても現在MRR は二重に足さない）
+                    − 受注した商談の金額
 
      ⚠ 10万円の足切りは**かけない**。v1 の「確定MRR／期待値MRR」にあった
        足切りと合算MRR の考え方は、この行では使っていない。
@@ -562,8 +567,10 @@ function renderKpis(){
   const wonV   = sumW(wonAmt),          wonN  = cnt(ds,d=>wonAmt(d)>0);
   const cmt    = sumW(d=>atLeast(d,'PROBABLE')),           cmtN = cnt(ds,d=>atLeast(d,'PROBABLE')>0);
   const chal   = sumW(d=>atLeast(d,'QUALIFIED_CHAMPION')), chalN= cnt(ds,d=>atLeast(d,'QUALIFIED_CHAMPION')>0);
-  const pipe   = sumW(m2) + sumW(d=>d.m) - wonV;
-  const pipeN  = cnt(ds,d=>m2(d)>0);
+  // 現在MRR は「商談がある会社」だけ。ds は会社の配列なので、
+  // d.m を 1 社 1 回しか足さない時点で「商談が複数あっても 1 回」を満たす
+  const pipe   = sumW(m2) + sumW(d=>inPipe(d)?d.m:0) - wonV;
+  const pipeN  = cnt(ds,inPipe);
   const exv    = sumW(m3);
 
   const pc  = v => tgt?Math.min(999,Math.round(v/tgt*100)):0;
@@ -577,12 +584,12 @@ function renderKpis(){
   document.getElementById('kpis').innerHTML=`
    <div class="card kpi hero"><div class="label">目標 合算MRR <span class="qi rq" data-tip="${esc(rulesHtml())}" tabindex="0" aria-label="計上ルール">?</span></div><div class="val num">${tgt?man(tgt):'—'}<small>円</small></div><div class="foot">${view==='team'?(allocGap()>0?'<b style="color:var(--plane)">⚠ 配分不足 '+man(allocGap())+'</b>':'期限 '+CONFIG.targetDue):tgt?'全体の '+Math.round(tgt/CONFIG.targetMrr*100)+'%':'目標配分なし'}</div><button type="button" class="editbtn" data-edit>目標を編集</button></div>
    ${lcard('plan','計画','（目標）追加MRR の合算','<b>計画（目標を全部取ったら）</b>担当者が会社ごとに入れた ①（目標）追加MRR の合計です。現在MRR は足しません。<br>いまの計画で目標に届くかを見る値です。', plan, planN)}
-   ${kpiCard('var(--p5)','期待値（参考）', `<b>期待値（参考）</b>③（見込）追加MRR の合計。商談ごとに 金額 × フェーズの係数（Goal Shared 30% / Qualified Champion 50% / Evaluating 70% / Probable 90% / Verbal 95% / Won 100%）を足したものです。<br>商談の金額を入力済み：${cnt(ds,d=>m2(d)>0)}社`, man(exv), '円', tgt?`目標の ${pc(exv)}%`:'')}
+   ${kpiCard('var(--p5)','期待値（参考）', `<b>期待値（参考）</b>③（見込）追加MRR の合計。商談ごとに 金額 × フェーズの係数（Goal Shared 30% / Qualified Champion 50% / Evaluating 70% / Probable 90% / Verbal 90% / Won 100%）を足したものです。<br>商談の金額を入力済み：${cnt(ds,d=>m2(d)>0)}社`, man(exv), '円', tgt?`目標の ${pc(exv)}%`:'')}
    ${kpiCard('var(--crit)','ネクストアクション期限超過', `<b>ネクストアクション期限超過</b>商談のネクストアクションで、期日が過ぎている件数。サクセスの Todo は含みません。<br>商談中でネクストアクションが未入力：${noNa}社`, overdue, '件', noNa?`未入力 ${noNa}社`:'', overdue?'var(--crit)':'')}
    ${lcard('won','確定','受注した商談', `<b>確定</b>フェーズが Won・受注 (Closed Won) の商談の金額の合計。すでに現在MRR に入っているぶんです。${view==='team'?`<br>次のステージ（支給率 ${next.rate}）まで ${man(Math.max(0,next.at-w))}円`:''}`, wonV, wonN)}
    ${lcard('cmt','コミット','Probable 以上','<b>コミット</b>フェーズが Probable 以上（Probable・Verbal・Won・受注）の商談の金額の合計。確率は掛けません。', cmt, cmtN)}
    ${lcard('best','チャレンジ','Qualified Champion 以上','<b>チャレンジ</b>フェーズが Qualified Champion 以上の商談の金額の合計。コミットより手前のものまで含めた、取りにいける上限です。', chal, chalN)}
-   ${lcard('pipe','パイプライン','全商談＋現在MRR','<b>パイプライン</b>②（商談）追加MRR の合算 ＋ 現在MRR − 受注した商談の金額。<br>受注ぶんを引くのは、すでに現在MRR に入っていて二重に数えてしまうためです。', pipe, pipeN)}`;
+   ${lcard('pipe','パイプライン','商談のある会社','<b>パイプライン</b>②（商談）追加MRR の合算 ＋ 商談がある会社の現在MRR − 受注した商談の金額。<br>現在MRR は<b>会社ごとに 1 回だけ</b>足します（1 社に商談が 2 件あっても二重に数えません）。商談が無い会社の現在MRR は入りません。<br>受注ぶんを引くのは、すでに現在MRR に入っていて二重になるためです。', pipe, pipeN)}`;
 }
 
 function kpiCard(color, label, tip, val, unit, foot, valColor){
