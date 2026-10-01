@@ -72,15 +72,46 @@ export function isSfClosed(name: string | null | undefined): boolean {
 
 export const PTAI_NAME_PATTERNS = ['PtAI', 'Ptengine AI', 'PtengineAI'] as const;
 
+/**
+ * 名前の規則に合わないが PtAI として数える商談（イレギュラー）。
+ *
+ * 規則を決める前から走っていた商談を拾うための逃げ道。
+ * **ここに足すのは、規則で拾えないと分かっている個別の商談だけ。**
+ * 規則どおりに名前を付けられるものは、名前を直して外すこと。
+ *
+ * 2026-10-01 追加:
+ *   006Q900001xHFUnIAO … 更新商談。受注済み・NetGain MRR あり（Kubotie 判断）
+ */
+export const PTAI_OPPORTUNITY_ALLOWLIST: readonly string[] = [
+  '006Q900001xHFUnIAO',
+];
+
 /** 商談名が PtAI のものか（画面・テスト用。SOQL と同じ規則） */
 export function isPtaiOpportunityName(name: string | null | undefined): boolean {
   const n = String(name ?? '').toLowerCase();
   return PTAI_NAME_PATTERNS.some(p => n.includes(p.toLowerCase()));
 }
 
-/** SOQL の WHERE 句。`Name` だけを見る（説明欄は見ない） */
+/** 名前の規則か、イレギュラーの一覧に載っているか */
+export function isPtaiOpportunity(
+  name: string | null | undefined, id?: string | null,
+): boolean {
+  if (isPtaiOpportunityName(name)) return true;
+  return Boolean(id) && PTAI_OPPORTUNITY_ALLOWLIST.includes(String(id));
+}
+
+/**
+ * SOQL の WHERE 句。`Name` だけを見る（説明欄は見ない）。
+ * イレギュラーの商談は Id で足す。
+ *
+ * ⚠ Salesforce の Id は 15 桁と 18 桁があり、SOQL はどちらでも引ける。
+ *    一覧には**画面の URL に出る 18 桁**を入れること。
+ */
 export function ptaiNameFilter(): string {
-  return PTAI_NAME_PATTERNS.map(p => `Name LIKE '%${p}%'`).join(' OR ');
+  const byName = PTAI_NAME_PATTERNS.map(p => `Name LIKE '%${p}%'`).join(' OR ');
+  if (!PTAI_OPPORTUNITY_ALLOWLIST.length) return byName;
+  const ids = PTAI_OPPORTUNITY_ALLOWLIST.map(i => `'${i}'`).join(',');
+  return `${byName} OR Id IN (${ids})`;
 }
 
 // ── 読み取る項目 ────────────────────────────────────────────────────────────

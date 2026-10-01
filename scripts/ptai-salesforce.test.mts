@@ -87,11 +87,44 @@ test('「Ptengine AI」は「PtAI」を含まないので、パターンは 3 �
 
 test('SOQL は Name だけを見る（説明欄は見ない）', () => {
   const w = ptaiNameFilter();
-  assert.equal(w, "Name LIKE '%PtAI%' OR Name LIKE '%Ptengine AI%' OR Name LIKE '%PtengineAI%'");
-  assert.ok(!w.includes('Description'));
+  assert.ok(w.includes("Name LIKE '%PtAI%'"), w);
+  assert.ok(w.includes("Name LIKE '%Ptengine AI%'"), w);
+  assert.ok(w.includes("Name LIKE '%PtengineAI%'"), w);
+  assert.ok(!w.includes('Description'), '説明欄は条件に入れない');
 });
 
 test('SOQL に引用符を壊す文字が入っていない', () => {
   assert.ok(!ptaiNameFilter().includes("\\'"));
   for (const p of PTAI_NAME_PATTERNS) assert.ok(!p.includes("'"), p);
+});
+
+// ── イレギュラーの取り込み（2026-10-01）────────────────────────────────────
+
+test('名前の規則に合わなくても、一覧にある商談は PtAI として扱う', async () => {
+  const { isPtaiOpportunity, PTAI_OPPORTUNITY_ALLOWLIST } =
+    await import('../src/lib/ptai/salesforce/schema.ts');
+  const id = PTAI_OPPORTUNITY_ALLOWLIST[0];
+  assert.ok(id, '一覧が空');
+  assert.equal(isPtaiOpportunity('【更新】_某社_20260918', id), true);
+  assert.equal(isPtaiOpportunityName('【更新】_某社_20260918'), false, '名前では拾えない');
+});
+
+test('一覧に無い商談は Id を渡しても拾わない', async () => {
+  const { isPtaiOpportunity } = await import('../src/lib/ptai/salesforce/schema.ts');
+  assert.equal(isPtaiOpportunity('関係ない商談', '006000000000000AAA'), false);
+  assert.equal(isPtaiOpportunity('関係ない商談', null), false);
+  assert.equal(isPtaiOpportunity('関係ない商談'), false);
+});
+
+test('SOQL にイレギュラーの Id が入る', () => {
+  const w = ptaiNameFilter();
+  assert.ok(w.includes("Id IN ('006Q900001xHFUnIAO')"), w);
+  assert.ok(w.startsWith("Name LIKE '%PtAI%'"), '名前の条件が先');
+});
+
+test('Salesforce の Id は 18 桁（URL に出る形）で持つ', async () => {
+  const { PTAI_OPPORTUNITY_ALLOWLIST } = await import('../src/lib/ptai/salesforce/schema.ts');
+  for (const id of PTAI_OPPORTUNITY_ALLOWLIST) {
+    assert.match(id, /^006[A-Za-z0-9]{15}$/, `${id} が Opportunity の 18 桁 Id ではない`);
+  }
 });
