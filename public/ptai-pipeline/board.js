@@ -163,6 +163,28 @@ function buildDeal0(c,i){
     term: pick('term', eo.term, null), bs: pick('bs', eo.barrierStatus, null), br: pick('br', eo.barrier, null),
     src, edit: editActive(e) ? e : null};
 }
+/* 【移植による変更 6/6】Salesforce からの取り込み（2026-10-01）
+   定期実行にはせず、押されたときだけ走らせる（Kubotie 判断）。
+   取り込んだ商談は externalId が `sf:` で始まり、画面からは書き戻さない。 */
+let SF_SYNC_BUSY = false;
+async function sfSync(btn){
+  if(SF_SYNC_BUSY) return;
+  SF_SYNC_BUSY = true;
+  const label = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = '取り込み中…'; }
+  try{
+    const res = await fetch('/api/ptai/sf-sync', {method:'POST', credentials:'same-origin'});
+    const j = await res.json().catch(()=>({}));
+    if(!res.ok || j.ok === false){
+      if(btn) btn.textContent = j.message || '取り込めませんでした';
+    } else {
+      if(btn) btn.textContent = `${j.matched}件を取り込みました`;
+      /* 画面の再読み込みは db のポーリングに任せる（最大 6 秒） */
+    }
+  }catch(_){ if(btn) btn.textContent = '取り込めませんでした'; }
+  setTimeout(()=>{ if(btn){ btn.disabled=false; btn.textContent=label; } SF_SYNC_BUSY=false; }, 2500);
+}
+
 /* 【移植による変更 4/4】Salesforce への導線（2026-10-01）
    見積もり・金額は Salesforce でしか入力できないので、そこへ飛ぶ。
    鍵は Notion 顧客管理DB の「Salesforce Account ID」列（d.sfid）。
@@ -1402,6 +1424,7 @@ function sumDeals(d){
     </article>`; }).join('');
   return `<section class="sx-sec"><header class="sx-sh"><h3>商談 <span class="sx-cnt">${d.deals.length}</span></h3>
       ${d.deals.length?`<span class="sx-meta">合算MRR <b class="num">${man(total(d))}</b>・期待値 <b class="num">${man(expected(d))}</b>${d.add&&d.add<AI_MIN?'<span class="sx-warn">追加MRR 10万円未満のため目標に数えません</span>':''}</span>`:''}
+      <button type="button" class="adddeal" data-sfsync title="Salesforce の PtAI 商談を取り込みます（金額・フェーズ・日付は Salesforce が正）">⟳ Salesforce から更新</button>
       <button type="button" class="adddeal" data-dnew>＋商談を追加</button></header>
     ${d.deals.length?`<div class="sx-deals">${cards}</div>`:'<p class="sx-empty">商談はまだありません。「＋商談を追加」から作成できます（同期時に Twenty の Opportunity を作成）</p>'}</section>`;
 }
@@ -1480,6 +1503,8 @@ function dealsSection(d){
 }
 document.getElementById('dBody').addEventListener('click',e=>{
   if(openId===null) return;
+  /* 【移植による変更 6/6】Salesforce 取り込みボタン。商談カードを開く処理より先に捕まえる */
+  const sf=e.target.closest('[data-sfsync]'); if(sf){ e.stopPropagation(); sfSync(sf); return; }
   const t=e.target.closest('[data-dopen],[data-dnew]'); if(!t) return; if(e.target.closest('select,input,.phc,[data-ph],button:not([data-dnew])')&&!e.target.closest('[data-dnew]')) return;
   editDeal = t.dataset.dnew!==undefined ? 'new' : t.dataset.dopen; dTab='edit'; renderDrawer();
 });

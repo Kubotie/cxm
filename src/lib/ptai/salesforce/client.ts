@@ -55,6 +55,8 @@ function toOpportunity(r: Record<string, unknown>): SfOpportunity {
     jpMrr:      num(r.JP_MRR__c),
     netMrr:     num(r.Net_MRR__c),
     termMonths: num(r.ContractTerm__c),
+    billingDate: str(r.Payment_Day__c),
+    contractEnd: str(r.First_Order_End_Date__c),
     needs:      str(r.Indentify_Pain_Needs__c),
     lostDetail: str(r.Dead_Detail_Reason__c),
     isWon:      r.IsWon === true,

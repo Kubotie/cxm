@@ -159,6 +159,8 @@ export const SF_OPPORTUNITY_FIELDS = [
   'MRR__c',                 // MRR
   'Net_MRR__c',             // NetGain MRR
   'ContractTerm__c',        // 契約期間（月）
+  'Payment_Day__c',         // 課金開始日（ダッシュボードの billingDate）
+  'First_Order_End_Date__c', // 初回契約終了日
   'Indentify_Pain_Needs__c', // Needs（ダッシュボードの need に対応）
   'Dead_Detail_Reason__c',  // 失注理由詳細
   'MRR_To_Count__c',        // MRR 計上判定
@@ -177,6 +179,10 @@ export interface SfOpportunity {
   jpMrr: number | null;
   netMrr: number | null;
   termMonths: number | null;
+  /** 課金開始日 */
+  billingDate: string | null;
+  /** 初回契約終了日 */
+  contractEnd: string | null;
   needs: string | null;
   lostDetail: string | null;
   isWon: boolean;

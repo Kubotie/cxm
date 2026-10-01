@@ -88,6 +88,8 @@ export async function syncSalesforceOpportunities(
       addMrr:          o.netMrr,
       // 「申込完了日」は商談の完了予定日
       applyDate:       o.closeDate,
+      // 「課金開始日」は Salesforce の Payment_Day__c
+      billingDate:     o.billingDate,
       termMonths:      o.termMonths,
       need:            o.needs,
       lostDetail:      o.lostDetail,
