@@ -481,14 +481,62 @@ export async function listOrgDocs(limit = 20): Promise<OrgDoc[]> {
   return out.filter(d => d.title);
 }
 
-export async function fetchMinuteBody(pageId: string): Promise<string> {
+/**
+ * 1 ブロックを 1 行のテキストにする。
+ *
+ * ⚠ **表・トグル・カラムの中身は「子ブロック」に入っている。**
+ *    2026-10-01 まで最上位の rich_text しか見ておらず、表が丸ごと落ちていた。
+ *    実測では、表の多い議事録で 460 字 → 14,813 字（32 倍）の差が出ていた。
+ *
+ * 画像・ファイルは本文を持たないが、「資料が貼ってある」こと自体が
+ * AI にとっての手がかりなので、見出しだけ残す。
+ */
+function blockLine(b: Record<string, unknown>): string {
+  const type = String(b.type ?? '');
+  if (!type) return '';
+
+  if (type === 'table_row') {
+    const cells = (b[type] as { cells?: unknown[][] } | undefined)?.cells ?? [];
+    return cells.map(c => plainText(c)).join(' | ');
+  }
+
+  // 貼られた資料。本文は無いので、種別と名前だけ
+  if (type === 'image' || type === 'file' || type === 'pdf' || type === 'video') {
+    const o = b[type] as { caption?: unknown; name?: unknown; external?: { url?: string }; file?: { url?: string } } | undefined;
+    const label = plainText(o?.caption) || String(o?.name ?? '') || '';
+    const kind = type === 'image' ? '画像' : type === 'video' ? '動画' : 'ファイル';
+    return `［${kind}${label ? ': ' + label : ''}］`;
+  }
+  if (type === 'bookmark' || type === 'embed' || type === 'link_preview') {
+    const o = b[type] as { url?: string; caption?: unknown } | undefined;
+    const label = plainText(o?.caption);
+    return o?.url ? `［リンク${label ? ': ' + label : ''}］ ${o.url}` : '';
+  }
+  if (type === 'child_page') {
+    return `［子ページ: ${String((b[type] as { title?: unknown } | undefined)?.title ?? '')}］`;
+  }
+
+  const inner = b[type] as { rich_text?: unknown } | undefined;
+  return plainText(inner?.rich_text);
+}
+
+/**
+ * ページ本文をテキストにする。子ブロックも深さ 2・追加リクエスト 25 回までたどる
+ * （Notion は平均 3 req/s しか叩けない）。MCP の blockTree と同じ方針。
+ */
+export async function fetchMinuteBody(
+  pageId: string, depth = 2, budget = { left: 25 },
+): Promise<string> {
   const res = await request('GET', `/blocks/${pageId}/children?page_size=100`);
   const lines: string[] = [];
   for (const b of (res.results as Array<Record<string, unknown>>) ?? []) {
-    const type = String(b.type ?? '');
-    const inner = b[type] as { rich_text?: unknown } | undefined;
-    const text = plainText(inner?.rich_text);
-    if (text) lines.push(text);
+    const line = blockLine(b);
+    if (line) lines.push(line);
+    if (b.has_children === true && b.id && depth > 0 && budget.left > 0) {
+      budget.left--;
+      const child = await fetchMinuteBody(String(b.id), depth - 1, budget).catch(() => '');
+      if (child) lines.push(child);
+    }
   }
   return lines.join('\n').slice(0, MEETING_BODY_MAX);
 }

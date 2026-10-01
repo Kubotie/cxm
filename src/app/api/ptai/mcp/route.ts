@@ -300,6 +300,24 @@ function blockText(b: NotionBlock): string {
     const cells = (b[t] as { cells?: Array<Array<{ plain_text?: string }>> } | undefined)?.cells ?? [];
     return cells.map(c => c.map(x => x.plain_text ?? '').join('')).join(' | ');
   }
+  // 貼られた資料。本文は無いが「資料がある」こと自体が AI の手がかりになる
+  const plain = (v: unknown) =>
+    Array.isArray(v) ? v.map(x => (x as { plain_text?: string }).plain_text ?? '').join('') : '';
+  if (t === 'image' || t === 'file' || t === 'pdf' || t === 'video') {
+    const o = b[t] as { caption?: unknown; name?: unknown } | undefined;
+    const label = plain(o?.caption) || String(o?.name ?? '');
+    const kind = t === 'image' ? '画像' : t === 'video' ? '動画' : 'ファイル';
+    return `［${kind}${label ? ': ' + label : ''}］`;
+  }
+  if (t === 'bookmark' || t === 'embed' || t === 'link_preview') {
+    const o = b[t] as { url?: string; caption?: unknown } | undefined;
+    const label = plain(o?.caption);
+    return o?.url ? `［リンク${label ? ': ' + label : ''}］ ${o.url}` : '';
+  }
+  if (t === 'child_page') {
+    return `［子ページ: ${String((b[t] as { title?: unknown } | undefined)?.title ?? '')}］`;
+  }
+
   const node = b[t] as { rich_text?: Array<{ plain_text?: string }> } | undefined;
   const rt = node?.rich_text;
   if (!Array.isArray(rt)) return '';
