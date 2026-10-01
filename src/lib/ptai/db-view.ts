@@ -43,6 +43,13 @@ const date = (v: unknown): string | null => {
 const kindOf = (e: unknown): string =>
   (e as TestWriteError | NotionError)?.kind ?? 'error';
 
+/** Twenty の LINKS 型から URL を取り出す */
+function linkUrl(v: unknown): string | null {
+  if (typeof v === 'string') return v || null;
+  const o = v as { primaryLinkUrl?: unknown } | null;
+  return typeof o?.primaryLinkUrl === 'string' && o.primaryLinkUrl ? o.primaryLinkUrl : null;
+}
+
 /** 空の値を落とす。原本は「無い項目はキーごと無い」前提で書かれている */
 function clean<T extends Record<string, unknown>>(o: T): Partial<T> {
   const out: Record<string, unknown> = {};
@@ -335,6 +342,38 @@ export async function buildDbView(): Promise<DbViewResult> {
     }),
   }));
 
+  // ── minutes（議事録タブの取り込み結果）─────────────────────────────────
+  //   原本の形に戻す:
+  //     { companyId, companyName, notion:{fetchedAt, items[]}, mii:{syncedAt, items[]} }
+  //   items は {title, date, url, text}。保存は testActivity(type=MEETING)。
+  const minutesBy = new Map<string, { notion: unknown[]; mii: unknown[]; at: string }>();
+  for (const r of activities) {
+    if (str(r.type) !== 'MEETING') continue;
+    const cid = str(r.notionCompanyId);
+    if (!cid) continue;
+    const src = str(r.meetingSource) === 'MII' ? 'mii' : 'notion';
+    const cur = minutesBy.get(cid) ?? { notion: [], mii: [], at: '' };
+    cur[src].push(clean({
+      title: str(r.name),
+      date:  date(r.occurredAt) ?? '',
+      // LINKS 型は {primaryLinkUrl} で返る
+      url:   linkUrl(r.sourceUrl),
+      text:  str(r.text) || '',
+    }));
+    const u = str(r.updatedAt) || str(r.createdAt);
+    if (u > cur.at) cur.at = u;
+    minutesBy.set(cid, cur);
+  }
+  const minutes: Array<{ id: string; data: unknown }> = [];
+  for (const [cid, v] of minutesBy) {
+    minutes.push({ id: cid, data: clean({
+      companyId:   cid,
+      companyName: custById.get(cid)?.name ?? '',
+      notion: v.notion.length ? { fetchedAt: v.at, items: v.notion } : null,
+      mii:    v.mii.length    ? { syncedAt:  v.at, items: v.mii }    : null,
+    }) });
+  }
+
   // ── settings ──────────────────────────────────────────────────────────────
   const settings: Array<{ id: string; data: unknown }> = [];
   try {
@@ -344,7 +383,7 @@ export async function buildDbView(): Promise<DbViewResult> {
     partialFailures.push(`notion_targets:${kindOf(e)}`);
   }
 
-  const collections: DbCollections = { edits, aplans, orgs, recent, feed, settings };
+  const collections: DbCollections = { edits, aplans, orgs, recent, feed, settings, minutes };
   const counts = Object.fromEntries(Object.entries(collections).map(([k, v]) => [k, v.length]));
 
   console.info('[ptai/db-view] 組み立て', JSON.stringify({

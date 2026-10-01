@@ -147,6 +147,14 @@
     var i = path.indexOf('/');
     var collection = path.slice(0, i), docId = path.slice(i + 1);
     return {
+      /* board.js の minutesLoad が使う。**実装していなかったので議事録タブが
+         いつも空だった**（2026-10-01 修正）。まだ 1 度もポーリングしていなければ
+         先に 1 回引いてから答える。 */
+      get: async function () {
+        if (!started) { started = true; startPolling(); }
+        if (!Object.keys(state).length) { try { await poll(); } catch (_) {} }
+        return docSnap(collection, docId);
+      },
       set: async function (body) {
         try {
           await api('/db', {

@@ -417,6 +417,57 @@ async function writeTargets(body: Record<string, unknown>, me: PtaiIdentity, who
   return { ok: true, changes: { targets: updated } };
 }
 
+/**
+ * 議事録の取り込み結果を `testActivity(type=MEETING)` へ。
+ *
+ * 原本が送ってくる形:
+ *   { companyId, companyName, notion:{fetchedAt, items:[{title,date,url,text}]},
+ *                             mii:{syncedAt,   items:[...]} }
+ *
+ * ⚠ **Notion の本文の控えを Twenty に置くことになる。**
+ *   正本は Notion のままで、ここに入るのは取り込み時点の写し。
+ *   古くなったら「最新に更新」で上書きされる。
+ */
+const MINUTE_BODY_MAX = 6000;
+
+async function writeMinutes(
+  cid: string, body: Record<string, unknown>, who: ActorStamp,
+): Promise<WriteResult> {
+  const changes: Record<string, number> = { meeting: 0, meetingDeleted: 0 };
+  const seen = new Set<string>();
+
+  for (const src of ['notion', 'mii'] as const) {
+    const group = rec(body[src]);
+    for (const [i, it] of arr(group.items).entries()) {
+      const ext = `minutes:${cid}:${src}:${i}`;
+      seen.add(ext);
+      await upsertByExternalId(ACTV.plural, ACTV.singular, ext, {
+        name:          str(it.title) || '議事録',
+        notionCompanyId: cid,
+        type:          'MEETING',
+        meetingSource: src === 'notion' ? 'NOTION' : 'MII',
+        occurredAt:    str(it.date) ? `${str(it.date)}T00:00:00.000Z` : null,
+        text:          (str(it.summary) || str(it.text)).slice(0, MINUTE_BODY_MAX) || null,
+        // LINKS 型なので文字列では 400 になる（2026-10-01 に踏んだ）
+        sourceUrl:     str(it.url) ? { primaryLinkUrl: str(it.url) } : null,
+        actor:         'sync',
+      }, who);
+      changes.meeting++;
+    }
+  }
+
+  // 全置換。取り込み直して減ったぶんは消す
+  for (const a of await listByExternalPrefix(ACTV.plural, ACTV.singular, `minutes:${cid}:`)) {
+    if (seen.has(str(a.externalId))) continue;
+    await deleteRecord(ACTV.plural, str(a.id));
+    changes.meetingDeleted++;
+  }
+
+  await writeLog(who, 'sync', 'testActivity', null,
+    `議事録を取り込み（${changes.meeting} 件）`, { source: 'ui' });
+  return { ok: true, changes };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 入口
 // ═══════════════════════════════════════════════════════════════════════════
@@ -468,15 +519,12 @@ export async function writeDoc(
                    message: `settings/${docId} の保存先は決まっていません` };
         }
         return await writeTargets(data, me, who);
-      // ── 議事録の取り込み結果（読み取り専用の控え）────────────────────
-      //   原本は MCP で引いた議事録を `minutes/<cid>` に貯める。これは
-      //   **Notion と Twenty から何度でも引き直せる控え**で、正本ではない。
-      //   Twenty に二重に持つ意味がないので保存しないが、画面にエラーを出す
-      //   必要もないので「受け取った」として返す（原本の保存成功と同じ扱い）。
-      //   ⚠ 501 を返していた頃は、議事録タブが毎回「保存できませんでした」と
-      //      出していた（2026-10-01 修正）。
-      case 'minutes':
-        return { ok: true, changes: { minutes: 0 } };
+      // ── 議事録の取り込み結果 ──────────────────────────────────────────
+      //   原本は MCP で引いた議事録を `minutes/<cid>` に貯める。
+      //   `testActivity(type=MEETING)` に入れる。**スキーマの meetingSource
+      //   （NOTION / MII / MANUAL）はこのために用意してある。**
+      //   保存しないと、画面を開き直すたびに「最新に更新」が要る。
+      case 'minutes':  return await writeMinutes(docId, data, who);
 
       // ── 引き継がないもの（2026-10-01 の決定）─────────────────────────
       //   旧プランニング（plans／GATES／ピン）は **Twenty へ移さない。**
