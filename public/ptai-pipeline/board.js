@@ -2283,9 +2283,46 @@ function minutesTab(d){
     .sort((a,b)=>(b.date||'')<(a.date||'')?-1:(b.date||'')>(a.date||'')?1:0);
   const fmtAt=t=>t?new Date(t).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):'';
   const st=[`<span>Mii ${doc.mii?`${mii.length}件・${fmtAt(doc.mii.syncedAt)} 同期`:'未同期'}</span>`, `<span>Notion ${doc.notion?`${no.length}件・${fmtAt(doc.notion.fetchedAt)} 更新`:'未取得'}</span>`, `<span>Twenty ${d.notes.length}件</span>`].join('');
+  /* 【移植による変更 7/7】議事録の Markdown を整形して出す（2026-10-01）
+     原本は esc() したそのままを出していて、## や - や [表示](URL) が
+     記号のまま読みづらかった。**エスケープしてから**最小限の変換をする
+     （先に esc するので、議事録の中身で HTML を注入されることはない）。 */
+  const mdHtml = (src) => {
+    const lines = esc(String(src)).split(/\r?\n/);
+    const out = []; let ul = false, tbl = false;
+    const closeUl = () => { if (ul) { out.push('</ul>'); ul = false; } };
+    const closeTbl = () => { if (tbl) { out.push('</table>'); tbl = false; } };
+    const inline = t => t
+      .replace(/\[([^\]]+)\]\((https?:[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>');
+    for (const raw of lines) {
+      const l = raw.trim();
+      if (!l) { closeUl(); closeTbl(); continue; }
+      const h = l.match(/^(#{1,6})\s+(.*)$/);
+      if (h) { closeUl(); closeTbl(); const n = Math.min(h[1].length + 2, 6); out.push(`<h${n} class="mdh">${inline(h[2])}</h${n}>`); continue; }
+      if (/^(-{3,}|\*{3,}|_{3,})$/.test(l)) { closeUl(); closeTbl(); out.push('<hr>'); continue; }
+      /* 表（| a | b | の行。区切り行は飛ばす） */
+      if (/^\|.*\|$/.test(l)) {
+        closeUl();
+        if (/^\|[\s:|-]+\|$/.test(l)) continue;
+        if (!tbl) { out.push('<table class="mdt">'); tbl = true; }
+        const cells = l.slice(1, -1).split('|').map(c => `<td>${inline(c.trim())}</td>`).join('');
+        out.push(`<tr>${cells}</tr>`); continue;
+      }
+      closeTbl();
+      const li = l.match(/^[-*+]\s+(.*)$/) || l.match(/^\d+[.)]\s+(.*)$/);
+      if (li) { if (!ul) { out.push('<ul class="mdl">'); ul = true; } out.push(`<li>${inline(li[1])}</li>`); continue; }
+      closeUl();
+      out.push(`<p>${inline(l)}</p>`);
+    }
+    closeUl(); closeTbl();
+    return out.join('');
+  };
   const card=(x,i)=>{ const body=String(x.summary||x.text||'').replace(/\n{3,}/g,'\n\n').trim();
     return `<details class="mnote" ${i===0?'open':''}><summary><span class="d num">${x.date?mdj(x.date.slice(0,10)):'—'}</span><b>${esc(x.title||'（無題）')}</b>${i===0?'<span class="mnew">最新</span>':''}<span class="msrc s-${x.src}">${x.src}</span></summary>
-      <div class="md">${esc(body)||'（本文なし）'}</div>${x.url?`<a class="mopen" href="${esc(x.url)}" target="_blank" rel="noopener">${x.src}で開く ↗</a>`:''}</details>`; };
+      <div class="md">${body ? mdHtml(body) : '（本文なし）'}</div>${x.url?`<a class="mopen" href="${esc(x.url)}" target="_blank" rel="noopener">${x.src}で開く ↗</a>`:''}</details>`; };
   return `<div class="sec"><div class="mhead"><h3>議事録</h3><span class="mstat">${st}</span>
       <button type="button" class="btn sm" id="minRefresh" ${u.busy?'disabled':''}>${u.busy?'更新中…':'↻ 最新に更新'}</button></div>
     ${u.msg?`<p class="mmsg" role="status">${esc(u.msg)}</p>`:''}
