@@ -127,6 +127,67 @@ export async function listMiiMinutes(companyName: string, limit = 6): Promise<Co
     .slice(0, limit);
 }
 
+// ── 全社ぶんを 1 回で取る（RAW 組み立て用）────────────────────────────────
+//
+// `listMiiMinutes` は会社ごとに 1 リクエスト要るので、127 社ぶん回すと重い。
+// Twenty の Note は全部で 100 件台しかないため、**1 回で全部取ってから
+// ローカルで社名照合する**。RAW にはこちらを使う。
+
+export interface TwentyNoteLite {
+  externalId: string;
+  source: MeetingSource;
+  title: string;
+  date: string;
+  body: string;
+  /** 照合用に正規化したタイトル */
+  key: string;
+}
+
+/** Twenty の Note を全件（上限 1000）取る。失敗したら空配列 */
+export async function fetchAllTwentyNotes(limit = 1000): Promise<TwentyNoteLite[]> {
+  let rows: Record<string, unknown>[];
+  try {
+    rows = await listRecords('notes', { depth: 0, pageSize: 200, maxRecords: limit });
+  } catch {
+    return [];
+  }
+  return rows.map(n => {
+    const title = typeof n.title === 'string' ? n.title : '';
+    return {
+      externalId: String(n.id ?? ''),
+      source:     meetingSourceOfTwentyNote(n),
+      title,
+      date:       dateFromTitle(title) || String(n.createdAt ?? '').slice(0, 10),
+      body:       noteBody(n.bodyV2),
+      key:        normalizeCompanyName(title),
+    };
+  });
+}
+
+/**
+ * 全件から 1 社ぶんを抜く。`listMiiMinutes` と同じ照合規則（正規化後の部分一致）。
+ * 短い社名は誤爆するので拾わない。
+ */
+export function pickNotesForCompany(
+  all: TwentyNoteLite[], companyName: string, limit = 6,
+): CompanyMeeting[] {
+  const key = normalizeCompanyName(companyName);
+  if (key.length < MIN_TITLE_KEY_LENGTH) return [];
+  return all
+    .filter(n => n.key.includes(key))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+    .slice(0, limit)
+    .map(n => ({
+      externalId: n.externalId,
+      source:     n.source,
+      title:      n.title,
+      date:       n.date,
+      body:       n.body,
+      url:        null,
+      matchedBy:  'title' as MatchMethod,
+    }));
+}
+
 // ── まとめて取る ─────────────────────────────────────────────────────────────
 
 export interface ListCompanyMinutesInput {

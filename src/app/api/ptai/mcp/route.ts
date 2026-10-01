@@ -133,26 +133,80 @@ async function notionFetch(path: string, init: RequestInit, version = NOTION_VER
 
 async function notion(tool: string, input: Record<string, unknown>): Promise<unknown> {
   if (tool === 'notion-search') {
-    const json = await notionFetch('/search', {
-      method: 'POST',
-      body: JSON.stringify({
-        query: String(input.query ?? ''),
-        page_size: Number(input.page_size ?? 15),
-        filter: { value: 'page', property: 'object' },
-      }),
-    }) as { results?: NotionSearchHit[] };
+    // ═══════════════════════════════════════════════════════════════════
+    //  board.js は検索結果の **path と highlight でふるいにかける**。
+    //    notionMinutes      … /JP_Docs/.test(path) で議事録かを見る
+    //    notionMinutesList  … 顧客管理DB・Archive を path で除外し、
+    //                         highlight に「議事録」があるかを見る
+    //  2026-10-01 まで path を空文字・highlight を未設定で返していたため、
+    //  **この 2 つのふるいが機能せず、議事録がほとんど拾えていなかった。**
+    //
+    //  そこで
+    //    ① JP_Docs（議事録の置き場）を**データソース直指定でタイトル検索**し、
+    //       path='…/JP_Docs'・highlight=Category を付けて返す
+    //    ② 併せてワークスペース検索も行い、親から path を解決する
+    //  の 2 本立てにする。①があるので、検索の順位に左右されない。
+    // ═══════════════════════════════════════════════════════════════════
+    const q    = String(input.query ?? '');
+    const size = Math.min(Math.max(Number(input.page_size ?? 15), 1), 50);
+    const seen = new Set<string>();
+    const results: Array<Record<string, unknown>> = [];
 
-    // board.js が読む形（claude.ai コネクタ互換）に詰め替える
-    return {
-      results: (json.results ?? []).map(p => ({
-        type:      'page',
-        id:        p.id,
-        url:       p.url ?? '',
-        title:     notionTitle(p),
-        path:      '',                                  // REST では祖先パスが取れない
-        timestamp: p.last_edited_time ?? p.created_time ?? '',
-      })),
+    const push = (hit: Record<string, unknown>) => {
+      const id = String(hit.id ?? '');
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      results.push(hit);
     };
+
+    // ① JP_Docs をタイトルで直接引く
+    if (q) {
+      try {
+        const docs = await notionFetch(`/data_sources/${JP_DOCS_DS}/query`, {
+          method: 'POST',
+          body: JSON.stringify({
+            page_size: size,
+            filter: { property: JP_DOCS_TITLE_PROP, title: { contains: q } },
+            sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
+          }),
+        }, NOTION_VERSION_DS) as { results?: NotionSearchHit[] };
+        for (const d of docs.results ?? []) {
+          push({
+            type: 'page', id: d.id, url: d.url ?? '',
+            title: notionTitle(d),
+            path: 'Ptengine AI / JP_Docs',
+            highlight: categoriesOf(d),
+            timestamp: d.last_edited_time ?? d.created_time ?? '',
+          });
+        }
+      } catch {
+        // JP_Docs が引けなくても、下のワークスペース検索で拾えることがある
+      }
+    }
+
+    // ② ワークスペース検索（親から path を解決する）
+    try {
+      const json = await notionFetch('/search', {
+        method: 'POST',
+        body: JSON.stringify({
+          query: q, page_size: size,
+          filter: { value: 'page', property: 'object' },
+        }),
+      }) as { results?: NotionSearchHit[] };
+      for (const d of json.results ?? []) {
+        push({
+          type: 'page', id: d.id, url: d.url ?? '',
+          title: notionTitle(d),
+          path: pathOf(d),
+          highlight: categoriesOf(d),
+          timestamp: d.last_edited_time ?? d.created_time ?? '',
+        });
+      }
+    } catch (e) {
+      if (!results.length) throw e;
+    }
+
+    return { results: results.slice(0, size), type: 'workspace_search' };
   }
 
   if (tool === 'notion-fetch') {
@@ -192,7 +246,39 @@ interface NotionSearchHit {
   url?: string;
   created_time?: string;
   last_edited_time?: string;
-  properties?: Record<string, { type?: string; title?: Array<{ plain_text?: string }> }>;
+  parent?: { type?: string; data_source_id?: string; database_id?: string; page_id?: string };
+  properties?: Record<string, {
+    type?: string;
+    title?: Array<{ plain_text?: string }>;
+    multi_select?: Array<{ name?: string }>;
+  }>;
+}
+
+/** JP_Docs（議事録・資料の置き場）。notion/schema.ts の NOTION_SOURCES.docs と同じ値 */
+const JP_DOCS_DS = '5f583654-f021-4bb9-8661-01a75fe818c7';
+const JP_DOCS_TITLE_PROP = 'お知らせ';
+/** 顧客管理DB。board.js は path にこれが含まれる結果を議事録から除く */
+const CUSTOMERS_DS = '25ef5c40-d968-45d7-9120-7f1878006682';
+
+/**
+ * 祖先パスの代わり。REST では祖先をたどれないので、**親のデータソースだけ**を名前にする。
+ * board.js のふるい（/JP_Docs/・顧客管理DB の除外）が効けば十分。
+ */
+function pathOf(p: NotionSearchHit): string {
+  const id = (p.parent?.data_source_id ?? p.parent?.database_id ?? '').replace(/-/g, '');
+  if (!id) return '';
+  if (id === JP_DOCS_DS.replace(/-/g, ''))   return 'Ptengine AI / JP_Docs';
+  if (id === CUSTOMERS_DS.replace(/-/g, '')) return 'Ptengine AI / 顧客管理DB';
+  return '';
+}
+
+/** Category（multi_select）を highlight 代わりに返す。board.js は「議事録」を探す */
+function categoriesOf(p: NotionSearchHit): string {
+  for (const [name, v] of Object.entries(p.properties ?? {})) {
+    if (name !== 'Category') continue;
+    return (v.multi_select ?? []).map(x => x.name ?? '').filter(Boolean).join(' / ');
+  }
+  return '';
 }
 
 function notionTitle(p: NotionSearchHit): string {

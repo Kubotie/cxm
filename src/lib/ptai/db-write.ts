@@ -468,6 +468,16 @@ export async function writeDoc(
                    message: `settings/${docId} の保存先は決まっていません` };
         }
         return await writeTargets(data, me, who);
+      // ── 議事録の取り込み結果（読み取り専用の控え）────────────────────
+      //   原本は MCP で引いた議事録を `minutes/<cid>` に貯める。これは
+      //   **Notion と Twenty から何度でも引き直せる控え**で、正本ではない。
+      //   Twenty に二重に持つ意味がないので保存しないが、画面にエラーを出す
+      //   必要もないので「受け取った」として返す（原本の保存成功と同じ扱い）。
+      //   ⚠ 501 を返していた頃は、議事録タブが毎回「保存できませんでした」と
+      //      出していた（2026-10-01 修正）。
+      case 'minutes':
+        return { ok: true, changes: { minutes: 0 } };
+
       // ── 引き継がないもの（2026-10-01 の決定）─────────────────────────
       //   旧プランニング（plans／GATES／ピン）は **Twenty へ移さない。**
       //   いまの画面はサクセス管理（aplans）が主体で、plans は原本に残った

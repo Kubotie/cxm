@@ -434,6 +434,53 @@ export function titleDate(t: string): string {
 }
 
 /** 議事録の本文（ブロック）。要るときだけ引く。重いので既定では取らない */
+// ── 組織資料（未使用。raw-view の説明を参照）────────────────────────────
+//
+// 原本の RAW は会社ごとに「組織資料（repo）」を持っていて、組織図 AI の主材料に
+// なっていた（ORG_INSTR は 1 本 4,500 字まで読む）。移植後は空だったので入れ直す。
+// JP_Docs でタイトルに「組織」を含むページは**全体で 5 件程度**しかないので、
+// 1 回のクエリで全部取ってから社名で配る。会社ごとに引くと 127 回になる。
+
+export interface OrgDoc {
+  pageId: string;
+  title:  string;
+  date:   string;
+  body:   string;
+}
+
+const ORG_DOC_TITLE_KEYS = ['組織'] as const;
+
+/** JP_Docs の組織資料を全件取る（本文つき）。失敗したら空配列 */
+export async function listOrgDocs(limit = 20): Promise<OrgDoc[]> {
+  const out: OrgDoc[] = [];
+  for (const key of ORG_DOC_TITLE_KEYS) {
+    let res: Record<string, unknown>;
+    try {
+      res = await request('POST', `/data_sources/${NOTION_SOURCES.docs}/query`, {
+        page_size: limit,
+        filter: { property: DOC_PROP.title, title: { contains: key } },
+        sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
+      });
+    } catch { continue; }
+    for (const p of (res.results as Array<Record<string, unknown>>) ?? []) {
+      const pageId = String(p.id ?? '');
+      if (!pageId || out.some(o => o.pageId === pageId)) continue;
+      const props = p.properties as Props | undefined;
+      out.push({
+        pageId,
+        title: String(readProp(props, DOC_PROP.title) ?? ''),
+        date:  String(p.last_edited_time ?? '').slice(0, 10),
+        body:  '',
+      });
+    }
+  }
+  // 本文は 1 件ずつ。件数が少ないので許容できる
+  for (const d of out) {
+    d.body = await fetchMinuteBody(d.pageId).catch(() => '');
+  }
+  return out.filter(d => d.title);
+}
+
 export async function fetchMinuteBody(pageId: string): Promise<string> {
   const res = await request('GET', `/blocks/${pageId}/children?page_size=100`);
   const lines: string[] = [];

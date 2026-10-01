@@ -76,6 +76,20 @@ export interface RawNote {
   md: string;
 }
 
+/**
+ * 資料（原本の docs / od）。
+ * 2026-10-01 まで「Twenty には無いので常に空」としていたが、
+ * **組織資料は Notion の JP_Docs にある**（組織図 AI の主材料）。
+ */
+export interface RawDoc {
+  /** 日付 YYYY-MM-DD */
+  d: string;
+  /** 種別（議事録・組織資料・メールなど） */
+  k: string;
+  t: string;
+  b: string;
+}
+
 export interface RawCompany {
   cid: string;
   n: string;
@@ -98,10 +112,10 @@ export interface RawCompany {
   cs: string | null;
   opp: RawOpportunity[] | null;
   notes: RawNote[];
-  /** repo の議事録。Twenty には無いので常に空 */
-  docs: never[];
-  /** repo の組織資料。Twenty には無いので常に空 */
-  od: never[];
+  /** repo の資料。いまは入れていない（移行元でも 3 社 11 件だけだった） */
+  docs: RawDoc[];
+  /** 組織資料。Notion の JP_Docs から配る */
+  od: RawDoc[];
 }
 
 export interface RawSnapshot {

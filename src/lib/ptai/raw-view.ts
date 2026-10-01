@@ -16,7 +16,7 @@
 // ログ: 件数だけ。顧客名・UUID・本文は出さない。
 
 import { listCompanySummaries, type CompanySummary } from './repository';
-import { listCompanyMinutes } from './minutes';
+import { listCompanyMinutes, fetchAllTwentyNotes, pickNotesForCompany } from './minutes';
 import { TIER_TO_NOTION } from './notion/schema';
 import type { RawSnapshot, RawCompany, RawOpportunity } from '@/lib/twenty/adapters/types';
 
@@ -28,6 +28,10 @@ export interface RawViewResult {
     /** 議事録を引いた会社数（引いていない場合は 0）*/
     minutesCompanies: number;
     minutesTotal: number;
+    /** Twenty Note（Mii 由来を含む）を配れた会社数と件数 */
+    notesCompanies: number;
+    notesTotal: number;
+
     partialFailures: string[];
   };
 }
@@ -59,9 +63,10 @@ function buildRawCompany(s: CompanySummary, deals: RawOpportunity[] | null): Raw
     dom:  '',
     cs:   null,
     opp:  deals,
-    notes: [],
-    docs: [],
-    od:   [],
+    // 中身はあとで詰める（notes＝Twenty Note、od＝組織資料）。型を固定しておく
+    notes: [] as Array<{ t: string; d: string; md: string }>,
+    docs:  [] as Array<{ d: string; k: string; t: string; b: string }>,
+    od:    [] as Array<{ d: string; k: string; t: string; b: string }>,
   };
 }
 
@@ -103,7 +108,46 @@ export async function buildRawFromNewSources(input: BuildRawInput = {}): Promise
     rows.push(buildRawCompany(s, opp));
   }
 
-  // 議事録は要求されたときだけ。会社ごとに 2〜3 リクエスト要るので既定は載せない
+  // ── 議事録（Twenty Note / Mii）─────────────────────────────────────────
+  //
+  // ⚠ **ここを空にしていたせいで、組織図・直近の動き・計画相談の AI が
+  //    議事録をまったく読めていなかった**（2026-10-01 に判明）。
+  //    移行元 RAW は 63 社・89 件の notes を持っていたのに、新経路は 0 件だった。
+  //
+  //    Twenty の Note は全部で 100 件台なので、**1 リクエストで全件取って
+  //    ローカルで社名照合する**。会社ごとに引くと 127 リクエストになる。
+  //    Notion の議事録は JP_Docs が 2,000 件超あり全件は取れないので、
+  //    画面側が会社ごとに MCP で引く（board.js の notionMinutes）。
+  let notesCompanies = 0, notesTotal = 0;
+  try {
+    const allNotes = await fetchAllTwentyNotes();
+    if (allNotes.length) {
+      for (const row of rows) {
+        const picked = pickNotesForCompany(allNotes, row.n, 6);
+        if (!picked.length) continue;
+        row.notes = picked.map(m => ({ t: m.title, d: m.date, md: m.body }));
+        notesCompanies++; notesTotal += picked.length;
+      }
+    }
+  } catch {
+    partialFailures.push('twenty_notes:error');
+  }
+
+  // ── 組織資料（od）と repo の資料（docs）は入れていない ────────────────
+  //
+  //  原本の RAW は「組織資料（repo）」を持っていて、組織図 AI の主材料だった
+  //  （1 社・3 本・最大 7,018 字）。**これに相当するものが Notion に無い。**
+  //  2026-10-01 に探した結果:
+  //    JP_Docs でタイトルに「組織」を含むページは全体で 5 件だけ。
+  //    本文は 0〜554 字で、**どの顧客にも社名が一致しなかった**。
+  //  取りに行くと 10 秒かかって 0 件なので、やめた。
+  //
+  //  使えるようにするには、組織資料を JP_Docs に置いて「関連顧客」を
+  //  紐付けてもらう必要がある（運用側の作業）。それまでは組織図 AI は
+  //  議事録（notes）と担当者メモを材料にする。
+  //  docs（メール・チャットの控え）も移行元で 3 社 11 件だけだったので入れない。
+
+  // 会社ごとに 2〜3 リクエスト要る Notion 議事録は、要求されたときだけ
   let minutesCompanies = 0, minutesTotal = 0;
   if (input.withMinutes) {
     const limit = input.minutesCompanyLimit ?? 20;
@@ -139,6 +183,8 @@ export async function buildRawFromNewSources(input: BuildRawInput = {}): Promise
       deals,
       minutesCompanies,
       minutesTotal,
+      notesCompanies,
+      notesTotal,
       partialFailures: [...new Set(partialFailures)],
     },
   };
