@@ -145,6 +145,8 @@ export function ptaiNameFilter(): string {
 export const SF_OPPORTUNITY_FIELDS = [
   'Id', 'Name', 'AccountId', 'StageName', 'CloseDate', 'Amount', 'Probability',
   'IsClosed', 'IsWon', 'OwnerId', 'CreatedDate', 'LastModifiedDate',
+  'Issue_to_closewon__c',   // 導入障壁（ダッシュボードの barrier。双方向）
+  'Next_Action__c',         // Next Action（ダッシュボードの na。双方向）
   // カスタム項目（2026-10-01 実測）
   'JP_MRR__c',              // 見込MRR
   'MRR__c',                 // MRR
@@ -156,6 +158,50 @@ export const SF_OPPORTUNITY_FIELDS = [
   'Dead_Detail_Reason__c',  // 失注理由詳細
   'MRR_To_Count__c',        // MRR 計上判定
 ] as const;
+
+// ── 双方向にする 3 項目（2026-10-02 Kubotie 決定）────────────────────────────
+//
+// ═══════════════════════════════════════════════════════════════════════════
+//  **Salesforce が正本。** 毎時の取り込みでここも上書きする。
+//  画面で直したら保存と同時に Salesforce へ送り返す。送れなかったぶんだけ
+//  Twenty の `sfPending` に残り、その項目は取り込みで上書きしない。
+//
+//  ⚠ 文字数の上限が項目ごとに違う（実測）。超えたぶんは切って送る。
+//    切ったことは呼び出し側に返して画面に出す。黙って捨てない。
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const SF_EDITABLE = {
+  /** 障壁 → 導入障壁 */
+  barrier:    { field: 'Issue_to_closewon__c',    max: 255 },
+  /** ニーズ → Indentify Pain(Needs) */
+  need:       { field: 'Indentify_Pain_Needs__c', max: 1000 },
+  /** ネクストアクション → Next Action */
+  nextAction: { field: 'Next_Action__c',          max: 255 },
+} as const;
+
+export type SfEditableKey = keyof typeof SF_EDITABLE;
+export const SF_EDITABLE_KEYS = Object.keys(SF_EDITABLE) as SfEditableKey[];
+
+export const SF_EDITABLE_JP: Record<SfEditableKey, string> = {
+  barrier: '障壁', need: 'ニーズ', nextAction: 'ネクストアクション',
+};
+
+/** Salesforce へ送る形に整える。上限を超えたら切って、切った項目を返す */
+export function toSfPatch(
+  v: Partial<Record<SfEditableKey, string | null>>,
+): { patch: Record<string, string | null>; truncated: SfEditableKey[] } {
+  const patch: Record<string, string | null> = {};
+  const truncated: SfEditableKey[] = [];
+  for (const k of SF_EDITABLE_KEYS) {
+    if (!(k in v)) continue;
+    const raw = (v[k] ?? '').trim();
+    if (!raw) { patch[SF_EDITABLE[k].field] = null; continue; }
+    const max = SF_EDITABLE[k].max;
+    if (raw.length > max) truncated.push(k);
+    patch[SF_EDITABLE[k].field] = raw.slice(0, max);
+  }
+  return { patch, truncated };
+}
 
 export interface SfOpportunity {
   id: string;
@@ -175,6 +221,10 @@ export interface SfOpportunity {
   /** 初回契約終了日 */
   contractEnd: string | null;
   needs: string | null;
+  /** 導入障壁。ダッシュボードの barrier と双方向 */
+  barrier: string | null;
+  /** Next Action。ダッシュボードのネクストアクションと双方向 */
+  nextAction: string | null;
   lostDetail: string | null;
   isWon: boolean;
   isClosed: boolean;

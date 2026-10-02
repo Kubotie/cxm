@@ -187,6 +187,27 @@ async function sfSync(btn){
   setTimeout(()=>{ if(btn){ btn.disabled=false; btn.textContent=label; } SF_SYNC_BUSY=false; }, 2500);
 }
 
+let SF_DEAL_BUSY = false;
+async function sfDeal(btn, key, dir){
+  if(SF_DEAL_BUSY) return;
+  if(dir==='push' && !confirm('この商談の 障壁・ニーズ・ネクストアクション を Salesforce に書き込みます。\nSalesforce 側の文章は上書きされます。よろしいですか？')) return;
+  if(dir==='pull' && !confirm('Salesforce の 障壁・ニーズ・ネクストアクション を読み込みます。\nこの画面でまだ送れていない入力は捨てられます。よろしいですか？')) return;
+  SF_DEAL_BUSY = true;
+  const label = btn.textContent; btn.disabled = true;
+  btn.textContent = dir==='push' ? '送信中…' : '読み込み中…';
+  try{
+    const res = dir==='push'
+      ? await fetch('/api/ptai/sf-deal', {method:'POST', credentials:'same-origin',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({key})})
+      : await fetch('/api/ptai/sf-deal?key='+encodeURIComponent(key), {credentials:'same-origin'});
+    const j = await res.json().catch(()=>({}));
+    btn.textContent = (res.ok && j.ok)
+      ? (j.message || (dir==='push' ? 'Salesforce に送りました' : '読み込みました'))
+      : (j.message || 'できませんでした');
+  }catch(_){ btn.textContent = 'できませんでした'; }
+  setTimeout(()=>{ btn.disabled=false; btn.textContent=label; SF_DEAL_BUSY=false; }, 2500);
+}
+
 /* 【移植による変更 4/4】Salesforce への導線（2026-10-01）
    見積もり・金額は Salesforce でしか入力できないので、そこへ飛ぶ。
    鍵は Notion 顧客管理DB の「Salesforce Account ID」列（d.sfid）。
@@ -226,7 +247,7 @@ function buildDeal(c,i){
     deals.push({key:x.key, primary:false, oid:null, name:x.name||('Ptengine AI - '+coShort(c.n)), ph: PHASES.includes(phN(x.phase))?phN(x.phase):'INACTIVE', est:false,
       apply:x.applyDate||null, bill:x.billingDate||null, close: x.billingDate?x.billingDate.slice(0,7):(x.closeMonth||null), add:x.addMrr||0,
       term:x.term||null, bs:null, br:x.barrier||null, need:x.need||'', na:x.na||'', naDate:x.naDate||null, log: Array.isArray(x.log)?x.log:[], ms:msN(x.ms), msBase:x.msBase||'apply', pe: x.pendingEdit||null, pdel: x.pendingDelete||null, steps: Array.isArray(x.steps)?x.steps:[],
-      up:(x.updatedAt||'').slice(0,10)||null, raw:x, src:{add:'edit',close:'edit',apply:'edit'}, pending: PHASES.includes(phN(x.pendingPhase))?phN(x.pendingPhase):null});
+      up:(x.updatedAt||'').slice(0,10)||null, raw:x, src:{add:'edit',close:'edit',apply:'edit'}, sfPending:x.sfPending||null, pending: PHASES.includes(phN(x.pendingPhase))?phN(x.pendingPhase):null});
   });
   d.deals = deals;
   if(deals.length>1 || (deals.length===1 && !deals[0].primary)){
@@ -1585,6 +1606,9 @@ document.getElementById('dBody').addEventListener('click',e=>{
   if(openId===null) return;
   /* 【移植による変更 6/6】Salesforce 取り込みボタン。商談カードを開く処理より先に捕まえる */
   const sf=e.target.closest('[data-sfsync]'); if(sf){ e.stopPropagation(); sfSync(sf); return; }
+  const sp=e.target.closest('[data-sfpull],[data-sfpush]');
+  if(sp){ e.stopPropagation(); e.preventDefault();
+    sfDeal(sp, sp.dataset.sfpull||sp.dataset.sfpush, sp.dataset.sfpush?'push':'pull'); return; }
   const t=e.target.closest('[data-dopen],[data-dnew]'); if(!t) return; if(e.target.closest('select,input,.phc,[data-ph],button:not([data-dnew])')&&!e.target.closest('[data-dnew]')) return;
   editDeal = t.dataset.dnew!==undefined ? 'new' : t.dataset.dopen; dTab='edit'; renderDrawer();
 });
@@ -1876,7 +1900,10 @@ function editForm(d){
   const head = (y,open,no) => `<button type="button" class="dhead" data-dsel="${esc(y.key)}" aria-expanded="${open}"><span class="dcar" aria-hidden="true">${open?'▾':'▸'}</span>${no?`<span class="dno num">商談${no}</span>`:'<span></span>'}<span class="dh-n" title="${esc(y.name)}">${esc(y.name.replace(/^Ptengine AI\s*[-－]\s*/,''))}</span><span class="chip ph" style="background:var(${PCOL[y.ph]});${y.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[y.ph]}</span>${(y.pending&&y.pending!==y.ph)||y.pe||y.pdel?'<span class="chip estm">承認待ち</span>':''}<span class="dh-m"><small>追加MRR</small><b class="num">${y.add?man(y.add):'—'}</b></span><span class="dh-m"><small>申込</small><b class="num">${y.apply?mdj(y.apply):'—'}</b></span><span class="dh-m"><small>課金</small><b class="num">${y.close?y.close.replace('-','/'):'—'}</b></span></button>`;
   const dOrd = y => y.ph==='CLOSED_WON'?1:y.ph==='CLOSED_LOST'?2:0;
   const nAct=d.deals.filter(y=>!dOrd(y)).length, nWon=d.deals.filter(y=>dOrd(y)===1).length, nLost=d.deals.filter(y=>dOrd(y)===2).length;
-  const dcount = d.deals.length>1 ? `<div class="dcount"><span>商談 <b class="num">${d.deals.length}</b>件</span>${nAct?`<span class="c act">進行中 ${nAct}</span>`:''}${nWon?`<span class="c won">受注 ${nWon}</span>`:''}${nLost?`<span class="c lost">失注 ${nLost}</span>`:''}</div>` : '';
+  /* 【移植による変更 9/9】商談の上＝新しい商談を Salesforce から読み込む */
+  const sfTop = `<div class="dcount sftop"><span class="sfd-n">商談そのものは Salesforce が正本です（1 時間おきに自動で入ります）</span>
+    <button type="button" class="adddeal" data-sfsync title="Salesforce の PtAI 商談をいますぐ取り込みます">⟳ 新しい商談を Salesforce から読み込む</button></div>`;
+  const dcount = sfTop + (d.deals.length>1 ? `<div class="dcount"><span>商談 <b class="num">${d.deals.length}</b>件</span>${nAct?`<span class="c act">進行中 ${nAct}</span>`:''}${nWon?`<span class="c won">受注 ${nWon}</span>`:''}${nLost?`<span class="c lost">失注 ${nLost}</span>`:''}</div>` : '');
   const dealList = dcount + d.deals.slice().sort((a,b)=>dOrd(a)-dOrd(b)).map((y,di)=>`<div class="dcard ${y.key===key&&isOpen?'open':''} ${['','won','lost'][dOrd(y)]}" style="--pc:var(${PCOL[y.ph]})">${head(y, y.key===key&&isOpen, d.deals.length>1?di+1:0)}${dealSum(d,y)}${y.key===key&&isOpen?FIELDS:''}</div>`).join('')
     ;   /* 【移植による変更 9/9】「商談を追加」の見出しは出さない（商談は Salesforce で作る） */
   const legend = isNew ? '新しい商談' : isMain ? (d.oid?esc(d.opp.raw):'Twenty に未作成（同期時に作成）') : 'ダッシュボードで追加（同期時に Opportunity を作成）';
@@ -1885,6 +1912,16 @@ function editForm(d){
    <fieldset><legend>商談（Opportunity）に保存 <span class="sub">${legend}</span></legend>
 ${dealList}
    </fieldset>
+   ${(() => {
+      const y = d.deals.find(z => z.key === key);
+      if(!y || !String(y.key).startsWith('sf:')) return '';
+      /* 【移植による変更 9/9】商談の中の Salesforce 連携。
+         障壁・ニーズ・ネクストアクションだけが対象。金額・フェーズ・日付は Salesforce でしか直せない */
+      return `<div class="sfdeal"><span class="sfd-l">障壁・ニーズ・ネクストアクション</span>
+        <span class="sfd-n">保存すると Salesforce にも書き込みます${y.sfPending?'<b class="sfd-w">・未送信あり</b>':''}</span>
+        <button type="button" class="adddeal" data-sfpull="${esc(y.key)}">⟳ Salesforce から読み込む</button>
+        <button type="button" class="adddeal" data-sfpush="${esc(y.key)}">↗ Salesforce へ送信</button></div>`;
+    })()}
    <div class="edact"><span class="sub" id="efMsg" role="status">${d.edit?'最終入力 '+new Date(d.edit.updatedAt).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):''}</span>
     <button type="submit" class="btn" id="efSave">${isNew?'商談を追加':'保存'}</button></div>
   </form>`;

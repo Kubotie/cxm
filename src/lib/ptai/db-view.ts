@@ -101,6 +101,8 @@ function toEditDeal(row: Record<string, unknown>, key: string) {
     pendingEdit: row.pendingEdit ?? null,
     pendingDelete: row.pendingDelete ?? null,
     approvedAt:  str(row.approvedAt) || null,
+    // Salesforce へ送れていない項目。画面に「未送信あり」を出すのに使う
+    sfPending:   str(row.sfPending) || null,
     updatedAt:   str(row.updatedAt) || null,
   });
 }

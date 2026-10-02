@@ -31,6 +31,8 @@ import { getCustomer, updateCustomerWithExtras, listTargetRows, updateTargetRow 
 import { OWNER_FROM_NOTION } from './notion/schema';
 import { assertStageChangeAllowed, APPROVER_REQUIRED_MESSAGE } from './edit-guard';
 import { actorStampFor, type ActorStamp } from './staff';
+import { pushOpportunityFields } from './salesforce/client';
+import { SF_EDITABLE_KEYS } from './salesforce/schema';
 import type { PtaiIdentity } from './approver';
 
 const OPP  = TEST_OBJECTS.opportunity;
@@ -181,16 +183,28 @@ async function writeEdits(
         { filter: `externalId[eq]:${key}`, pageSize: 2, maxRecords: 2 });
       if (!hit.length) continue;            // Salesforce 側から消えた商談。作り直さない
       const oppId = str(hit[0].id);
+      const v = {
+        barrier:    str(x.barrier) || null,
+        need:       str(x.need) || null,
+        nextAction: str(x.na) || null,
+      };
+      // 保存と同時に Salesforce へ送る（2026-10-02 の決定「送信（編集時）」）。
+      // 送れたら sfPending は空、送れなかったらその項目名を残して
+      // **毎時の取り込みで上書きされないようにする**。
+      const push = await pushOpportunityFields(key.slice(3), v);
       await updateRecord(OPP.plural, OPP.singular, oppId, {
-        barrier:  str(x.barrier) || null,
-        need:     str(x.need) || null,
+        barrier:  v.barrier,
+        need:     v.need,
         msBase:   str(x.msBase) === 'bill' ? 'bill' : 'apply',
         msTrial:  str(rec(x.ms).TRIAL) || null,
         msQuote:  str(rec(x.ms).QUOTE) || null,
         msVerbal: str(rec(x.ms).VERBAL_COMMIT) || null,
+        sfPending: push.ok ? null : SF_EDITABLE_KEYS.join(','),
         updatedByName2: who.name2,
       });
       changes.opportunity++;
+      if (!push.ok) changes.sfFailed = (changes.sfFailed ?? 0) + 1;
+      if (push.truncated.length) changes.sfTruncated = (changes.sfTruncated ?? 0) + push.truncated.length;
       await writeNextAction(key, cid, oppId, x, owner, who, changes);
       continue;
     }

@@ -17,10 +17,16 @@ import { TEST_OBJECTS } from '../twenty-test/schema';
 import { listCustomers } from '../notion/client';
 import { OWNER_FROM_NOTION } from '../notion/schema';
 import { listPtaiOpportunities, isSalesforceConfigured } from './client';
-import { SF_TO_DASHBOARD_STAGE } from './schema';
+import { SF_TO_DASHBOARD_STAGE, SF_EDITABLE_KEYS, type SfEditableKey } from './schema';
 import type { ActorStamp } from '../staff';
 
 const OPP = TEST_OBJECTS.opportunity;
+const ACT = TEST_OBJECTS.action;
+
+/** `sfPending` の読み書き。カンマ区切りの素朴な持ち方 */
+const parsePending = (v: unknown): Set<SfEditableKey> =>
+  new Set(String(v ?? '').split(',').map(x => x.trim())
+    .filter((x): x is SfEditableKey => (SF_EDITABLE_KEYS as string[]).includes(x)));
 
 /** 同期で作ったレコードの印。画面で作ったものと混ざらないようにする */
 export const SF_EXTERNAL_PREFIX = 'sf:';
@@ -98,6 +104,18 @@ export async function syncSalesforceOpportunities(
     if (c.sfAccountId) cidByAccount.set(c.sfAccountId, { cid: c.pageId, owners: c.owners3 });
   }
 
+  // 送信できていない項目がある商談は、その項目だけ上書きしない。
+  // 先に 1 回だけ全件引いて控えておく（商談ごとに引くと件数ぶん往復する）
+  const pendingByExt = new Map<string, Set<SfEditableKey>>();
+  const idByExt      = new Map<string, string>();
+  for (const row of await listRecords(OPP.plural, OPP.singular, { pageSize: 200, maxRecords: 2000 })) {
+    const ext = String(row.externalId ?? '');
+    if (!ext.startsWith(SF_EXTERNAL_PREFIX)) continue;
+    idByExt.set(ext, String(row.id));
+    const p = parsePending(row.sfPending);
+    if (p.size) pendingByExt.set(ext, p);
+  }
+
   const r: SyncResult = { ...EMPTY, ok: true, fetched: opps.length };
   const seen = new Set<string>();
 
@@ -109,6 +127,7 @@ export async function syncSalesforceOpportunities(
     const ext = `${SF_EXTERNAL_PREFIX}${o.id}`;
     seen.add(ext);
     if (dryRun) continue;
+    const pend = pendingByExt.get(ext) ?? new Set<SfEditableKey>();
 
     const res = await upsertByExternalId(OPP.plural, OPP.singular, ext, {
       name:            o.name,
@@ -121,10 +140,11 @@ export async function syncSalesforceOpportunities(
       // 「課金開始日」は Salesforce の Payment_Day__c
       billingDate:     o.billingDate,
       termMonths:      o.termMonths,
-      // ⚠ need（ニーズ）・barrier（障壁）・ネクストアクションは**画面が正**
-      //   （2026-10-01 の決定）。Salesforce が空のときに上書きすると、
-      //   毎時の同期で入力が消える。値があるときだけ写す。
-      ...(o.needs ? { need: o.needs } : {}),
+      // ⚠ 障壁・ニーズ・ネクストアクションは **Salesforce が正**（2026-10-02 Kubotie）。
+      //   画面で直したぶんは保存と同時に Salesforce へ送っているので、ここで
+      //   上書きしてよい。送れていない項目（sfPending）だけ手を付けない。
+      ...(pend.has('need')    ? {} : { need:    o.needs }),
+      ...(pend.has('barrier') ? {} : { barrier: o.barrier }),
       lostDetail:      o.lostDetail,
       // 担当は Notion の担当3（Salesforce の OwnerId は社内ユーザーで体系が別）
       owner:           ownerOf(hit.owners),
@@ -132,6 +152,11 @@ export async function syncSalesforceOpportunities(
       isMain:          false,
     }, actor);
     res.created ? r.created++ : r.updated++;
+
+    // ネクストアクションは別レコード（testAction）。Salesforce の Next Action を写す
+    if (!pend.has('nextAction')) {
+      await syncNextAction(String(res.record.id), ext, hit.cid, o.nextAction, actor);
+    }
   }
 
   // Salesforce から消えた（または PtAI でなくなった）ぶんを片付ける。
@@ -150,6 +175,26 @@ export async function syncSalesforceOpportunities(
     r.message = `${r.skippedNoCompany} 件は取引先が Notion 顧客管理DB に見つからず取り込めませんでした`;
   }
   return r;
+}
+
+/**
+ * Salesforce の Next Action を testAction（kind=NEXT_ACTION）に写す。
+ * 空になったら消す。期日は Salesforce 側に項目が無いので触らない。
+ */
+async function syncNextAction(
+  oppId: string, ext: string, cid: string, text: string | null, actor: ActorStamp,
+): Promise<void> {
+  const naExt = `${ext}:na`;
+  const found = await listRecords(ACT.plural, ACT.singular,
+    { filter: `externalId[eq]:${naExt}`, pageSize: 2, maxRecords: 2 });
+  if (text) {
+    await upsertByExternalId(ACT.plural, ACT.singular, naExt, {
+      name: text, notionCompanyId: cid, opportunityId: oppId,
+      kind: 'NEXT_ACTION', title: text, status: 'OPEN', source: 'ui',
+    }, actor);
+  } else {
+    for (const a of found) await deleteRecord(ACT.plural, String(a.id));
+  }
 }
 
 function ownerOf(owners3: string[]): string | null {

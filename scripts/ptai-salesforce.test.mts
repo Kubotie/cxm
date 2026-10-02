@@ -128,3 +128,59 @@ test('Salesforce の Id は 18 桁（URL に出る形）で持つ', async () => 
     assert.match(id, /^006[A-Za-z0-9]{15}$/, `${id} が Opportunity の 18 桁 Id ではない`);
   }
 });
+
+// ── Salesforce へ書き戻す 3 項目（2026-10-02）────────────────────────────────
+//
+// 金額・フェーズ・日付を**間違って送らない**ことが肝心なので、
+// 送れる項目をここで固定しておく。
+
+test('書き戻せるのは 障壁・ニーズ・ネクストアクション の 3 つだけ', async () => {
+  const { SF_EDITABLE, SF_EDITABLE_KEYS } = await import('../src/lib/ptai/salesforce/schema.ts');
+  assert.deepEqual([...SF_EDITABLE_KEYS].sort(), ['barrier', 'need', 'nextAction']);
+  assert.equal(SF_EDITABLE.barrier.field,    'Issue_to_closewon__c');
+  assert.equal(SF_EDITABLE.need.field,       'Indentify_Pain_Needs__c');
+  assert.equal(SF_EDITABLE.nextAction.field, 'Next_Action__c');
+});
+
+test('金額・フェーズ・日付は送らない', async () => {
+  const { toSfPatch } = await import('../src/lib/ptai/salesforce/schema.ts');
+  const { patch } = toSfPatch({ barrier: 'あ', need: null,
+    // @ts-expect-error 渡しても無視されることを確かめる
+    Amount: 100, StageName: 'Won', CloseDate: '2026-12-31' } as never);
+  assert.deepEqual(Object.keys(patch).sort(), ['Indentify_Pain_Needs__c', 'Issue_to_closewon__c']);
+});
+
+test('渡さなかった項目は patch に入らない（空で上書きしない）', async () => {
+  const { toSfPatch } = await import('../src/lib/ptai/salesforce/schema.ts');
+  const { patch } = toSfPatch({ barrier: 'あ' });
+  assert.deepEqual(Object.keys(patch), ['Issue_to_closewon__c']);
+});
+
+test('空文字は null で送る（消したいときは消せる）', async () => {
+  const { toSfPatch } = await import('../src/lib/ptai/salesforce/schema.ts');
+  assert.equal(toSfPatch({ need: '' }).patch.Indentify_Pain_Needs__c, null);
+  assert.equal(toSfPatch({ need: '   ' }).patch.Indentify_Pain_Needs__c, null);
+});
+
+test('上限を超えたら切って、切った項目を返す', async () => {
+  const { toSfPatch, SF_EDITABLE } = await import('../src/lib/ptai/salesforce/schema.ts');
+  // 導入障壁は 255 文字（2026-10-02 実測）
+  const { patch, truncated } = toSfPatch({ barrier: 'あ'.repeat(300) });
+  assert.equal(String(patch.Issue_to_closewon__c).length, SF_EDITABLE.barrier.max);
+  assert.deepEqual(truncated, ['barrier']);
+});
+
+test('上限ちょうどは切らない', async () => {
+  const { toSfPatch, SF_EDITABLE } = await import('../src/lib/ptai/salesforce/schema.ts');
+  const { truncated } = toSfPatch({ need: 'あ'.repeat(SF_EDITABLE.need.max) });
+  assert.deepEqual(truncated, []);
+});
+
+test('読み取る項目に書き戻す 3 項目が入っている（入れ忘れると取り込めない）', async () => {
+  const { SF_OPPORTUNITY_FIELDS, SF_EDITABLE, SF_EDITABLE_KEYS } =
+    await import('../src/lib/ptai/salesforce/schema.ts');
+  for (const k of SF_EDITABLE_KEYS) {
+    assert.ok((SF_OPPORTUNITY_FIELDS as readonly string[]).includes(SF_EDITABLE[k].field),
+      `${SF_EDITABLE[k].field} が SELECT に無い`);
+  }
+});

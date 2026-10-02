@@ -110,6 +110,9 @@ const SCHEMA = [
       ['approvedAt',      'DATE_TIME', '承認日時'],
       ['approvedBy',      'TEXT',      '承認者'],
       ['owner',           'TEXT',      '担当'],
+      // Salesforce へまだ送れていない項目（カンマ区切り。barrier / need / nextAction）。
+      // 送信が失敗したときだけ残る。毎時の取り込みはここに載っている項目を上書きしない
+      ['sfPending',       'TEXT',      'Salesforce 未送信の項目'],
       ['updatedByName2', 'TEXT', '最終更新者（PtAI の操作者）'],
       ['externalId',      'TEXT',      '移行元のID'],
     ],

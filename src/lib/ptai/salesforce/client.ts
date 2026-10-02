@@ -14,8 +14,8 @@
 
 import { sfFetch, SF_API_BASE, isSalesforceConfigured } from '@/lib/salesforce/client';
 import {
-  SF_OPPORTUNITY_FIELDS, ptaiNameFilter, sfProbability,
-  type SfOpportunity,
+  SF_OPPORTUNITY_FIELDS, ptaiNameFilter, sfProbability, toSfPatch,
+  type SfOpportunity, type SfEditableKey,
 } from './schema';
 
 export { isSalesforceConfigured };
@@ -58,6 +58,8 @@ function toOpportunity(r: Record<string, unknown>): SfOpportunity {
     billingDate: str(r.Payment_Day__c),
     contractEnd: str(r.First_Order_End_Date__c),
     needs:      str(r.Indentify_Pain_Needs__c),
+    barrier:    str(r.Issue_to_closewon__c),
+    nextAction: str(r.Next_Action__c),
     lostDetail: str(r.Dead_Detail_Reason__c),
     isWon:      r.IsWon === true,
     isClosed:   r.IsClosed === true,
@@ -95,6 +97,53 @@ export async function listPtaiOpportunities(accountIds?: string[]): Promise<SfOp
     `SELECT ${SF_OPPORTUNITY_FIELDS.join(', ')} FROM Opportunity
      WHERE ${where.join(' AND ')} ORDER BY LastModifiedDate DESC`.replace(/\s+/g, ' '));
   return rows.map(toOpportunity);
+}
+
+/** 商談 1 件だけ引き直す（商談内の「SF から読み込む」で使う） */
+export async function getPtaiOpportunity(id: string): Promise<SfOpportunity | null> {
+  if (!/^006[A-Za-z0-9]{12,15}$/.test(id)) return null;
+  const rows = await queryAll<Record<string, unknown>>(
+    `SELECT ${SF_OPPORTUNITY_FIELDS.join(', ')} FROM Opportunity WHERE Id = '${id}'`
+      .replace(/\s+/g, ' '));
+  return rows.length ? toOpportunity(rows[0]) : null;
+}
+
+// ── 書き込み（双方向にした 3 項目だけ）──────────────────────────────────────
+//
+// ═══════════════════════════════════════════════════════════════════════════
+//  **ここだけが Salesforce へ書く唯一の経路。**
+//  書けるのは 障壁・ニーズ・ネクストアクション の 3 項目だけ。
+//  金額・フェーズ・日付は Salesforce 側でしか直せない（2026-10-01 の決定）ので、
+//  間違って送らないよう toSfPatch が項目名を固定している。
+//
+//  ⚠ 相手は本番の Salesforce。営業が書いた文章を上書きする操作なので、
+//     呼び出し側（API）で操作者を確かめ、画面側で確認を取ってから呼ぶこと。
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface SfPushResult {
+  ok: boolean;
+  /** 上限を超えて切った項目 */
+  truncated: SfEditableKey[];
+  message: string | null;
+}
+
+export async function pushOpportunityFields(
+  id: string, v: Partial<Record<SfEditableKey, string | null>>,
+): Promise<SfPushResult> {
+  if (!isSalesforceConfigured()) return { ok: false, truncated: [], message: 'Salesforce が未設定です' };
+  if (!/^006[A-Za-z0-9]{12,15}$/.test(id)) return { ok: false, truncated: [], message: '商談 ID の形が違います' };
+
+  const { patch, truncated } = toSfPatch(v);
+  if (!Object.keys(patch).length) return { ok: true, truncated: [], message: null };
+
+  try {
+    // Salesforce の更新は 204 No Content を返す
+    await sfFetch('PATCH', `${SF_API_BASE}/sobjects/Opportunity/${id}`, patch);
+    return { ok: true, truncated, message: null };
+  } catch (e) {
+    // 本文は載せない（顧客の文章が入りうる）
+    return { ok: false, truncated, message: `Salesforce に書けませんでした（${(e as Error).name}）` };
+  }
 }
 
 /** 画面の診断用。件数だけを返す */
