@@ -616,8 +616,8 @@ function renderKpis(){
   const mismatch=cnt(ds,d=>mismatchOf(d));
   const stage=CONFIG.stages.filter(s=>w>=s.at).length; const next=CONFIG.stages[Math.min(stage,3)];
 
-  /* ═══ 【移植による変更 9/9】積み上げカード（2026-10-01 Kubotie 指示）═════
-     計画      ＝ ①（目標）追加MRR の合算
+  /* ═══ 【移植による変更 9/9】積み上げカード（2026-10-01、アーティファクト v2 から移植）═════
+     計画      ＝ 期初MRR（既契約）＋ 追加分（planOf を参照。2026-10-02 に合算MRR の基準へ変更）
      確定      ＝ 受注した商談の金額（Won ＋ 受注(Closed Won)）
      コミット  ＝ Probable 以上の商談の金額
      チャレンジ＝ Qualified Champion 以上の商談の金額
@@ -632,7 +632,7 @@ function renderKpis(){
        4 枚とも**商談の金額**を土台に揃えてある（確定だけ別物にしない）。    */
   const wt = d => view==='team' ? 1 : share(d, view);
   const sumW = f => ds.reduce((t,d)=>t+f(d)*wt(d),0);
-  const plan   = sumW(d=>aimOf(d)||0),  planN = cnt(ds,d=>aimOf(d)>0);
+  const plan   = sumW(d=>{ const p=planOf(d); return p?p.base+p.add:0; }),  planN = cnt(ds,d=>!!planOf(d));
   const wonV   = sumW(wonAmt),          wonN  = cnt(ds,d=>wonAmt(d)>0);
   const cmt    = sumW(d=>atLeast(d,'PROBABLE')),           cmtN = cnt(ds,d=>atLeast(d,'PROBABLE')>0);
   const chal   = sumW(d=>atLeast(d,'QUALIFIED_CHAMPION')), chalN= cnt(ds,d=>atLeast(d,'QUALIFIED_CHAMPION')>0);
@@ -652,7 +652,7 @@ function renderKpis(){
 
   document.getElementById('kpis').innerHTML=`
    <div class="card kpi hero"><div class="label">目標 合算MRR <span class="qi rq" data-tip="${esc(rulesHtml())}" tabindex="0" aria-label="計上ルール">?</span></div><div class="val num">${tgt?man(tgt):'—'}<small>円</small></div><div class="foot">${view==='team'?(allocGap()>0?'<b style="color:var(--plane)">⚠ 配分不足 '+man(allocGap())+'</b>':'期限 '+CONFIG.targetDue):tgt?'全体の '+Math.round(tgt/CONFIG.targetMrr*100)+'%':'目標配分なし'}</div><button type="button" class="editbtn" data-edit>目標を編集</button></div>
-   ${lcard('plan','計画','（目標）追加MRR の合算','<b>計画（目標を全部取ったら）</b>担当者が会社ごとに入れた ①（目標）追加MRR の合計です。現在MRR は足しません。<br>いまの計画で目標に届くかを見る値です。', plan, planN)}
+   ${lcard('plan','計画','既契約＋追加MRR','<b>計画（目標を全部取ったら）</b>会社ごとに 期初MRR（既契約）＋ 追加分 を足した合計です。追加分は ①（目標）追加MRR と受注した商談の金額の大きい方で、10万円以上の会社だけ数えます。<br>目標と同じ合算MRR の基準で、いまの計画で目標に届くかを見る値です。', plan, planN)}
    ${kpiCard('var(--p5)','期待値（参考）', `<b>期待値（参考）</b>③（見込）追加MRR の合計。商談ごとに 金額 × フェーズの係数（Goal Shared 30% / Qualified Champion 50% / Evaluating 70% / Probable 90% / Verbal 90% / Won 100%）を足したものです。<br>商談の金額を入力済み：${cnt(ds,d=>m2(d)>0)}社`, man(exv), '円', tgt?`目標の ${pc(exv)}%`:'')}
    ${kpiCard('var(--crit)','ネクストアクション期限超過', `<b>ネクストアクション期限超過</b>商談のネクストアクションで、期日が過ぎている件数。サクセスの Todo は含みません。<br>商談中でネクストアクションが未入力：${noNa}社`, overdue, '件', noNa?`未入力 ${noNa}社`:'', overdue?'var(--crit)':'')}
    ${lcard('won','確定','受注した商談', `<b>確定</b>フェーズが Won・受注 (Closed Won) の商談の金額の合計。すでに現在MRR に入っているぶんです。${view==='team'?`<br>次のステージ（支給率 ${next.rate}）まで ${man(Math.max(0,next.at-w))}円`:''}`, wonV, wonN)}
@@ -871,7 +871,7 @@ function renderDeals(){
   const fo=document.getElementById('fOwner').value, fp=document.getElementById('fPhase').value, fs=document.getElementById('fStatus').value, ft=document.getElementById('fTier').value, q=document.getElementById('fQ').value.trim();
   const base = view==='team'?DEALS:DEALS.filter(d=>d.owners.includes(view));
   let ds=base.filter(d=>(!FS.owner.size||d.owners.some(o=>FS.owner.has(o)))&&(!FS.phase.size||FS.phase.has(d.ph))&&(!fs||d.ps===fs)&&(!FS.tier.size||FS.tier.has(d.t))&&(!q||d.n.includes(q))&&(!missingOnly||(!baseMo(d)||!d.add)&&d.ph!=='CLOSED_LOST'));
-  const key={co:d=>d.n,o:d=>d.owners.join(),t:d=>d.t||'Z',ps:d=>PS.indexOf(d.ps),st:d=>PHASES.indexOf(d.ph),m:d=>d.m,add:d=>d.add,aim:d=>{const g=goalAdd(d);return g?(d.m+g)*goalCtx().w(d)+1e12:aimOf(d);},tot:total,cl:d=>d.close||'9999',ap:d=>d.apply||'9999',br:d=>(d.bs?BS_OPTS.indexOf(d.bs):9)+(d.br||'~'),pr:d=>PROB[d.ph],exp:expected,add3:d=>m3(d),ind:d=>d.ind||'',pot:d=>(potOf(d)||{prio:-1}).prio,nd:d=>d.nd||'9999',le:d=>d.le}[sortKey];
+  const key={co:d=>d.n,o:d=>d.owners.join(),t:d=>d.t||'Z',ps:d=>PS.indexOf(d.ps),st:d=>PHASES.indexOf(d.ph),m:d=>d.m,add:d=>d.add,aim:d=>{const p=planOf(d);return p?(p.base+p.add)*goalCtx().w(d)+1e12:aimOf(d);},tot:total,cl:d=>d.close||'9999',ap:d=>d.apply||'9999',br:d=>(d.bs?BS_OPTS.indexOf(d.bs):9)+(d.br||'~'),pr:d=>PROB[d.ph],exp:expected,add3:d=>m3(d),ind:d=>d.ind||'',pot:d=>(potOf(d)||{prio:-1}).prio,nd:d=>d.nd||'9999',le:d=>d.le}[sortKey];
   ds.sort((x,y)=>{const a=key(x),b=key(y);return (a>b?1:a<b?-1:0)*sortDir;});
   const th=(k,l,r,t,tp)=>`<th class="${r?'r':''}" data-k="${k}" ${t?`title="${t}"`:''} ${tp?`data-tip="${esc(tp)}"`:''} ${sortKey===k?`aria-sort="${sortDir>0?'ascending':'descending'}"`:''}>${l}${sortKey===k?(sortDir>0?' ▲':' ▼'):''}</th>`;
   const head=`<thead><tr>${th('co','企業／商談')}${th('o','担当')}${th('t','Tier')}${th('st','フェーズ')}${th('m','⑥ 現在MRR',1,'','毎朝 8 時に Company Database（Salesforce 連動）から同期した額。かっこ内は期初MRR からの増減')}${th('aim','① （目標）追加MRR',1,'この会社で追加したいMRR。クリックで入力')}${th('add','② （商談）追加MRR',1,'商談の金額の合計（失注・Admin Close は除く）')}${th('add3','③ （見込）追加MRR',1,'② を商談ごとに フェーズの係数 で割り引いた額')}${th('ap','申込完了日')}${th('cl','課金開始日')}${th('br','商談障壁')}${th('ind','業種')}${th('pot','ポテンシャル <span class="qi">?</span>',0,'',POT_HEAD_TIP)}<th>ニーズ</th><th>ネクストアクション</th>${th('nd','アクション期日')}${th('le','更新日')}</tr></thead>`;
@@ -882,7 +882,7 @@ function renderDeals(){
   const fillBtn=(d,x)=>`<button type="button" class="fill" data-fill="${d.id}" data-dk="${x?x.key:'new'}">＋入力</button>`;
   const dateCell=(v,late,yr)=>`<span class="${late?'late':''}">${v}</span>${yr}`;
   let gHit=null; { const {tgt,w}=goalCtx();
-  if(sortKey==='aim'&&sortDir<0&&tgt){ let c=0; for(const d of all){ const g=goalAdd(d); if(d.ph==='CLOSED_LOST'||!g) continue; c+=(d.m+g)*w(d); if(c>=tgt){ gHit=d.id; break; } } } }
+  if(sortKey==='aim'&&sortDir<0&&tgt){ let c=0; for(const d of all){ const p=planOf(d); if(!p) continue; c+=(p.base+p.add)*w(d); if(c>=tgt){ gHit=d.id; break; } } } }
   const rows=ds.map(d=>{const late=d.nd&&d.nd<dstr(TODAY), soon=d.nd&&!late&&days(ymd(d.nd),TODAY)<=7;
     const nD=d.deals.length, open=nD>0&&EXPANDED.has(d.cid);
     const par=`<tr data-id="${d.id}" class="par${open?' open':''}">
@@ -1382,14 +1382,16 @@ document.addEventListener('mousemove',e=>{const t=e.target.closest('[data-tip]')
 
 /* ===================== 目標の積み上げ ===================== */
 const aimOf = d => { const e=EDITS[d.cid]; return (e&&e.company&&+e.company.aim)||0; };
-const goalAdd = d => Math.max(d.add>=AI_MIN?d.add:0, aimOf(d)>=AI_MIN?aimOf(d):0);   // 目標に数える追加分（商談の追加MRR か 狙い の大きい方）
-/* ═══ 【移植による変更 9/9】KPI の「計画」カードと同じ数にする（2026-10-02）═══
-   以前は
-     ・対象が 担当フィルタ（FS.owner）… KPI は view だけを見る
-     ・金額が 現在MRR ＋ goalAdd（10万円の足切りつき）… KPI は ①の合算
-   と二重にずれていて、同じ「計画」なのに別の額が出ていた。
-   **どちらも ①（目標）追加MRR の合算**に揃える。内訳は商談の進み具合で割る
-   （契約済み＋商談中＋まだ商談なし ＝ 合計 になるよう、会社を 3 つに振り分ける）。 */
+/* ═══ 計画 ＝ 合算MRR の基準（2026-10-02 Utty フィードバック → Kubotie 判断）═══
+   目標 4,000万は「合算MRR（現在MRR＋追加MRR）」で決まっている。計画も同じ基準にする。
+     会社ごとの計画 ＝ 期初MRR（既契約）＋ 計画の追加分
+     計画の追加分   ＝ ①（目標）追加MRR と 受注した商談の金額 の大きい方（どちらも 10万円以上だけ）
+   ①を入れていなくても受注した会社は数える。追加分が 0 の会社は既契約ぶんも数えない
+   （計上ルールの「10万円未満の会社は合算MRR ごと数えない」と同じ）。
+   現在MRR ではなく期初MRR を足すのは、受注ぶんがすでに現在MRR に入っていて二重になるため。
+   KPI の「計画」カードと下の積み上げバーは、どちらもこの planOf を使う。 */
+const planOf = d => { const a=aimOf(d), wv=wonAmt(d), add=Math.max(a>=AI_MIN?a:0, wv>=AI_MIN?wv:0);
+  return add ? {base:baseMrrOf(d), add} : null; };
 function goalCtx(){
   // KPI カードと同じ土台。担当で絞り込んでも計画の数字は動かさない
   const tgt = view==='team' ? CONFIG.targetMrr : (CONFIG.targets[view]||0);
@@ -1397,26 +1399,27 @@ function goalCtx(){
   return {ms: view==='team'?null:[view], tgt, w};
 }
 function goalRows(){
-  const {tgt,w}=goalCtx(); let sW=0, sD=0, sA=0, n=0;
+  const {tgt,w}=goalCtx(); let sB=0, sW=0, sD=0, sA=0, n=0;
   scope().forEach(d=>{
     const k=w(d); if(!k) return;
-    const a=aimOf(d); if(!a) return;        // ①が入っている会社だけ数える
+    const p=planOf(d); if(!p) return;
     n++;
-    const v=a*k;
+    sB+=p.base*k;                            // 既契約（期初MRR）
+    const v=p.add*k;
     if(wonAmt(d)>0)                sW+=v;   // 受注した商談がある
     else if(openDealsOf(d).length) sD+=v;   // 商談はあるがまだ受注していない
     else                           sA+=v;   // まだ商談なし
   });
-  return {tgt,won:sW,deal:sD,aim:sA,n};
+  return {tgt,base:sB,won:sW,deal:sD,aim:sA,n};
 }
 function renderGoal(){
-  const G=goalRows(), tot=G.won+G.deal+G.aim, mx=Math.max(G.tgt,tot,1), x=v=>(v/mx*100).toFixed(2);
+  const G=goalRows(), tot=G.base+G.won+G.deal+G.aim, mx=Math.max(G.tgt,tot,1), x=v=>(v/mx*100).toFixed(2);
   const pct=G.tgt?Math.round(tot/G.tgt*100):0, gap=Math.max(0,G.tgt-tot);
   const ticks=[.25,.5,.75].map(r=>`<i class="tk" style="left:${x(G.tgt*r)}%"></i>`).join('');
   const el=document.getElementById('goalSum');
-  el.innerHTML=`<div class="ghead"><span class="gkind" data-tip="${esc('<b>計画の積み上げ</b>各社の ①（目標）追加MRR の合計です（実績ではありません）。上の「計画」カードと同じ数字で、内訳は商談の進み具合で分けています。現在MRR は足しません。')}">計画</span><span class="glab">目標の積み上げ</span><span class="gnow">${man(tot)}</span>${G.tgt?`<span class="gtgt">/ 目標 ${man(G.tgt)}</span><span class="gpct ${gap?'':'done'}">${pct}%</span><span class="ggap">${gap?`あと<b>${man(gap)}</b>`:'<b>目標に到達</b>'}</span>`:'<span class="gtgt">目標は未設定</span>'}</div>
-    <div class="gbar" role="img" aria-label="計画の積み上げ ${man(tot)}円（目標 ${man(G.tgt)}円）。内訳 契約済み ${man(G.won)}円・商談中 ${man(G.deal)}円・まだ商談なし ${man(G.aim)}円"><i class="g1" style="left:0;width:${x(G.won)}%"></i><i class="g2" style="left:${x(G.won)}%;width:${x(G.deal)}%"></i><i class="g3" style="left:${x(G.won+G.deal)}%;width:${x(G.aim)}%"></i>${ticks}</div>
-    <div class="gleg"><span class="gleg-l">内訳</span><span><i class="sw" style="background:var(--gold)"></i>契約済み <b>${man1(G.won)}</b></span><span><i class="sw" style="background:var(--accent)"></i>商談中 <b>${man1(G.deal)}</b></span><span><i class="sw" style="background:color-mix(in oklab,var(--accent) 40%,transparent)"></i>まだ商談なし <b>${man1(G.aim)}</b></span><span style="margin-left:auto">${G.n}社</span></div>`;
+  el.innerHTML=`<div class="ghead"><span class="gkind" data-tip="${esc('<b>計画の積み上げ</b>計画に入れた会社の「期初MRR（既契約）＋ 追加分」の合計です（実績ではありません）。追加分は ①（目標）追加MRR と受注した商談の金額の大きい方で、10万円以上の会社だけ数えます。上の「計画」カードと同じ数字で、追加分は商談の進み具合で分けています。')}">計画</span><span class="glab">目標の積み上げ</span><span class="gnow">${man(tot)}</span>${G.tgt?`<span class="gtgt">/ 目標 ${man(G.tgt)}</span><span class="gpct ${gap?'':'done'}">${pct}%</span><span class="ggap">${gap?`あと<b>${man(gap)}</b>`:'<b>目標に到達</b>'}</span>`:'<span class="gtgt">目標は未設定</span>'}</div>
+    <div class="gbar" role="img" aria-label="計画の積み上げ ${man(tot)}円（目標 ${man(G.tgt)}円）。内訳 既契約 ${man(G.base)}円・受注 ${man(G.won)}円・商談中 ${man(G.deal)}円・まだ商談なし ${man(G.aim)}円"><i class="g0" style="left:0;width:${x(G.base)}%"></i><i class="g1" style="left:${x(G.base)}%;width:${x(G.won)}%"></i><i class="g2" style="left:${x(G.base+G.won)}%;width:${x(G.deal)}%"></i><i class="g3" style="left:${x(G.base+G.won+G.deal)}%;width:${x(G.aim)}%"></i>${ticks}</div>
+    <div class="gleg"><span class="gleg-l">内訳</span><span><i class="sw" style="background:color-mix(in oklab,var(--ink) 35%,transparent)"></i>既契約（期初MRR） <b>${man1(G.base)}</b></span><span><i class="sw" style="background:var(--gold)"></i>受注 <b>${man1(G.won)}</b></span><span><i class="sw" style="background:var(--accent)"></i>商談中 <b>${man1(G.deal)}</b></span><span><i class="sw" style="background:color-mix(in oklab,var(--accent) 40%,transparent)"></i>まだ商談なし <b>${man1(G.aim)}</b></span><span style="margin-left:auto">${G.n}社</span></div>`;
   const go=()=>{ sortKey='aim'; sortDir=-1; renderDeals(); };
   el.onclick=go; el.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } };
 }

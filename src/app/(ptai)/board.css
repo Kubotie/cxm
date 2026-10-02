@@ -476,7 +476,7 @@ button.jgh:hover{background:color-mix(in oklab,var(--ink) 5%,transparent)}button
 .ghead .ggap b{font-size:15px;color:var(--ink);font-variant-numeric:tabular-nums;margin-left:4px}
 .gbar{position:relative;height:10px;border-radius:999px;background:color-mix(in oklab,var(--ink) 9%,transparent);overflow:hidden}
 .gbar i{position:absolute;top:0;bottom:0;display:block}
-.gbar .g1{background:var(--won)}.gbar .g2{background:var(--accent)}
+.gbar .g0{background:color-mix(in oklab,var(--ink) 35%,transparent)}.gbar .g1{background:var(--won)}.gbar .g2{background:var(--accent)}
 .gbar .g3{background:repeating-linear-gradient(135deg,color-mix(in oklab,var(--accent) 60%,transparent) 0 3px,color-mix(in oklab,var(--accent) 22%,transparent) 3px 6px)}
 .gbar .tk{width:1px;background:color-mix(in oklab,var(--surface) 80%,transparent)}
 .gleg{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--ink-2)}
