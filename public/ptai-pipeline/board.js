@@ -253,12 +253,27 @@ function buildDeal(c,i){
   d.crmNd = d.nd; d.crmNa = d.naHead;
   const e = d.edit; const eo = (e&&e.opp)||{}; const opp = d.opp;
   const deals = [];
-  if((opp && PHASES.includes(opp.st)) || DEAL_KEYS.some(k=>has(eo[k]))){   // 推定の商談は作らない。入力のあるものだけ
-    deals.push({key:'main', primary:true, oid:d.oid, name: eo.name||oppName(c,opp), ph:d.ph, est:d.phEst,
-      apply:d.apply, bill:d.bill, close:d.close, add:d.add||0, term:d.term, bs:null, br:d.br,
-      need: has(eo.need) ? eo.need : (opp&&opp.need||''), na: eo.na||'', naDate: eo.naDate||null, log: Array.isArray(eo.log)?eo.log:[], ms: msN(eo.ms), msBase: eo.msBase||'apply', pe: eo.pendingEdit||null, pdel: null, steps: Array.isArray(eo.steps)?eo.steps:[],
-      up: maxStr(opp&&opp.up, eo.updatedAt&&eo.updatedAt.slice(0,10)), src:d.src, pending: PHASES.includes(phN(eo.pendingPhase))?phN(eo.pendingPhase):null});
-  }
+  /* ═══ 【移植による変更 9/9】`main` 商談は作らない（2026-10-02 Kubotie）═══
+     RAW の `opp` は会社の商談を 1 本にまとめた**集計**で、商談そのものではない。
+     これを `main` として並べていたため、Salesforce の商談 1 件が
+       商談1「Ptengine AI - 〇〇」（集計）
+       商談2「【PTAI】〇〇_20261002」（本物）
+     の 2 件に見えていた。商談は Salesforce から来たものだけにする。
+
+     ⚠ 外すと `d.ph` と `d.add` の出どころが変わるが、下の積み上げ
+       （deals.length===1 && !primary でも走る）が商談から計算し直すので問題ない。
+     ⚠ `opp` 自体は残す。フェーズの初期値・案件ステージ・最終更新に使っている。 */
+  /* ═══ 【移植による変更 9/9】`main` 商談は作らない（2026-10-02 Kubotie）═══
+     RAW の `opp` は会社の商談を 1 本にまとめた**集計**で、商談そのものではない。
+     これを `main` として並べていたため、Salesforce の商談 1 件が
+       商談1「Ptengine AI - 〇〇」（集計）
+       商談2「【PTAI】〇〇_20261002」（本物）
+     の 2 件に見えていた。**商談は Salesforce から来たものだけ**にする。
+
+     ⚠ `d.ph` と `d.add` の出どころが変わるが、下の積み上げ
+       （deals.length===1 && !primary でも走る）が商談から計算し直すので問題ない。
+     ⚠ `opp` 自体は残す。フェーズの初期値・案件ステージ・最終更新に使っている。
+     ⚠ 原本（アーティファクト）はここで main を作っていた。戻すときは git 履歴から。 */
   ((e&&e.deals)||[]).forEach(x=>{
     if(!x||!x.key) return;
     deals.push({key:x.key, primary:false, oid:null, name:x.name||('Ptengine AI - '+coShort(c.n)), ph: PHASES.includes(phN(x.phase))?phN(x.phase):'INACTIVE', est:false,
