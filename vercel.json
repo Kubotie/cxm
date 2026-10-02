@@ -38,7 +38,7 @@
     },
     {
       "path": "/api/batch/ptai-mrr-sync",
-      "schedule": "0 21 * * *"
+      "schedule": "0 23 * * *"
     }
   ]
 }

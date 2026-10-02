@@ -70,7 +70,7 @@ export const CUSTOMER_PROP = {
    */
   mrr:             '⚠️MRR',                             // number（読むだけ）
   /**
-   * 現在MRR。Company Database の `mrr` を**毎朝 6 時に写したもの**。
+   * 現在MRR。Company Database の `mrr` を**毎朝 8 時に写したもの**。
    * 画面の「現在MRR」はこれ。書くのは同期バッチだけ。
    */
   curMrr:          '現在MRR',                           // number（同期が書く）

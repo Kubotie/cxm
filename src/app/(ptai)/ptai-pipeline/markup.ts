@@ -20,9 +20,14 @@ export const BOARD_HTML = `
     <nav class="views" id="views" aria-label="表示切替"></nav>
   </header>
 
-  <div class="banner" role="note"><div>⚠</div><div>
-    <b>金額はすべて「現在MRR」ベースです。</b>Twenty の案件（Opportunity）には追加MRR・受注予定日・担当・会社の紐づけが未入力で、確定MRRは0件です。案件ステージの最終更新も 8/20 で止まっています。
-    フェーズと商談は、ダッシュボードで入力したものだけを使います（推定はしません。Twenty へは同期後に反映）。<a href="#gapsSec" onclick="document.getElementById('gapsSec').open=true">作成できない項目を見る ↓</a></div></div>
+  <!-- 【移植による変更 9/9】2026-10-02 に実態へ書き換え。
+       元の文面は Twenty だけを見ていたころのもので、
+       「追加MRR も受注予定日も空・確定MRR 0 件」はもう事実ではない。 -->
+  <div class="banner" role="note"><div>ℹ</div><div>
+    <b>商談と金額の正本は Salesforce です。</b>商談・金額・フェーズ・申込完了日・課金開始日は Salesforce から取り込んだ値で、ダッシュボードからは直せません（直すときは Salesforce で）。
+    <b>障壁・ニーズ・ネクストアクションだけ双方向</b>で、ここで保存すると Salesforce にも書き込みます。
+    現在MRR は毎朝 8 時に Company Database（Salesforce 連動）から同期しています。かっこ内は期初MRR からの増減です。
+    フェーズの推定はしません。<a href="#gapsSec" onclick="document.getElementById('gapsSec').open=true">いま埋まっていない項目を見る ↓</a></div></div>
 
   <div id="memberHead" hidden></div>
 
@@ -153,7 +158,7 @@ export const BOARD_HTML = `
   </section>
 
   <details class="card devsec" id="gapsSec">
-    <summary class="card-h"><h2>作成できない項目（CRM 未整備）</h2><span class="sub">開発・データ整備向け：元モックとの差分と、埋めるべき Twenty のフィールド</span></summary>
+    <summary class="card-h"><h2>いま埋まっていない項目</h2><span class="sub">まだ出せていないもの・人が入れないと埋まらないもの（2026-10-02 時点）</span></summary>
     <div class="gaps" id="gaps"></div>
   </details>
 

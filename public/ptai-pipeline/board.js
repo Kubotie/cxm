@@ -363,7 +363,7 @@ function potOf(d){
 const AI_MIN = 100000;
 
 /* ═══ 【移植による変更 9/9】v2 の指標（2026-10-01 Kubotie 指示）═══════════
-   ⑥ 現在MRR        … Notion の「現在MRR」。Company Database の mrr を毎朝 6 時に同期した値。
+   ⑥ 現在MRR        … Notion の「現在MRR」。Company Database の mrr を毎朝 8 時に同期した値。
                        かっこ内は「期初MRR」との差。期初は初回同期を 1 回だけ焼き付けたもの
    ① （目標）追加MRR … 担当者が会社ごとに決める目標（aim）。Notion の「想定追加MRR」
    ② （商談）追加MRR … 商談の金額の合計（失注・Admin Close は除く）
@@ -825,7 +825,7 @@ function renderDeals(){
   const key={co:d=>d.n,o:d=>d.owners.join(),t:d=>d.t||'Z',ps:d=>PS.indexOf(d.ps),st:d=>PHASES.indexOf(d.ph),m:d=>d.m,add:d=>d.add,aim:d=>{const g=goalAdd(d);return g?(d.m+g)*goalCtx().w(d)+1e12:aimOf(d);},tot:total,cl:d=>d.close||'9999',ap:d=>d.apply||'9999',br:d=>(d.bs?BS_OPTS.indexOf(d.bs):9)+(d.br||'~'),pr:d=>PROB[d.ph],exp:expected,add3:d=>m3(d),ind:d=>d.ind||'',pot:d=>(potOf(d)||{prio:-1}).prio,nd:d=>d.nd||'9999',le:d=>d.le}[sortKey];
   ds.sort((x,y)=>{const a=key(x),b=key(y);return (a>b?1:a<b?-1:0)*sortDir;});
   const th=(k,l,r,t,tp)=>`<th class="${r?'r':''}" data-k="${k}" ${t?`title="${t}"`:''} ${tp?`data-tip="${esc(tp)}"`:''} ${sortKey===k?`aria-sort="${sortDir>0?'ascending':'descending'}"`:''}>${l}${sortKey===k?(sortDir>0?' ▲':' ▼'):''}</th>`;
-  const head=`<thead><tr>${th('co','企業／商談')}${th('o','担当')}${th('t','Tier')}${th('st','フェーズ')}${th('m','⑥ 現在MRR',1,'','毎朝 6 時に Company Database（Salesforce 連動）から同期した額。かっこ内は期初MRR からの増減')}${th('aim','① （目標）追加MRR',1,'この会社で追加したいMRR。クリックで入力')}${th('add','② （商談）追加MRR',1,'商談の金額の合計（失注・Admin Close は除く）')}${th('add3','③ （見込）追加MRR',1,'② を商談ごとに フェーズの係数 で割り引いた額')}${th('ap','申込完了日')}${th('cl','課金開始日')}${th('br','商談障壁')}${th('ind','業種')}${th('pot','ポテンシャル <span class="qi">?</span>',0,'',POT_HEAD_TIP)}<th>ニーズ</th><th>ネクストアクション</th>${th('nd','アクション期日')}${th('le','更新日')}</tr></thead>`;
+  const head=`<thead><tr>${th('co','企業／商談')}${th('o','担当')}${th('t','Tier')}${th('st','フェーズ')}${th('m','⑥ 現在MRR',1,'','毎朝 8 時に Company Database（Salesforce 連動）から同期した額。かっこ内は期初MRR からの増減')}${th('aim','① （目標）追加MRR',1,'この会社で追加したいMRR。クリックで入力')}${th('add','② （商談）追加MRR',1,'商談の金額の合計（失注・Admin Close は除く）')}${th('add3','③ （見込）追加MRR',1,'② を商談ごとに フェーズの係数 で割り引いた額')}${th('ap','申込完了日')}${th('cl','課金開始日')}${th('br','商談障壁')}${th('ind','業種')}${th('pot','ポテンシャル <span class="qi">?</span>',0,'',POT_HEAD_TIP)}<th>ニーズ</th><th>ネクストアクション</th>${th('nd','アクション期日')}${th('le','更新日')}</tr></thead>`;
   const sig=[view,sortKey,sortDir,...['fStatus','fQ'].map(id=>document.getElementById(id).value),...Object.values(FS).map(v=>[...v].sort().join(',')),missingOnly].join('|');
   if(sig!==pageSig){ page=1; pageSig=sig; }
   const pages=Math.max(1,Math.ceil(ds.length/pageSize)); page=Math.min(Math.max(1,page),pages);
@@ -928,22 +928,40 @@ function initFilters(){
   ['fStatus','fMissing','fQ'].forEach(id=>document.getElementById(id).addEventListener('input',()=>{statusFilter=document.getElementById('fStatus').value||null;renderFunnel();renderDeals();}));
 }
 
-/* ===================== 作成できない項目 ===================== */
+/* ===================== いま埋まっていない項目 ===================== */
+/* 【移植による変更 9/9】2026-10-02 に全面的に書き換え。
+   元の一覧は Twenty だけを見ていたころのもので、「Net MRR が48件すべて空」
+   「Close date が48件すべて空」「stage はまだ5段階」などは
+   Salesforce 連携を入れた時点でどれも事実でなくなっていた。
+   ここに残すのは **いまも埋まっていないもの** だけにする。 */
 const GAPS=[
- {lv:'serious',t:'Opportunity と企業一覧の対応',why:`Twenty の Opportunity ${new Set(DEALS.filter(d=>d.oid).map(d=>d.oid)).size}件は「会社」欄がすべて空のため、案件名（Ptengine AI - 企業名）と企業名の一致で紐づけている。企業一覧 ${DEALS.length}社のうち Opportunity があるのは ${DEALS.filter(d=>d.oid).length}社。残りは「案件未作成」と表示。マネーフォワードはアカウント1・2の2社が同じ Opportunity を共有、ビズリーチは同名の Opportunity が2件（ToB／ToC）。`,fix:'Opportunity の <code>company</code> を設定（同期で一括設定可）。商談中なのに案件がない企業は Opportunity を作成'},
- {lv:'serious',t:'追加MRR・合算MRR',why:'Opportunity の Net MRR が48件すべて空。「入力」タブで追加MRRを入れると合算MRR（現在＋追加）で計算する。足切り（追加10万以上）の判定は未実装。',fix:'「入力」タブ、または Opportunity の <code>netMrr</code> を入力'},
- {lv:'crit',t:'最終見積以降のフェーズ・確定MRR',why:'CRM の値からは「トライアル開始済み」までしか判定できない。最終見積もり提示済み以降は0件。元モックで契約確定だったブレインスリープ等も CRM では「提案」のまま。',fix:'Opportunity の <code>stage</code> を Salesforce と同じフェーズに置き換えて各担当者が入力'},
- {lv:'serious',t:'有料化予定月別のグラフ',why:'Opportunity の Close date が48件すべて空のため、今はグラフが空。案件詳細の「入力」タブで入れた予定月・追加MRRから描画する（Twenty への書き込みは同期時）。',fix:'「入力」タブ、または Opportunity の <code>closeDate</code>・<code>netMrr</code> を入力'},
- {lv:'serious',t:'商談フェーズ（暫定判定）',why:'Twenty の stage はまだ5段階。Ptengine AI ステータス（見送り→失注、FDE/PoC進行→トライアル開始済み、検討中・アポ確定→初回アポ実施済み）と案件ステージ（提案・商談・スクリーニング→初回アポ実施済み、それ以外→初回アポ実施前）から暫定で判定している。',fix:'Opportunity の <code>stage</code> に NOT_STARTED・FIRST_MEETING・TRIAL・QUOTE・VERBAL_COMMIT・APPLICATION・CLOSED_WON・CLOSED_LOST を追加すると、その値を優先して表示'},
- {lv:'serious',t:'主担当と目標配分',why:'Opportunity の Owner が全件空。「入力」タブで主担当を入れると按分をやめてその人に計上する。今は Notion の担当3で割り振り済み。ただし Twenty のワークスペースに Baba・Eri・Kubotie がいないため、この3名の担当は Twenty に書き込めない。',fix:'3名を Twenty に招待し、Opportunity の <code>owner</code> を設定'},
- {lv:'serious',t:'契約期間・障壁（状態／内容）',why:'対応するフィールドが CRM に無い（元モックは Notion の値）。障壁未把握アラートと契約期間・LTVは表示できない。',fix:'Opportunity にフィールド追加（例：<code>contractTerm</code>・<code>barrierStatus</code>・<code>barrier</code>）'},
- {lv:'warn',t:'Next Action の期限',why:'プランに未完了の項目がある案件は、その最も早い期日をネクストアクションにしている。プランがない案件だけ、CRM の Next Action 本文の先頭日付（m/d）から推定している。',fix:'各案件でプランニングを作成'},
- {lv:'warn',t:'プランニングの Twenty 反映',why:'プランニング（中間ゴール・Todo・定期フォロー）はダッシュボード側に保存している。Twenty の Task は0件で、種別・進捗％の項目もまだない。',fix:'同期時に Task として書き込み。種別・進捗％は PR #265 の項目追加後'},
- {lv:'warn',t:'顧客サクセス（AI-Ready・OR組織・証拠充足・ゴール）',why:'対応するフィールドが CRM に無い。サクセスプラン、商談先行アラート、サクセストラックは作成不可。',fix:'Company に AI-Ready 系フィールドを追加するか、Notion を正本のまま参照'},
- {lv:'warn',t:'議事録の紐づけ',why:'Note 114件は人（Person）にのみ紐づき、会社・案件とは未リンク。タイトルの企業名で照合しているため取りこぼし・誤照合があり得る（例：マネーフォワード2アカウントで共有）。直近の議事録は 7/3 まで。',fix:'Note を Company / Opportunity にリンク'},
+ {lv:'serious',t:'組織資料（組織図の材料）',
+  why:'Notion の JP_Docs に組織資料のカテゴリーはあるが、顧客管理DB の会社と結び付く資料が 1 件も無い（2026-10-01 に 5 件の候補を全社と突き合わせて 0 件）。そのため組織図タブは議事録だけを材料にしている。',
+  fix:'JP_Docs の組織資料に会社を紐づけるか、組織図を議事録だけで作る前提に割り切る'},
+ {lv:'serious',t:'Salesforce Account ID が未設定の会社',
+  why:'顧客管理DB の 14 社に「Salesforce Account ID」が入っていない。Salesforce の商談・取引先と結び付かないため、商談の取り込みと新規商談ボタンが使えない。社名の完全一致で拾える会社もあるが、取りこぼす。',
+  fix:'Notion 顧客管理DB の「Salesforce Account ID」に取引先 ID（001 で始まる 18 桁）を入れる'},
+ {lv:'serious',t:'現在MRR が入らない会社',
+  why:'7 社は Company Database（現在MRR の出どころ）に見つからない。0 円で上書きすると契約のある会社の数字が消えるので、書かずに見送っている。この 7 社の現在MRR は古い ⚠️MRR のままになる。',
+  fix:'Company Database に行を作るか、Salesforce Account ID を揃える'},
+ {lv:'warn',t:'金額・フェーズ・日付はダッシュボードから直せない',
+  why:'Salesforce が正本なので、商談の金額・フェーズ・申込完了日・課金開始日・契約期間はここでは読むだけ。見積もりも Salesforce でしか登録できない。',
+  fix:'Salesforce で直す（商談の行から「Salesforce で開く」で飛べる）'},
+ {lv:'warn',t:'（見込）追加MRR の係数は Salesforce の確率と別物',
+  why:'Salesforce の DefaultProbability（Goal Shared 10% / Qualified Champion 30% / Evaluating 40% / Probable 60%）ではなく、運用で決めた係数（30 / 50 / 70 / 90 / 90 / 100%）で割り引いている。フェーズ別パイプラインの「確率」表示は Salesforce の値のままなので、2 つの数字が食い違って見える。',
+  fix:'どちらかに寄せると決まったら FORECAST か PROB を揃える'},
+ {lv:'warn',t:'プランニングは Twenty の標準 Task に入らない',
+  why:'中間ゴール・Todo・定期フォローは PtAI 専用のオブジェクト（testAccountPlan / testAction）に保存している。Twenty の Task 画面からは見えない。',
+  fix:'Task へ写すか、PtAI 側で見る運用に割り切る'},
+ {lv:'warn',t:'Twenty のアカウントが無いメンバー',
+  why:'Dong・Chi・Goro kasahara・Riki は Twenty のワークスペースに席が無い。書き込みの操作者は CXM のログインから取っているので記録は残るが、Twenty の担当者欄には紐づけられない。',
+  fix:'Twenty に招待する（席が要らないなら、このままでも支障はない）'},
+ {lv:'warn',t:'議事録は 2 系統あり、重複することがある',
+  why:'Notion の JP_Docs と Twenty の Note（Mii 由来）の両方を出している。同じ会議が両方に残っていることがあるが、片方に寄せると取りこぼすのでそのまま並べている。',
+  fix:'どちらを正本にするか決める'},
 ];
 function renderGaps(){
-  const col={crit:'crit',serious:'serious',warn:'warn'}; const lab={crit:'作成不可',serious:'代替表示',warn:'一部のみ'};
+  const col={crit:'crit',serious:'serious',warn:'warn'}; const lab={crit:'出せない',serious:'人が入れる必要あり',warn:'仕様'};
   document.getElementById('gaps').innerHTML=GAPS.map(g=>`<div class="gap2"><div class="gh"><span class="chip ${g.lv==='serious'?'warn':g.lv}"><i></i>${lab[g.lv]}</span>${esc(g.t)}</div><div>${esc(g.why)}</div><div class="fix">→ ${g.fix}</div></div>`).join('');
 }
 

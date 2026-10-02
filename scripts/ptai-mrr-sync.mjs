@@ -6,7 +6,7 @@
 //   … --apply                               書く
 //   … --diag                                突き合わせ具合だけ見る
 //
-// 本番は毎朝 6 時（JST）に /api/batch/ptai-mrr-sync が同じことをする。
+// 本番は毎朝 8 時（JST）に /api/batch/ptai-mrr-sync が同じことをする。
 // 会社名は出さない。出すのは件数だけ。
 
 import { readFile } from 'node:fs/promises';
