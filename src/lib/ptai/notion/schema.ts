@@ -80,12 +80,13 @@ export const CUSTOMER_PROP = {
    */
   baseMrr:         '期初MRR',                           // number（初回のみ）
   /**
-   * 対象プロジェクトID。1 社を複数行に分けて持つときだけ使う。
+   * 対象アカウントID。1 社を複数行に分けて持つときだけ使う。
    * （ビズリーチ ToB/ToC、マネーフォワード アカウント1/2）
-   * カンマ区切り。入っていれば**そのプロジェクトの MRR を足した額**を
-   * 現在MRR にする。空なら Company Database の会社単位 MRR。
+   * Ptengine の Account ID（UUID）をカンマ区切りで。入っていれば
+   * **そのアカウントの MRR を足した額**を現在MRR にする。
+   * 空なら Company Database の会社単位 MRR。
    */
-  projectIds:      '対象プロジェクトID',                // rich_text（人が入れる）
+  accountIds:      '対象アカウントID',                  // rich_text（人が入れる）
   aimMrr:          '想定追加MRR',                       // number（双方向。§9-2）
   billingMonth:    '課金開始予定月',                    // date（書く）
   billingStage:    '課金ステージ',                      // select（書く。§9-2）
@@ -175,7 +176,7 @@ export const CUSTOMER_READONLY_PROPS: readonly string[] = [
   // 同期バッチだけが書く。画面からは書かせない
   CUSTOMER_PROP.curMrr, CUSTOMER_PROP.baseMrr,
   // 人が Notion で入れる。画面からは書かせない
-  CUSTOMER_PROP.projectIds,
+  CUSTOMER_PROP.accountIds,
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════

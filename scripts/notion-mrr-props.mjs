@@ -53,10 +53,12 @@ const WANTED = {
   '現在MRR': { number: { format: 'yen' } },
   '期初MRR': { number: { format: 'yen' } },
   // 2026-10-02 追加。1 社を複数行に分けて持つとき（ビズリーチ ToB/ToC、
-  // マネーフォワード アカウント1/2）に、その行が担う Ptengine プロジェクトを書く。
-  // カンマ区切り。入っていればプロジェクトの MRR を足した額を現在MRR にする。
-  // 空なら従来どおり Company Database の会社単位 MRR。
-  '対象プロジェクトID': { rich_text: {} },
+  // マネーフォワード アカウント1/2）に、その行が担う Ptengine アカウントを書く。
+  // Account ID（UUID）をカンマ区切り。入っていればアカウントの MRR を足した額を
+  // 現在MRR にする。空なら従来どおり Company Database の会社単位 MRR。
+  // ※ 最初はプロジェクト単位にしたが、どのプロジェクトにも載らない Other MRR を
+  //    取りこぼした（ビズリーチ ToC で 22,000 円）。アカウント単位なら合計が合う。
+  '対象アカウントID': { rich_text: {} },
 };
 
 const ds = await api('GET', `/data_sources/${CUSTOMERS_DS}`);

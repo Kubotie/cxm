@@ -8,8 +8,8 @@
 //  scripts/ptai-mrr-baseline.mjs が入れる。
 //
 //  ⚠ 1 社を複数行に分けている会社（ビズリーチ ToB/ToC、マネーフォワード
-//     アカウント1/2）は、Notion の「対象プロジェクトID」が入っていれば
-//     **プロジェクト単位の MRR**を足す。入っていないと同じ会社の額が
+//     アカウント1/2）は、Notion の「対象アカウントID」が入っていれば
+//     **アカウント単位の MRR**を足す。入っていないと同じ会社の額が
 //     行の数だけ重なる（2026-10-02 に 170 万円ぶん二重に乗っていた）。
 //
 //  ⚠ 「Company Database に見つからない会社」は**書かない**。
@@ -22,7 +22,7 @@
 
 import { listCustomers, request, isConfigured } from './client';
 import { listPayingCompanies, indexCompanies, findCompany } from './company-db';
-import { fetchProjectMrr } from '../bi/project-mrr';
+import { fetchAccountMrr } from '../bi/account-mrr';
 import { NOTION_SOURCES, CUSTOMER_PROP } from './schema';
 
 export interface MrrSyncResult {
@@ -35,10 +35,10 @@ export interface MrrSyncResult {
   viaName: number;
   /** Company Database にあるが MRR 0 円 */
   zero: number;
-  /** 対象プロジェクトID から足した（1 社を複数行に分けている会社） */
-  viaProject: number;
-  /** 指定されたプロジェクトが BI に無く、会社単位に落とした */
-  projectMissing: number;
+  /** 対象アカウントID から足した（1 社を複数行に分けている会社） */
+  viaAccount: number;
+  /** 指定されたアカウントが BI に無い */
+  accountMissing: number;
   /** Company Database に見つからず、書かなかった */
   unmatched: number;
   /** 実際に値が変わって書いた */
@@ -51,37 +51,37 @@ export interface MrrSyncResult {
 
 const EMPTY: MrrSyncResult = {
   ok: false, customers: 0, viaSfId: 0, viaName: 0, zero: 0,
-  viaProject: 0, projectMissing: 0,
+  viaAccount: 0, accountMissing: 0,
   unmatched: 0, updated: 0, unchanged: 0, failed: 0, message: null,
 };
 
 export async function syncCurrentMrr(dryRun = false): Promise<MrrSyncResult> {
   if (!isConfigured()) return { ...EMPTY, message: 'Notion が未設定です' };
 
-  const [customers, paying, projectMrr] = await Promise.all([
+  const [customers, paying, accountMrr] = await Promise.all([
     listCustomers({ maxPages: 20 }),
     listPayingCompanies(),
     // BI が落ちていても会社単位の同期は続ける
-    fetchProjectMrr().catch(() => new Map<string, number>()),
+    fetchAccountMrr().catch(() => new Map<string, number>()),
   ]);
   const idx = indexCompanies(paying);
 
   const r: MrrSyncResult = { ...EMPTY, ok: true, customers: customers.length };
 
   for (const c of customers) {
-    // 0. 対象プロジェクトID が入っていればそれが最優先。
+    // 0. 対象アカウントID が入っていればそれが最優先。
     //    1 社を複数行に分けている会社はここでしか正しく割れない
-    if (c.projectIds.length) {
-      const known = c.projectIds.filter(p => projectMrr.has(p));
+    if (c.accountIds.length) {
+      const known = c.accountIds.filter(a => accountMrr.has(a));
       if (known.length) {
-        const sum = known.reduce((t, p) => t + (projectMrr.get(p) ?? 0), 0);
-        if (known.length < c.projectIds.length) r.projectMissing++;
-        r.viaProject++;
+        const sum = known.reduce((t, a) => t + (accountMrr.get(a) ?? 0), 0);
+        if (known.length < c.accountIds.length) r.accountMissing++;
+        r.viaAccount++;
         await writeMrr(c, sum, dryRun, r);
         continue;
       }
       // 1 つも見つからない。会社単位に落とすと行の数だけ重なるので**書かない**
-      r.projectMissing++;
+      r.accountMissing++;
       r.unmatched++;
       continue;
     }
@@ -105,7 +105,7 @@ export async function syncCurrentMrr(dryRun = false): Promise<MrrSyncResult> {
 
   const notes: string[] = [];
   if (r.unmatched) notes.push(`${r.unmatched} 社は出どころが見つからず、現在MRR を書きませんでした`);
-  if (r.projectMissing) notes.push(`${r.projectMissing} 社は指定された対象プロジェクトID が BI に見つかりません`);
+  if (r.accountMissing) notes.push(`${r.accountMissing} 社は指定された対象アカウントID が BI に見つかりません`);
   r.message = notes.join(' / ') || null;
   return r;
 }
