@@ -18,6 +18,8 @@ coverage/
 ptengine-analytics-mcp/
 # 実顧客データを含む検証物（共有範囲に注意）
 docs-src/cxm_v2/samples/
+# 実在顧客のメールアドレス・社名を含む（2026-10-02 確認）。public リポジトリなので出さない
+docs-src/cxm_v2/17_WHO_WHAT_Matching_Plan.md
 # 一時検証スクリプト
 w.mts
 
