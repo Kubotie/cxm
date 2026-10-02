@@ -1568,3 +1568,33 @@ table.deals.iss{min-width:880px}
 /* 道のりの節目のうち、まだ保存していない自動の目安は点線で示す */
 .jn.auto .jnd{border-bottom:1px dashed var(--muted)}
 .jn.auto > i:not(.jnd){opacity:.55}
+
+/* ─── 注意書きの中の導線（使い方・更新履歴・フィードバック）──────────────── */
+.bnav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px}
+.bnav-l,.bnav-cta{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:5px 11px;border-radius:999px;font-size:12px;font-weight:700;
+  text-decoration:none;border:1px solid var(--ring);cursor:pointer;
+  background:var(--surface);color:var(--ink-2);
+  transition:background .12s,color .12s,border-color .12s;
+}
+.bnav-l:hover{background:var(--accent-soft);color:var(--accent-ink);border-color:transparent}
+.bnav-cta{background:var(--accent);color:#fff;border-color:transparent}
+.bnav-cta:hover{filter:brightness(1.07)}
+.bnav-s{margin-left:auto;font-size:11.5px;color:var(--ink-2)}
+
+/* ─── フィードバックのボタンを 8 ビートの 4・5 拍目で一度だけ揺らす ──────────
+   気づかれないので、ときどきブルっと動かして目に留める。
+   1 周 4 秒＝8 分音符 8 つ（1 拍 500ms）。4 拍目（37.5%）から 5 拍目の終わり
+   （62.5%）までの 1 秒だけ、左右に一往復する。ほかは完全に静止。
+   操作中に動くと狙いにくいので、ホバー・フォーカス中は止める。 */
+@keyframes fbnudge{
+  0%,37.5%{transform:translateX(0) rotate(0)}
+  43.75%  {transform:translateX(-4px) rotate(-1.4deg)}
+  50%     {transform:translateX(4px)  rotate(1.4deg)}
+  56.25%  {transform:translateX(-2px) rotate(-.6deg)}
+  62.5%,100%{transform:translateX(0) rotate(0)}
+}
+.fbbtn{animation:fbnudge 4s ease-in-out infinite;will-change:transform}
+.fbwrap:hover .fbbtn,.fbbtn:focus-visible{animation-play-state:paused}
+@media (prefers-reduced-motion:reduce){ .fbbtn{animation:none} }

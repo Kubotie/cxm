@@ -3279,6 +3279,18 @@ initFilters(); initGoalForm(); initNewco(); document.getElementById('isAll').add
     btn.disabled=false;
   }
 
+  /* 【移植による変更 9/9】注意書きの CTA からも開けるようにする（2026-10-02）。
+     ボタンは画面の左下にあるが、初めて来た人は気づかないため。 */
+  document.addEventListener('click', function(e){
+    var t = e.target.closest && e.target.closest('[data-fbopen]');
+    if(!t) return;
+    e.preventDefault();
+    if(!box) build();
+    if(box.hidden) { var b=document.querySelector('.fbbtn'); if(b) b.click(); }
+    box.scrollIntoView({block:'nearest'});
+    var ta=box.querySelector('textarea'); if(ta) ta.focus();
+  }, true);
+
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',build);
   else build();
 })();

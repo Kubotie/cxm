@@ -27,7 +27,15 @@ export const BOARD_HTML = `
     <b>商談と金額の正本は Salesforce です。</b>商談・金額・フェーズ・申込完了日・課金開始日は Salesforce から取り込んだ値で、ダッシュボードからは直せません（直すときは Salesforce で）。
     <b>障壁・ニーズ・ネクストアクションだけ双方向</b>で、ここで保存すると Salesforce にも書き込みます。
     現在MRR は毎朝 8 時に Company Database（Salesforce 連動）から同期しています。かっこ内は期初MRR からの増減です。
-    フェーズの推定はしません。<a href="#gapsSec" onclick="document.getElementById('gapsSec').open=true">いま埋まっていない項目を見る ↓</a></div></div>
+    フェーズの推定はしません。
+    <!-- 【移植による変更 9/9】メンバー向けの案内と更新履歴への導線（2026-10-02）。
+         CTA はフィードバックのボタンを開く（左下のボタンを押すのと同じ）。 -->
+    <div class="bnav">
+      <a class="bnav-l" href="/ptai-pipeline/guide">📘 使い方を見る</a>
+      <a class="bnav-l" href="/ptai-pipeline/updates">🆕 今日の更新履歴</a>
+      <button type="button" class="bnav-cta" data-fbopen>💬 気づいたことを送る</button>
+      <a class="bnav-s" href="#gapsSec" onclick="document.getElementById('gapsSec').open=true">いま埋まっていない項目 ↓</a>
+    </div></div></div>
 
   <div id="memberHead" hidden></div>
 

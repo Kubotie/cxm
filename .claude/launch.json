@@ -1,15 +1,6 @@
 {
   "version": "0.0.1",
   "configurations": [
-    {
-      "name": "cxm-dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "run",
-        "dev"
-      ],
-      "port": 3000,
-      "autoPort": true
-    }
+    { "name": "cxm-dev", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 3000 }
   ]
 }
