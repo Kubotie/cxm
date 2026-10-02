@@ -52,6 +52,11 @@ async function api(method, path, body) {
 const WANTED = {
   '現在MRR': { number: { format: 'yen' } },
   '期初MRR': { number: { format: 'yen' } },
+  // 2026-10-02 追加。1 社を複数行に分けて持つとき（ビズリーチ ToB/ToC、
+  // マネーフォワード アカウント1/2）に、その行が担う Ptengine プロジェクトを書く。
+  // カンマ区切り。入っていればプロジェクトの MRR を足した額を現在MRR にする。
+  // 空なら従来どおり Company Database の会社単位 MRR。
+  '対象プロジェクトID': { rich_text: {} },
 };
 
 const ds = await api('GET', `/data_sources/${CUSTOMERS_DS}`);

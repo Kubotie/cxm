@@ -79,6 +79,13 @@ export const CUSTOMER_PROP = {
    * 画面の「現在MRR（＋◯◯）」の括弧内は 現在MRR − 期初MRR。
    */
   baseMrr:         '期初MRR',                           // number（初回のみ）
+  /**
+   * 対象プロジェクトID。1 社を複数行に分けて持つときだけ使う。
+   * （ビズリーチ ToB/ToC、マネーフォワード アカウント1/2）
+   * カンマ区切り。入っていれば**そのプロジェクトの MRR を足した額**を
+   * 現在MRR にする。空なら Company Database の会社単位 MRR。
+   */
+  projectIds:      '対象プロジェクトID',                // rich_text（人が入れる）
   aimMrr:          '想定追加MRR',                       // number（双方向。§9-2）
   billingMonth:    '課金開始予定月',                    // date（書く）
   billingStage:    '課金ステージ',                      // select（書く。§9-2）
@@ -167,6 +174,8 @@ export const CUSTOMER_READONLY_PROPS: readonly string[] = [
   CUSTOMER_PROP.mrr, CUSTOMER_PROP.solutionStatus, CUSTOMER_PROP.companyDatabase,
   // 同期バッチだけが書く。画面からは書かせない
   CUSTOMER_PROP.curMrr, CUSTOMER_PROP.baseMrr,
+  // 人が Notion で入れる。画面からは書かせない
+  CUSTOMER_PROP.projectIds,
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════

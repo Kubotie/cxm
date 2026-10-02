@@ -114,3 +114,31 @@ test('現在MRR・期初MRR は画面から書けない（同期だけが書く�
   assert.ok(CUSTOMER_READONLY_PROPS.includes('現在MRR'));
   assert.ok(CUSTOMER_READONLY_PROPS.includes('期初MRR'));
 });
+
+// ── 1 社を複数行に分ける（2026-10-02）────────────────────────────────────────
+//
+// ビズリーチ ToB/ToC、マネーフォワード アカウント1/2 のように、Company Database
+// では 1 行の会社を PtAI 側で分けて持つケース。会社単位の MRR をそのまま両方に
+// 入れると行の数だけ重なる（実際に 1,702,580 円ぶん重なっていた）。
+
+test('対象プロジェクトID を読み取れる（区切りは , 、 空白）', async () => {
+  const { parseProjectIds } = await import('../src/lib/ptai/bi/project-mrr.ts');
+  assert.deepEqual(parseProjectIds('5d7bb68e'), ['5d7bb68e']);
+  assert.deepEqual(parseProjectIds('5d7bb68e, 1c53hb20'), ['5d7bb68e', '1c53hb20']);
+  assert.deepEqual(parseProjectIds('5d7bb68e、1c53hb20'), ['5d7bb68e', '1c53hb20']);
+  assert.deepEqual(parseProjectIds('5d7bb68e 1c53hb20'), ['5d7bb68e', '1c53hb20']);
+});
+
+test('空・未設定は空の配列（従来どおり会社単位に落ちる）', async () => {
+  const { parseProjectIds } = await import('../src/lib/ptai/bi/project-mrr.ts');
+  for (const v of ['', '  ', ',', '、', null, undefined]) {
+    assert.deepEqual(parseProjectIds(v), [], JSON.stringify(v));
+  }
+});
+
+test('NotionCustomer に projectIds が入る', () => {
+  assert.deepEqual(toAccountInfo({ ...base }).notionPageId, 'p1');
+  assert.equal(CUSTOMER_PROP.projectIds, '対象プロジェクトID');
+  // 同期だけが現在MRR を書く。対象プロジェクトID は人が Notion で入れる
+  assert.ok(CUSTOMER_READONLY_PROPS.includes('対象プロジェクトID'));
+});

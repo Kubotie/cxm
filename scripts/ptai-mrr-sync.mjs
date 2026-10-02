@@ -33,7 +33,8 @@ if (process.argv.includes('--diag')) {
 const t0 = Date.now();
 const r = await syncCurrentMrr(!apply);
 console.log(`顧客 ${r.customers} 社（${((Date.now() - t0) / 1000).toFixed(1)} 秒）`);
-console.log(`  Salesforce ID で一致 ${r.viaSfId} / 社名で一致 ${r.viaName} / MRR 0 円 ${r.zero}`);
+console.log(`  対象プロジェクトで集計 ${r.viaProject} / Salesforce ID で一致 ${r.viaSfId} / 社名で一致 ${r.viaName} / MRR 0 円 ${r.zero}`);
+if (r.projectMissing) console.log(`  指定プロジェクトが BI に無い: ${r.projectMissing} 社`);
 console.log(`  書いた ${r.updated} / 変化なし ${r.unchanged} / 失敗 ${r.failed} / 見つからず ${r.unmatched}`);
 if (r.message) console.log(`  ${r.message}`);
 if (!apply) console.log('\n書くには --apply');

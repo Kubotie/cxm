@@ -23,6 +23,8 @@ import {
   type MeetingRecord, type KeyDates,
 } from './schema';
 
+import { parseProjectIds } from '../bi/project-mrr';
+
 const API = 'https://api.notion.com/v1';
 const VERSION = '2025-09-03';
 const TIMEOUT_MS = 30_000;
@@ -190,6 +192,8 @@ export interface NotionCustomer {
   curMrr:         number | null;
   /** 期初MRR。初回同期の値を一度だけ焼き付けたもの */
   baseMrr:        number | null;
+  /** 対象プロジェクトID。1 社を複数行に分けるときだけ入る */
+  projectIds:     string[];
   aimMrr:         number | null;
   billingMonth:   string | null;
   billingStage:   string | null;
@@ -218,6 +222,7 @@ function toCustomer(page: Record<string, unknown>): NotionCustomer {
     mrr:             (r(CUSTOMER_PROP.mrr) as number | null) ?? null,
     curMrr:          (r(CUSTOMER_PROP.curMrr) as number | null) ?? null,
     baseMrr:         (r(CUSTOMER_PROP.baseMrr) as number | null) ?? null,
+    projectIds:      parseProjectIds(r(CUSTOMER_PROP.projectIds) as string | null),
     aimMrr:          (r(CUSTOMER_PROP.aimMrr) as number | null) ?? null,
     billingMonth:    (r(CUSTOMER_PROP.billingMonth) as string | null) ?? null,
     billingStage:    (r(CUSTOMER_PROP.billingStage) as string | null) ?? null,
