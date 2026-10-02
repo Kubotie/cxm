@@ -27,16 +27,15 @@ const PROB = {INACTIVE:0,ACTIVE:0,GOAL_SHARED:.10,QUALIFIED_CHAMPION:.30,EVALUAT
 /* 【移植による変更 9/9】社内の言い方。フェーズ名だけだと認識がずれるので
    英語名の下に小さく出す（2026-10-02 Kubotie 指定の対応表）。
 
-   ⚠ Inactive・Probable・Admin Close は対応表に無かったので**空のまま**。
+   ⚠ Inactive と Admin Close は社内の言い方が無いので**空のまま**（確認済み）。
      推測で埋めない。決まったらここに足す。
-   ⚠ 並び順は Salesforce の SortOrder のまま（Qualified Champion → Evaluating）。
-     対応表は「トライアル開始済み（Evaluating）→ トライアル運用評価段階
-     （Qualified Champion）」の順で書かれていて**逆**なので、
-     並べ替えるかどうかは別途決めること。 */
+   トライアル開始済み＝Qualified Champion、トライアル運用評価段階＝Evaluating。
+   逆に取り違えやすいので注意（2026-10-02 に 1 度まちがえて直した）。
+   この並びで Salesforce の SortOrder と日本語の順序が一致する。 */
 const PH_JA = {
   INACTIVE:'', ACTIVE:'初回アポ実施前', GOAL_SHARED:'初回アポ実施済み',
-  QUALIFIED_CHAMPION:'トライアル運用評価段階', EVALUATING:'トライアル開始済み',
-  PROBABLE:'', VERBAL:'口頭合意獲得済み', WON:'申込用紙回収済み',
+  QUALIFIED_CHAMPION:'トライアル開始済み', EVALUATING:'トライアル運用評価段階',
+  PROBABLE:'最終見積もり提示済み', VERBAL:'口頭合意獲得済み', WON:'申込用紙回収済み',
   CLOSED_WON:'契約締結済み', ADMIN_CLOSE:'', CLOSED_LOST:'失注',
 };
 /** 「Verbal（口頭合意獲得済み）」のように並べる。日本語が無いフェーズはそのまま */
