@@ -1953,7 +1953,7 @@ function editForm(d){
   const dcount = sfTop + (d.deals.length>1 ? `<div class="dcount"><span>商談 <b class="num">${d.deals.length}</b>件</span>${nAct?`<span class="c act">進行中 ${nAct}</span>`:''}${nWon?`<span class="c won">受注 ${nWon}</span>`:''}${nLost?`<span class="c lost">失注 ${nLost}</span>`:''}</div>` : '');
   const dealList = dcount + d.deals.slice().sort((a,b)=>dOrd(a)-dOrd(b)).map((y,di)=>`<div class="dcard ${y.key===key&&isOpen?'open':''} ${['','won','lost'][dOrd(y)]}" style="--pc:var(${PCOL[y.ph]})">${head(y, y.key===key&&isOpen, d.deals.length>1?di+1:0)}${dealSum(d,y)}${y.key===key&&isOpen?FIELDS:''}</div>`).join('')
     ;   /* 【移植による変更 9/9】「商談を追加」の見出しは出さない（商談は Salesforce で作る） */
-  const legend = isNew ? '新しい商談' : isMain ? (d.oid?esc(d.opp.raw):'Twenty に未作成（同期時に作成）') : 'ダッシュボードで追加（同期時に Opportunity を作成）';
+  const legend = isNew ? '新しい商談' : isMain ? (d.oid?esc(d.opp.raw):'Twenty に未作成（商談は Salesforce で作ってください）') : 'ダッシュボードで追加した商談';
   return `<form id="efForm" class="ef" novalidate>
    <p class="sub" style="margin:0 0 12px">入力した値はすぐにダッシュボードに反映され、閲覧者全員に共有されます。Twenty への書き込みは同期のときに行います（同期までは「Twenty 未反映」と表示）。</p>
    <fieldset><legend>商談（Opportunity）に保存 <span class="sub">${legend}</span></legend>

@@ -208,11 +208,19 @@ async function writeEdits(
       await writeNextAction(key, cid, oppId, x, owner, who, changes);
       continue;
     }
+    // ── 画面で入力した商談（Salesforce に無いもの）─────────────────────
+    //   **新しくは作らない**（2026-10-02 Kubotie 決定「商談は Salesforce で作る」）。
+    //   すでに Twenty にある分だけ直す。無いものは捨てる（＝画面にも戻らない）。
+    //   作っていた頃、SF に無い商談が立って消せなくなった（フィードバック 119b8b3a）。
     const ext = `edits:${cid}:${key}`;
+    const hit = await listRecords(OPP.plural, OPP.singular,
+      { filter: `externalId[eq]:${ext}`, pageSize: 2, maxRecords: 2 });
+    if (!hit.length) { changes.skippedNew = (changes.skippedNew ?? 0) + 1; continue; }
     seen.add(ext);
-    const r = await upsertByExternalId(OPP.plural, OPP.singular, ext, dealFields(x, cid, isMain, owner), who);
+    const oppId = str(hit[0].id);
+    await updateRecord(OPP.plural, OPP.singular, oppId,
+      { ...dealFields(x, cid, isMain, owner), updatedByName2: who.name2 });
     changes.opportunity++;
-    const oppId = str(r.record.id);
 
     await writeNextAction(ext, cid, oppId, x, owner, who, changes);
 
