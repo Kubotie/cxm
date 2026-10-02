@@ -20,7 +20,18 @@ const CONFIG = {
 const PHASES = ['INACTIVE','ACTIVE','GOAL_SHARED','QUALIFIED_CHAMPION','EVALUATING','PROBABLE','VERBAL','WON','CLOSED_WON','ADMIN_CLOSE','CLOSED_LOST'];   /* 【移植による変更 5/6】Salesforce のフェーズへ（2026-10-01）。POC は使わない */
 const PH_LEGACY = {NOT_STARTED:'INACTIVE', FIRST_MEETING:'ACTIVE', TRIAL:'EVALUATING', QUOTE:'PROBABLE', VERBAL_COMMIT:'VERBAL', APPLICATION:'WON', POC:'EVALUATING', RE_PROPOSAL:'EVALUATING', EVALUATION:'EVALUATING', APPROVAL:'PROBABLE'};   /* 旧キーは読み込み時だけ読み替える */
 const phN = p => PH_LEGACY[p]||p;
-const msN = m => { if(!m||typeof m!=='object') return m||null; const o={}; Object.entries(m).forEach(([k,v])=>{ const k2=phN(k); if(k==='APPROVAL'||k==='RE_PROPOSAL') return; if(v&&!o[k2]) o[k2]=v; }); return Object.keys(o).length?o:null; };
+/* 【移植による変更 9/9】ms の鍵は **TRIAL / QUOTE / VERBAL_COMMIT のまま**（2026-10-02）
+   移植変更 5 で「ms の鍵は保存済みデータのまま据え置き、対応表で読み替える」と
+   決めたのに、ここだけ phN(k) を通していたためフェーズ名（EVALUATING ほか）に
+   書き換わっていた。読む側は MS_PH（旧い鍵）で引くので、
+   **保存した到達予定が道のりにも一覧にも出ない**状態だった（Utty 指摘）。
+   新しいフェーズ名で入ってきたら鍵に戻す。鍵以外は捨てる（APPROVAL などの名残）。 */
+const PH2MS = {EVALUATING:'TRIAL', PROBABLE:'QUOTE', VERBAL:'VERBAL_COMMIT'};
+const msN = m => { if(!m||typeof m!=='object') return m||null; const o={};
+  Object.entries(m).forEach(([k,v])=>{ const k2=PH2MS[k]||k;
+    if(!['TRIAL','QUOTE','VERBAL_COMMIT'].includes(k2)) return;
+    if(v&&!o[k2]) o[k2]=v; });
+  return Object.keys(o).length?o:null; };
 const PH_JP = {INACTIVE:'Inactive',ACTIVE:'Active',GOAL_SHARED:'Goal Shared',QUALIFIED_CHAMPION:'Qualified Champion',EVALUATING:'Evaluating',PROBABLE:'Probable',VERBAL:'Verbal',WON:'Won',CLOSED_WON:'受注 (Closed Won)',ADMIN_CLOSE:'Admin Close',CLOSED_LOST:'Close Lost'};
 const PH_SHORT = {INACTIVE:'Inactive',ACTIVE:'Active',GOAL_SHARED:'Goal Shared',QUALIFIED_CHAMPION:'Qualified',EVALUATING:'Evaluating',PROBABLE:'Probable',VERBAL:'Verbal',WON:'Won',CLOSED_WON:'受注',ADMIN_CLOSE:'Admin Close',CLOSED_LOST:'失注'};
 const PROB = {INACTIVE:0,ACTIVE:0,GOAL_SHARED:.10,QUALIFIED_CHAMPION:.30,EVALUATING:.40,PROBABLE:.60,VERBAL:.90,WON:1,CLOSED_WON:1,ADMIN_CLOSE:0,CLOSED_LOST:0};   /* Salesforce の DefaultProbability をそのまま */
@@ -1836,15 +1847,24 @@ function jrRow(y){
   const T=dstr(TODAY), ld=ts=>dstr(new Date(ts)), tt=s=>new Date(s+'T00:00:00').getTime();
   const m=y.ms||{}, hasMs=MS_PH.some(p=>m[p]);
   const bd = won ? (y.apply||null) : (y.msBase==='bill' ? (y.bill||null) : y.apply);
+  /* ═══ 【移植による変更 9/9】道のりにも自動提案を出す（2026-10-02 Utty 指摘）═══
+     到達予定の入力欄は基準日から逆算した日付を「自動」として出しているが、
+     **保存するまで ms に入らない**。道のりは保存済みの ms しか見ていなかったので、
+     入力欄には 3 つ日付が並んでいるのに道のりは「スタートとゴールだけ」になっていた。
+     同じ msSuggest を使って揃える。保存していないものは「自動」と出す。 */
+  const sug = (!won && bd) ? (msSuggest(y, y.msBase==='bill'?'bill':'apply', bd) || {}) : {};
+  const planOf = p => m[p] || sug[p] || null;
+  const hasPlan = MS_PH.some(p => planOf(p));
   const bl = !won && y.msBase==='bill' ? '課金開始' : '申込用紙回収';
   const goalR = bl==='課金開始' ? won : reachedPh(y,'WON');
   const list=jrList(y,L);
   if(lost) return list?`<div class="jr"><div class="jrh"><span class="lab">経過</span></div>${list}</div>`:'';
-  if(!hasMs && !bd && !won) return `<div class="jr"><div class="jrh"><span class="lab">道のり</span><span class="jrempty">到達予定が未設定です（申込完了日を入れると自動で入ります）</span></div>${list}</div>`;
+  if(!hasPlan && !bd && !won) return `<div class="jr"><div class="jrh"><span class="lab">道のり</span><span class="jrempty">到達予定が未設定です（申込完了日を入れると自動で入ります）</span></div>${list}</div>`;
   // 節目：スタート → 4つのフェーズ → ゴール（申込完了）
   const actual={}; L.forEach(e=>{ if(e.t==='ph' && !actual[phN(e.to)]) actual[phN(e.to)]=ld(e.at); });
   // 過去（到達済み・遅れ）は今日の左、これからは右。今日も1つの節目として等間隔に並べる
-  const st=[]; MS_PH.forEach(p=>{ const r=won||reachedPh(y,p); if(!m[p]&&!r) return; st.push({k:p, name:PH_SHORT[phOf(p)], full:PH_JP[phOf(p)], r, plan:m[p]||null, act:actual[p]||null, d:(r&&actual[p])||m[p]||null}); });
+  const st=[]; MS_PH.forEach(p=>{ const r=won||reachedPh(y,p); const pl=planOf(p); if(!pl&&!r) return;
+    st.push({k:p, name:PH_SHORT[phOf(p)], full:PH_JP[phOf(p)], r, plan:pl, auto:!m[p]&&!!sug[p], act:actual[p]||null, d:(r&&actual[p])||pl||null}); });
   if(bd) st.push({k:'goal', name:bl, full:bl==='課金開始'?'課金開始':PH_JP.APPLICATION, r:goalR, d:bd, plan:bd});
   let pd=null; st.forEach(x=>{ if(x.r){ if(!x.d||(pd&&x.d<pd)) x.d=pd; if(x.d) pd=x.d; } });
   const past=st.filter(x=>x.r||(x.plan&&x.plan<T)), fut=st.filter(x=>!past.includes(x));
@@ -1876,8 +1896,8 @@ function jrRow(y){
       if(x.r) em = x.act&&x.plan ? (()=>{ const dd=days(ymd(x.act),ymd(x.plan)); return dd===0?'予定どおり':dd>0?`${dd}日遅れで到達`:`${-dd}日早く到達`; })() : '到達';
       else if(x.plan) em = x.cls==='late' ? `${days(TODAY,ymd(x.plan))}日遅れ` : relDay(x.plan);
     }
-    const tip = x.k==='now' ? `今日 ${mdj(T)}` : x.k==='start' ? (x.act?`記録の始まり ${mdj(x.act)}`:'') : `${x.full||x.name}：${x.r?'到達済み':x.plan?('予定 '+mdj(x.plan)):''}${em?'（'+em+'）':''}`;
-    return `<div class="jn ${x.k==='goal'?'goal':''} ${x.cls} ${pos}" style="left:${P[i].toFixed(2)}%;${PCOL[x.k]&&x.k!=='goal'?`--nc:var(${PCOL[x.k]})`:''}" data-tip="${esc(esc(tip))}"><span class="jnn">${esc(x.name)}</span><i class="jnd">${icon}</i><span class="jnt num">${dt||'&nbsp;'}</span>${em?`<em>${esc(em)}</em>`:''}</div>`;
+    const tip = x.k==='now' ? `今日 ${mdj(T)}` : x.k==='start' ? (x.act?`記録の始まり ${mdj(x.act)}`:'') : `${x.full||x.name}：${x.r?'到達済み':x.plan?('予定 '+mdj(x.plan)+(x.auto?'（自動の目安。まだ保存されていません）':'')):''}${em?'（'+em+'）':''}`;
+    return `<div class="jn ${x.k==='goal'?'goal':''} ${x.cls} ${x.auto?'auto':''} ${pos}" style="left:${P[i].toFixed(2)}%;${PCOL[x.k]&&x.k!=='goal'?`--nc:var(${PCOL[x.k]})`:''}" data-tip="${esc(esc(tip))}"><span class="jnn">${esc(x.name)}</span><i class="jnd">${icon}</i><span class="jnt num">${dt||'&nbsp;'}</span>${em?`<em>${esc(em)}</em>`:''}</div>`;
   }).join('');
   // 経過の点（NA 完了・障壁）と、次の NA の予定
   const stack={};
@@ -1893,7 +1913,8 @@ function jrRow(y){
   else if(bd){ const r=days(ymd(bd),TODAY); lead = `${bl}まで ${r===0?'今日':`あと${r}日`}`; }
   else lead='';
   const sub=[];
-  if(!won && !hasMs) sub.push(`<span class="dim">到達予定は未設定です（商談の入力で自動で入ります）</span>`);
+  if(!won && !hasPlan) sub.push(`<span class="dim">到達予定は未設定です（申込完了日か課金開始日を入れると自動で入ります）</span>`);
+  else if(!won && !hasMs) sub.push(`<span class="dim">到達予定は自動の目安です（商談の入力で確定します）</span>`);
   const since=new Date(TODAY); since.setDate(since.getDate()-14); const S=dstr(since);
   const recent=L.filter(e=>e.t==='na'&&ld(e.at)>=S).length;
   if(recent) sub.push(`<span class="mo">直近2週間でアクション ${recent}件完了</span>`);

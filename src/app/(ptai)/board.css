@@ -1564,3 +1564,7 @@ table.deals.iss{min-width:880px}
 .efsub.sfsub{margin-top:18px}
 .sfdeal{margin:0 0 10px}
 .dflow-l .phja-i{color:var(--muted);font-size:11.5px}
+
+/* 道のりの節目のうち、まだ保存していない自動の目安は点線で示す */
+.jn.auto .jnd{border-bottom:1px dashed var(--muted)}
+.jn.auto > i:not(.jnd){opacity:.55}
