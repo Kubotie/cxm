@@ -542,6 +542,11 @@ function rebuildDeals(){ RAW.companies.forEach((c,i)=>{ DEALS[i]=buildDeal(c,i);
 /* ===================== 計算 ===================== */
 const yen = v => (Math.round(v/10000)).toLocaleString('ja-JP');
 const man = v => yen(v)+'万';
+/* 【移植による変更 9/9】小さい文字（13px 以下）の金額は小数第1位まで出す。
+   万円に丸めると 47万 と 47万 が別の額だったりして感覚が合わないため（2026-10-02 Kubotie）。
+   大きく出す数字（KPI の値・計画の積み上げ・ステージバー・グラフ軸）は従来どおり整数。 */
+const man1 = v => (Math.round(v/1000)/10).toLocaleString('ja-JP',
+  {minimumFractionDigits:1, maximumFractionDigits:1})+'万';
 const total = d => d.m + (d.add||0);   // 合算MRR ＝ 現在MRR ＋ 追加MRR
 const expected = d => !(d.add>=AI_MIN) ? 0 : (d.deals&&d.deals.length>1) ? d.m*PROB[d.ph] + d.deals.reduce((s,x)=>s+dealExp(x),0) : total(d) * PROB[d.ph];
 const wonAdd = d => (d.deals&&d.deals.length>1) ? d.deals.filter(x=>x.ph==='CLOSED_WON').reduce((s,x)=>s+(x.add||0),0) : (d.add||0);
@@ -764,8 +769,8 @@ function renderFunnel(){
       ${PH_JA[s]?`<div class="phja">${PH_JA[s]}</div>`:''}
       <div class="cnt num">${l.length}<small>社</small></div>
       <div class="fb"><i style="width:${amt/maxAmt*100}%;background:var(${PCOL[s]})"></i></div>
-      <div class="amt num"><small>現在MRR</small><b>${man(amt)}</b></div>
-      <div class="pr num"><small>期待値</small>${man(ex)}<span>${Math.round(PROB[s]*100)}%</span></div></div>`;}).join('');
+      <div class="amt num"><small>現在MRR</small><b>${man1(amt)}</b></div>
+      <div class="pr num"><small>期待値</small>${man1(ex)}<span>${Math.round(PROB[s]*100)}%</span></div></div>`;}).join('');
   document.querySelectorAll('.fcol').forEach(c=>{const f=()=>{const s=c.dataset.ph;phaseFilter=phaseFilter===s?null:s;FS.phase=new Set(phaseFilter?[phaseFilter]:[]);saveFS();msSummary();renderFunnel();renderDeals();};c.onclick=f;c.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();f();}};});
   renderPhasePanel();
 }
@@ -787,10 +792,10 @@ function renderPhasePanel(){
     const fl=flagsOf(d);
     return `<div class="pcard ${d.ps==='STAY'?'stay':''}" role="button" tabindex="0" data-id="${d.id}">
       <div class="r1"><div class="co">${esc(d.n)}<small>${TIER_JP(d.t)}・${PS_JP[d.ps]||'—'}・${IND_JP[d.ind]||'業種未設定'}</small></div><span class="own"><i style="background:${CONFIG.memberColor[d.owners[0]]}"></i>${d.owners.join('・')}</span></div>
-      <div class="r2"><div>現在MRR<b>${man(d.m)}</b></div><div>期待値<b>${man(expected(d))}</b></div><div>最終更新<b>${d.le.slice(5).replace('-','/')}</b></div></div>
+      <div class="r2"><div>現在MRR<b>${man1(d.m)}</b></div><div>期待値<b>${man1(expected(d))}</b></div><div>最終更新<b>${d.le.slice(5).replace('-','/')}</b></div></div>
       ${fl.length?`<div class="r3">${fl.map(([c,l])=>`<span class="chip ${c}">${c&&c!=='split'?'<i></i>':''}${esc(l)}</span>`).join('')}</div>`:''}
       <div class="na"><b>Next</b> ${esc(d.naHead||'（未入力）')}${d.nd?` <span class="${late?'late':soon?'soon':''}">／${d.nd.slice(5).replace('-','/')}${late?'（'+days(TODAY,ymd(d.nd))+'日超過）':''}</span>`:''}</div></div>`;};
-  el.innerHTML=`<div class="ph-h"><h3><i style="background:var(${PCOL[s]})"></i>${PH_JP[s]} の企業 <span class="sub" style="margin-left:0">${list.length}社・現在MRR ${man(sum(list,total))}・期待値 ${man(sum(list,expected))}</span></h3>
+  el.innerHTML=`<div class="ph-h"><h3><i style="background:var(${PCOL[s]})"></i>${PH_JP[s]} の企業 <span class="sub" style="margin-left:0">${list.length}社・現在MRR ${man1(sum(list,total))}・期待値 ${man1(sum(list,expected))}</span></h3>
     <span class="sub"><button type="button" id="ppToTable">企業一覧で見る ↓</button>　<button type="button" id="ppClose">閉じる ×</button></span></div>
     <div class="plist">${list.map(card).join('')||'<div class="empty">このステージの企業はありません</div>'}</div>`;
   el.querySelectorAll('.pcard').forEach(c=>{const f=()=>openDeal(+c.dataset.id,'sum');c.onclick=f;c.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();f();}};});
@@ -875,12 +880,12 @@ function renderDeals(){
       <td class="num">${TIER_JP(d.t)}</td>
       <td title="${esc(phBoth(d.ph))}${nD>1?'（いちばん進んでいる商談のフェーズ）':''}"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}</td>
       <td class="r num">${(()=>{ const L=mrrLift(d);
-        if(L.next) return `${man(d.m)}<span class="mrrnext" title="受注済み。課金開始で ${man(d.m+L.next)} になります">${L.nextDate?mdj(L.nextDate)+'〜':''} ${man(d.m+L.next)}</span>`;
-        return man(d.m); })()}${(()=>{ const dl=d.m-baseMrrOf(d);
-        return `<div class="mdelta ${dl>0?'up':dl<0?'dn':''}" title="期初MRR ${man(baseMrrOf(d))}（初回同期を焼き付けたもの）">（${dl>0?'＋':dl<0?'−':'±'}${man(Math.abs(dl))}）</div>`; })()}</td>
+        if(L.next) return `${man1(d.m)}<span class="mrrnext" title="受注済み。課金開始で ${man1(d.m+L.next)} になります">${L.nextDate?mdj(L.nextDate)+'〜':''} ${man1(d.m+L.next)}</span>`;
+        return man1(d.m); })()}${(()=>{ const dl=d.m-baseMrrOf(d);
+        return `<div class="mdelta ${dl>0?'up':dl<0?'dn':''}" title="期初MRR ${man1(baseMrrOf(d))}（初回同期を焼き付けたもの）">（${dl>0?'＋':dl<0?'−':'±'}${man1(Math.abs(dl))}）</div>`; })()}</td>
       <td class="r num aimc">${aimCell(d)}</td>
-      <td class="r num">${m2(d)?man(m2(d)):'<span class="dim">—</span>'}</td>
-      <td class="r num">${m3(d)?man(m3(d)):'<span class="dim">—</span>'}</td>
+      <td class="r num">${m2(d)?man1(m2(d)):'<span class="dim">—</span>'}</td>
+      <td class="r num">${m3(d)?man1(m3(d)):'<span class="dim">—</span>'}</td>
       <td></td><td></td>
       <td></td>
       <td style="white-space:nowrap">${IND_JP[d.ind]||'<span class="dim">—</span>'}</td>
@@ -900,8 +905,8 @@ function renderDeals(){
       <td></td><td></td>
       <td>${phChip(d,x)}</td>
       <td></td><td></td>
-      <td class="r num">${x.add?man(x.add)+(x.src&&x.src.add==='edit'&&x.primary?'<span class="chip estm">入力</span>':''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
-      <td class="r num">${x.add?man((x.add||0)*(FORECAST[x.ph]||0)):'<span class="dim">—</span>'}</td>
+      <td class="r num">${x.add?man1(x.add)+(x.src&&x.src.add==='edit'&&x.primary?'<span class="chip estm">入力</span>':''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
+      <td class="r num">${x.add?man1((x.add||0)*(FORECAST[x.ph]||0)):'<span class="dim">—</span>'}</td>
       <td class="num">${x.apply?dateCell(x.apply.slice(5).replace('-','/'), x.apply<dstr(TODAY)&&!['CLOSED_WON','CLOSED_LOST','VERBAL','WON'].includes(x.ph), x.apply.slice(0,4)!==String(TODAY.getFullYear())?`<span class="dim">'${x.apply.slice(2,4)}</span>`:''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
       <td class="num">${x.close?dateCell(x.close.replace('-','/'), x.close<ymOf(TODAY)&&!fin, ''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
       <td class="brc">${x.bs||x.br?`${x.bs?`<span class="chip bs-${BS_OPTS.indexOf(x.bs)}">${esc(x.bs)}</span>`:''}${x.br?`<div class="brt" title="${esc(x.br)}">${esc(x.br)}</div>`:''}`:(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
@@ -912,7 +917,7 @@ function renderDeals(){
       <td class="num ${naLate?'late':naSoon?'soon':''}">${na.date?na.date.slice(5).replace('-','/'):'<span class="dim">—</span>'}${naLate?`<div style="font-size:11px">${days(TODAY,ymd(na.date))}日超過</div>`:''}</td>
       <td class="num">${x.up?x.up.slice(5).replace('-','/'):'<span class="dim">—</span>'}</td></tr>`;}).join('');
     return par+subs+sep;}).join('');
-  const foot=`<tfoot><tr><td colspan="4">絞り込み結果 ${all.length}社の合計</td><td class="r num">${man(all.reduce((s,d)=>s+d.m,0))}</td><td class="r num">${man(all.reduce((s,d)=>s+aimOf(d),0))}</td><td class="r num">${man(all.reduce((s,d)=>s+m2(d),0))}</td><td class="r num">${man(all.reduce((s,d)=>s+m3(d),0))}</td><td colspan="9"></td></tr></tfoot>`;
+  const foot=`<tfoot><tr><td colspan="4">絞り込み結果 ${all.length}社の合計</td><td class="r num">${man1(all.reduce((s,d)=>s+d.m,0))}</td><td class="r num">${man1(all.reduce((s,d)=>s+aimOf(d),0))}</td><td class="r num">${man1(all.reduce((s,d)=>s+m2(d),0))}</td><td class="r num">${man1(all.reduce((s,d)=>s+m3(d),0))}</td><td colspan="9"></td></tr></tfoot>`;
   const tbl=document.getElementById('deals'); tbl.innerHTML=head+`<tbody>${rows||'<tr><td colspan="17" class="dim" style="padding:18px 8px">条件に合う企業はありません</td></tr>'}</tbody>`+foot;
   renderPager(all.length,pages);
   tbl.querySelectorAll('tbody tr[data-id]').forEach(tr=>tr.onclick=e=>e.target.closest('input')?null:tr.dataset.dk?openDeal(+tr.dataset.id,'edit',tr.dataset.dk):openDeal(+tr.dataset.id,'sum'));
@@ -1367,20 +1372,30 @@ document.addEventListener('mousemove',e=>{const t=e.target.closest('[data-tip]')
 /* ===================== 目標の積み上げ ===================== */
 const aimOf = d => { const e=EDITS[d.cid]; return (e&&e.company&&+e.company.aim)||0; };
 const goalAdd = d => Math.max(d.add>=AI_MIN?d.add:0, aimOf(d)>=AI_MIN?aimOf(d):0);   // 目標に数える追加分（商談の追加MRR か 狙い の大きい方）
+/* ═══ 【移植による変更 9/9】KPI の「計画」カードと同じ数にする（2026-10-02）═══
+   以前は
+     ・対象が 担当フィルタ（FS.owner）… KPI は view だけを見る
+     ・金額が 現在MRR ＋ goalAdd（10万円の足切りつき）… KPI は ①の合算
+   と二重にずれていて、同じ「計画」なのに別の額が出ていた。
+   **どちらも ①（目標）追加MRR の合算**に揃える。内訳は商談の進み具合で割る
+   （契約済み＋商談中＋まだ商談なし ＝ 合計 になるよう、会社を 3 つに振り分ける）。 */
 function goalCtx(){
-  const ms = view!=='team' ? [view] : (FS.owner.size ? [...FS.owner] : null);
-  const tgt = ms ? ms.reduce((t,m)=>t+(CONFIG.targets[m]||0),0) : CONFIG.targetMrr;
-  const w = d => ms ? ms.reduce((t,m)=>t+share(d,m),0) : 1;
-  return {ms,tgt,w};
+  // KPI カードと同じ土台。担当で絞り込んでも計画の数字は動かさない
+  const tgt = view==='team' ? CONFIG.targetMrr : (CONFIG.targets[view]||0);
+  const w = d => view==='team' ? 1 : share(d, view);
+  return {ms: view==='team'?null:[view], tgt, w};
 }
 function goalRows(){
   const {tgt,w}=goalCtx(); let sW=0, sD=0, sA=0, n=0;
-  DEALS.forEach(d=>{ if(d.ph==='CLOSED_LOST') return; const k=w(d); if(!k) return; const g=goalAdd(d); if(!g) return; n++;
-    const all=(d.m+g)*k;
-    const wv=won(d)*k;                                   // 契約確定した商談の分（足切り後）
-    const openAdd=(d.deals||[]).filter(x=>!['CLOSED_WON','CLOSED_LOST'].includes(x.ph)).reduce((t,x)=>t+(x.add||0),0);
-    const dv=d.add>=AI_MIN ? Math.min(all-wv, (wv?openAdd:d.m+openAdd)*k) : 0;   // 商談中の分
-    sW+=wv; sD+=Math.max(0,dv); sA+=Math.max(0,all-wv-Math.max(0,dv)); });
+  scope().forEach(d=>{
+    const k=w(d); if(!k) return;
+    const a=aimOf(d); if(!a) return;        // ①が入っている会社だけ数える
+    n++;
+    const v=a*k;
+    if(wonAmt(d)>0)                sW+=v;   // 受注した商談がある
+    else if(openDealsOf(d).length) sD+=v;   // 商談はあるがまだ受注していない
+    else                           sA+=v;   // まだ商談なし
+  });
   return {tgt,won:sW,deal:sD,aim:sA,n};
 }
 function renderGoal(){
@@ -1388,16 +1403,16 @@ function renderGoal(){
   const pct=G.tgt?Math.round(tot/G.tgt*100):0, gap=Math.max(0,G.tgt-tot);
   const ticks=[.25,.5,.75].map(r=>`<i class="tk" style="left:${x(G.tgt*r)}%"></i>`).join('');
   const el=document.getElementById('goalSum');
-  el.innerHTML=`<div class="ghead"><span class="gkind" data-tip="${esc('<b>計画の積み上げ</b>各社の「現在MRR ＋ 目標として狙う追加MRR」の合計です（実績ではありません）。（目標）追加MRR と（見込）追加MRR の大きい方を使い、10万円以上の会社だけ数えます。<br>実績は上の「確定MRR」を見てください')}">計画</span><span class="glab">目標の積み上げ</span><span class="gnow">${man(tot)}</span>${G.tgt?`<span class="gtgt">/ 目標 ${man(G.tgt)}</span><span class="gpct ${gap?'':'done'}">${pct}%</span><span class="ggap">${gap?`あと<b>${man(gap)}</b>`:'<b>目標に到達</b>'}</span>`:'<span class="gtgt">目標は未設定</span>'}</div>
+  el.innerHTML=`<div class="ghead"><span class="gkind" data-tip="${esc('<b>計画の積み上げ</b>各社の ①（目標）追加MRR の合計です（実績ではありません）。上の「計画」カードと同じ数字で、内訳は商談の進み具合で分けています。現在MRR は足しません。')}">計画</span><span class="glab">目標の積み上げ</span><span class="gnow">${man(tot)}</span>${G.tgt?`<span class="gtgt">/ 目標 ${man(G.tgt)}</span><span class="gpct ${gap?'':'done'}">${pct}%</span><span class="ggap">${gap?`あと<b>${man(gap)}</b>`:'<b>目標に到達</b>'}</span>`:'<span class="gtgt">目標は未設定</span>'}</div>
     <div class="gbar" role="img" aria-label="計画の積み上げ ${man(tot)}円（目標 ${man(G.tgt)}円）。内訳 契約済み ${man(G.won)}円・商談中 ${man(G.deal)}円・まだ商談なし ${man(G.aim)}円"><i class="g1" style="left:0;width:${x(G.won)}%"></i><i class="g2" style="left:${x(G.won)}%;width:${x(G.deal)}%"></i><i class="g3" style="left:${x(G.won+G.deal)}%;width:${x(G.aim)}%"></i>${ticks}</div>
-    <div class="gleg"><span class="gleg-l">内訳</span><span><i class="sw" style="background:var(--gold)"></i>契約済み <b>${man(G.won)}</b></span><span><i class="sw" style="background:var(--accent)"></i>商談中 <b>${man(G.deal)}</b></span><span><i class="sw" style="background:color-mix(in oklab,var(--accent) 40%,transparent)"></i>まだ商談なし <b>${man(G.aim)}</b></span><span style="margin-left:auto">${G.n}社</span></div>`;
+    <div class="gleg"><span class="gleg-l">内訳</span><span><i class="sw" style="background:var(--gold)"></i>契約済み <b>${man1(G.won)}</b></span><span><i class="sw" style="background:var(--accent)"></i>商談中 <b>${man1(G.deal)}</b></span><span><i class="sw" style="background:color-mix(in oklab,var(--accent) 40%,transparent)"></i>まだ商談なし <b>${man1(G.aim)}</b></span><span style="margin-left:auto">${G.n}社</span></div>`;
   const go=()=>{ sortKey='aim'; sortDir=-1; renderDeals(); };
   el.onclick=go; el.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } };
 }
 function aimCell(d){
   if(d.ph==='CLOSED_LOST') return '<span class="dim">—</span>';
   const a=aimOf(d), low=a&&a<AI_MIN;
-  return a ? `<button type="button" class="aimv ${low?'low':''}" data-aimv="${d.id}" title="${low?'10万円未満は目標に数えません。':''}クリックで編集">${man(a)}<i aria-hidden="true">✎</i></button>`
+  return a ? `<button type="button" class="aimv ${low?'low':''}" data-aimv="${d.id}" title="${low?'10万円未満は目標に数えません。':''}クリックで編集">${man1(a)}<i aria-hidden="true">✎</i></button>`
            : `<button type="button" class="aimv empty" data-aimv="${d.id}" title="この会社で追加したいMRRを入力">＋目標</button>`;
 }
 function wireAim(root){
@@ -1959,7 +1974,7 @@ function editForm(d){
     <div class="efrow wide"><label for="efLostD">失注理由の詳細</label><textarea id="efLostD" rows="2">${esc(v.lostD)}</textarea></div>
     ${!isMain&&!isNew?`<div class="edact deldock" id="efDelDock"><button type="button" class="dellink" id="efDel">${wonLocked(x)?'この商談の削除を申請':'この商談を削除'}</button></div>`:''}
 </div>` : '';
-  const head = (y,open,no) => `<button type="button" class="dhead" data-dsel="${esc(y.key)}" aria-expanded="${open}"><span class="dcar" aria-hidden="true">${open?'▾':'▸'}</span>${no?`<span class="dno num">商談${no}</span>`:'<span></span>'}<span class="dh-n" title="${esc(y.name)}">${esc(y.name.replace(/^Ptengine AI\s*[-－]\s*/,''))}</span><span class="chip ph" style="background:var(${PCOL[y.ph]});${y.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[y.ph]}</span>${(y.pending&&y.pending!==y.ph)||y.pe||y.pdel?'<span class="chip estm">承認待ち</span>':''}<span class="dh-m"><small>追加MRR</small><b class="num">${y.add?man(y.add):'—'}</b></span><span class="dh-m"><small>申込</small><b class="num">${y.apply?mdj(y.apply):'—'}</b></span><span class="dh-m"><small>課金</small><b class="num">${y.close?y.close.replace('-','/'):'—'}</b></span></button>`;
+  const head = (y,open,no) => `<button type="button" class="dhead" data-dsel="${esc(y.key)}" aria-expanded="${open}"><span class="dcar" aria-hidden="true">${open?'▾':'▸'}</span>${no?`<span class="dno num">商談${no}</span>`:'<span></span>'}<span class="dh-n" title="${esc(y.name)}">${esc(y.name.replace(/^Ptengine AI\s*[-－]\s*/,''))}</span><span class="chip ph" style="background:var(${PCOL[y.ph]});${y.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[y.ph]}</span>${(y.pending&&y.pending!==y.ph)||y.pe||y.pdel?'<span class="chip estm">承認待ち</span>':''}<span class="dh-m"><small>追加MRR</small><b class="num">${y.add?man1(y.add):'—'}</b></span><span class="dh-m"><small>申込</small><b class="num">${y.apply?mdj(y.apply):'—'}</b></span><span class="dh-m"><small>課金</small><b class="num">${y.close?y.close.replace('-','/'):'—'}</b></span></button>`;
   const dOrd = y => y.ph==='CLOSED_WON'?1:y.ph==='CLOSED_LOST'?2:0;
   const nAct=d.deals.filter(y=>!dOrd(y)).length, nWon=d.deals.filter(y=>dOrd(y)===1).length, nLost=d.deals.filter(y=>dOrd(y)===2).length;
   /* 【移植による変更 9/9】商談の上＝新しい商談を Salesforce から読み込む */
