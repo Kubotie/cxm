@@ -24,6 +24,24 @@ const msN = m => { if(!m||typeof m!=='object') return m||null; const o={}; Objec
 const PH_JP = {INACTIVE:'Inactive',ACTIVE:'Active',GOAL_SHARED:'Goal Shared',QUALIFIED_CHAMPION:'Qualified Champion',EVALUATING:'Evaluating',PROBABLE:'Probable',VERBAL:'Verbal',WON:'Won',CLOSED_WON:'受注 (Closed Won)',ADMIN_CLOSE:'Admin Close',CLOSED_LOST:'Close Lost'};
 const PH_SHORT = {INACTIVE:'Inactive',ACTIVE:'Active',GOAL_SHARED:'Goal Shared',QUALIFIED_CHAMPION:'Qualified',EVALUATING:'Evaluating',PROBABLE:'Probable',VERBAL:'Verbal',WON:'Won',CLOSED_WON:'受注',ADMIN_CLOSE:'Admin Close',CLOSED_LOST:'失注'};
 const PROB = {INACTIVE:0,ACTIVE:0,GOAL_SHARED:.10,QUALIFIED_CHAMPION:.30,EVALUATING:.40,PROBABLE:.60,VERBAL:.90,WON:1,CLOSED_WON:1,ADMIN_CLOSE:0,CLOSED_LOST:0};   /* Salesforce の DefaultProbability をそのまま */
+/* 【移植による変更 9/9】社内の言い方。フェーズ名だけだと認識がずれるので
+   英語名の下に小さく出す（2026-10-02 Kubotie 指定の対応表）。
+
+   ⚠ Inactive・Probable・Admin Close は対応表に無かったので**空のまま**。
+     推測で埋めない。決まったらここに足す。
+   ⚠ 並び順は Salesforce の SortOrder のまま（Qualified Champion → Evaluating）。
+     対応表は「トライアル開始済み（Evaluating）→ トライアル運用評価段階
+     （Qualified Champion）」の順で書かれていて**逆**なので、
+     並べ替えるかどうかは別途決めること。 */
+const PH_JA = {
+  INACTIVE:'', ACTIVE:'初回アポ実施前', GOAL_SHARED:'初回アポ実施済み',
+  QUALIFIED_CHAMPION:'トライアル運用評価段階', EVALUATING:'トライアル開始済み',
+  PROBABLE:'', VERBAL:'口頭合意獲得済み', WON:'申込用紙回収済み',
+  CLOSED_WON:'契約締結済み', ADMIN_CLOSE:'', CLOSED_LOST:'失注',
+};
+/** 「Verbal（口頭合意獲得済み）」のように並べる。日本語が無いフェーズはそのまま */
+const phBoth = p => PH_JA[p] ? `${PH_JP[p]}（${PH_JA[p]}）` : PH_JP[p];
+
 const PCOL = {INACTIVE:'--axis',ACTIVE:'--p1',GOAL_SHARED:'--p2',QUALIFIED_CHAMPION:'--p4',EVALUATING:'--p5',PROBABLE:'--p6',VERBAL:'--p7',WON:'--p8',CLOSED_WON:'--gold',ADMIN_CLOSE:'--axis',CLOSED_LOST:'--axis'};   // 進むほど青が濃くなり、受注はゴールド
 const RAW_JP = {NONE:'案件なし',NEW:'新規',SCREENING:'スクリーニング',MEETING:'商談',PROPOSAL:'提案',CUSTOMER:'顧客化'};
 const TO_PHASE_PS = ['APPO_SET','APPO_REQUESTING','INTRO_PLANNED','CONSIDERING','PASSED'];
@@ -727,8 +745,9 @@ function renderFunnel(){
   document.getElementById('funnel').innerHTML=PHASES.map(s=>{const l=ds.filter(d=>d.ph===s); const amt=sum(l,total), ex=sum(l,expected);
     const PH_2L={INACTIVE:['Inactive',''],ACTIVE:['Active',''],GOAL_SHARED:['Goal','Shared'],QUALIFIED_CHAMPION:['Qualified','Champion'],EVALUATING:['Evaluating',''],PROBABLE:['Probable',''],VERBAL:['Verbal',''],WON:['Won',''],CLOSED_WON:['受注','Closed Won'],ADMIN_CLOSE:['Admin','Close'],CLOSED_LOST:['Close','Lost']};
     const n=PHASES.indexOf(s)+1, lost=s==='CLOSED_LOST';
-    return `<div class="fcol ${lost?'lost':''} ${l.length?'':'zero'}" role="button" tabindex="0" data-ph="${s}" aria-pressed="${phaseFilter===s}" data-tip="${esc(`<b>${PH_JP[s]}</b>${l.length}社　現在MRR ${man(amt)}<br>確率 ${Math.round(PROB[s]*100)}%　期待値 ${man(ex)}<br>クリックでこのフェーズの企業を表示`)}">
+    return `<div class="fcol ${lost?'lost':''} ${l.length?'':'zero'}" role="button" tabindex="0" data-ph="${s}" aria-pressed="${phaseFilter===s}" data-tip="${esc(`<b>${phBoth(s)}</b>${l.length}社　現在MRR ${man(amt)}<br>確率 ${Math.round(PROB[s]*100)}%　期待値 ${man(ex)}<br>クリックでこのフェーズの企業を表示`)}">
       <div class="ph">${lost?'':`<span class="no num">${n}</span>`}<span class="nm">${(PH_2L[s]||[PH_JP[s],''])[0]}${(PH_2L[s]||[])[1]?`<small>${PH_2L[s][1]}</small>`:''}</span></div>
+      ${PH_JA[s]?`<div class="phja">${PH_JA[s]}</div>`:''}
       <div class="cnt num">${l.length}<small>社</small></div>
       <div class="fb"><i style="width:${amt/maxAmt*100}%;background:var(${PCOL[s]})"></i></div>
       <div class="amt num"><small>現在MRR</small><b>${man(amt)}</b></div>
@@ -840,7 +859,7 @@ function renderDeals(){
       <td class="co" title="${esc(d.n)}">${nD?`<button type="button" class="caret" data-caret="${d.cid}" aria-expanded="${open}" aria-label="${open?'商談を閉じる':'商談を開く'}">${open?'▼':'▶'}</button>`:''}${esc(d.n)}<span class="cmeta">${nD?`<span class="chip dcnt">商談 ${nD}件</span>`:''}${RAW.companies[d.id]&&RAW.companies[d.id].newco?(()=>{ const sy=RAW.companies[d.id].sync||{}; const ok=sy.notion==='done'&&sy.twenty==='done'; return `<span class="chip ${ok?'ncok':'unsync'}" title="Notion：${sy.notion==='done'?'作成済み':'未作成'}／Twenty：${sy.twenty==='done'?'作成済み':'同期待ち'}">${ok?'新規':'新規・未同期'}</span>`; })():''}</span></td>
       <td>${d.owners.map(o=>`<span class="ownerchip"><i style="background:${CONFIG.memberColor[o]}"></i>${o}</span>`).join('<br>')}</td>
       <td class="num">${TIER_JP(d.t)}</td>
-      <td title="${nD>1?'いちばん進んでいる商談のフェーズ':''}"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}</td>
+      <td title="${esc(phBoth(d.ph))}${nD>1?'（いちばん進んでいる商談のフェーズ）':''}"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}</td>
       <td class="r num">${(()=>{ const L=mrrLift(d);
         if(L.next) return `${man(d.m)}<span class="mrrnext" title="受注済み。課金開始で ${man(d.m+L.next)} になります">${L.nextDate?mdj(L.nextDate)+'〜':''} ${man(d.m+L.next)}</span>`;
         return man(d.m); })()}${(()=>{ const dl=d.m-baseMrrOf(d);
@@ -1865,7 +1884,7 @@ function dealSum(d,y){
     return `<div class="dsum wonc"><div class="dwon"><i aria-hidden="true">✓</i><b>受注しました</b>${y.apply?`<span><small>申込完了</small><b class="num">${mdj(y.apply)}</b></span>`:''}${bl?`<span><small>課金開始</small><b class="num">${mdj(bl)}</b>${bl>dstr(TODAY)?`<em>${relDay(bl)}</em>`:''}</span>`:''}${y.add?`<span class="amt"><b class="num">＋${man(y.add)}</b>/月</span>`:''}</div>${aprBox(d,y)}${jrList(y,L)}</div>`; }
   const T=dstr(TODAY), idx=PH_FLOW.indexOf(y.ph), next=idx>=0&&idx<PH_FLOW.length-1?PH_FLOW[idx+1]:(y.ph==='INACTIVE'?PH_FLOW[0]:null);
   const bar=`<div class="dflow" aria-label="フェーズ ${PH_JP[y.ph]}">${PH_FLOW.map((p,i)=>`<i class="${i<idx?'done':i===idx?'cur':''}" title="${PH_JP[p]}"></i>`).join('')}</div>
-    <div class="dflow-l"><b>${PH_JP[y.ph]}</b>${next&&y.ph!=='CLOSED_WON'?`<span>次は ${PH_JP[next]}</span>`:''}</div>`;
+    <div class="dflow-l"><b title="${esc(phBoth(y.ph))}">${PH_JP[y.ph]}</b>${PH_JA[y.ph]?`<span class="phja-i">${PH_JA[y.ph]}</span>`:''}${next&&y.ph!=='CLOSED_WON'?`<span>次は ${PH_JP[next]}${PH_JA[next]?`（${PH_JA[next]}）`:''}</span>`:''}</div>`;
   const date=(l,v)=>v?`<span class="ddate ${v<T&&y.ph!=='CLOSED_WON'&&l==='申込完了'?'late':''}"><small>${l}</small><b class="num">${mdj(v)}</b>${y.ph!=='CLOSED_WON'?`<em>${relDay(v)}</em>`:''}</span>`:`<span class="ddate none"><small>${l}</small><b>—</b></span>`;
   const bill = y.bill || (y.close?y.close+'-01':null);
   const naLate=y.na&&y.naDate&&y.naDate<T;
@@ -1893,7 +1912,7 @@ function editForm(d){
   const isOpen = x ? DEAL_OPEN===d.cid+'|'+key : editDeal==='new';
   const FIELDS = isOpen ? `<div class="dbody">${wonLocked(x)?`<div class="lockn"><b>受注済みの商談です。</b>ここで保存した変更と削除は、Utty が承認すると反映されます。${x.pe||x.pdel?'すでに承認待ちの申請があります（新しく保存すると置き換わります）。':''}</div>`:''}
     <div class="efrow wide"><label for="efName">商談名</label><input id="efName" type="text" value="${esc(v.name)}" style="font:inherit;font-size:13px;padding:6px 8px;border-radius:7px;border:1px solid var(--ring);background:var(--surface);color:var(--ink);width:100%" placeholder="Ptengine AI - 企業名（部門名）"></div>
-    <div class="efrow"><label for="efPhase">フェーズ</label><select id="efPhase">${opt(PHASES,(x&&x.pending)||v.phase,p=>PH_JP[p]+(p==='CLOSED_WON'&&!IS_APPROVER?'（承認が必要）':''))}</select>${badge('ph')}${isMain&&x&&x.est?`<span class="efhint">暫定：${PH_JP[x.ph]}</span>`:''}</div>
+    <div class="efrow"><label for="efPhase">フェーズ</label><select id="efPhase">${opt(PHASES,(x&&x.pending)||v.phase,p=>phBoth(p)+(p==='CLOSED_WON'&&!IS_APPROVER?'・承認が必要':''))}</select>${badge('ph')}${isMain&&x&&x.est?`<span class="efhint">暫定：${PH_JP[x.ph]}</span>`:''}</div>
     <div class="efrow"><label for="efAdd">追加MRR</label><span class="inwrap"><input id="efAdd" type="number" min="0" step="1" inputmode="numeric" value="${v.add}"><em>万円</em></span>${badge('add')}</div>
     <div class="efrow"><label for="efApply">申込完了日</label><input id="efApply" type="date" value="${esc(v.apply)}">${badge('apply')}<span class="efhint">予定日。完了したら実際の日付に直す</span></div>
     <div class="efrow"><label for="efBill">課金開始日</label><input id="efBill" type="date" value="${esc(v.bill)}">${v.bill?badge('bill'):badge('close')}${!v.bill&&x&&x.close?`<span class="efhint">いまは課金開始月 ${x.close.replace('-','/')} のみ（日付を入れると置き換え）</span>`:''}</div>
@@ -1901,11 +1920,22 @@ function editForm(d){
     <div class="msbox" id="msBox" data-saved="${MS_PH.some(p=>v.ms[p])?'1':''}">
       <div class="msh"><span class="mt">到達予定</span><span class="qi" data-tip="${esc(MS_TIP)}">?</span>
         <span class="msseg" role="radiogroup" aria-label="逆算の基準">${[['apply','申込完了',v.apply],['bill','課金開始',v.bill]].map(([k,l,dv])=>`<label><input type="radio" name="msBase" value="${k}" ${v.msBase===k?'checked':''}>${l}<b data-msb="${k}">${dv?mdj(dv):'<i>未入力</i>'}</b></label>`).join('')}</span></div>
-      <ol class="mstl">${MS_PH.map(p=>{ const r=reachedPh(xr,p); return `<li class="${r?'done':''}" data-p="${p}"><span class="dt"></span><span class="pl" title="${PH_JP[phOf(p)]}">${PH_SHORT[phOf(p)]||PH_JP[phOf(p)]}</span>${r?'<span class="dv">到達済み</span><span class="sb"></span>':`<label class="dv none"><span class="dvt">—</span><input type="date" data-ms="${p}" min="2020-01-01" max="2099-12-31" value="${esc(v.ms[p]||'')}" ${v.ms[p]?'data-manual="1"':''} tabindex="0" aria-label="${PH_JP[p]}の予定日"></label><span class="sb"></span>`}</li>`; }).join('')}
+      <ol class="mstl">${MS_PH.map(p=>{ const r=reachedPh(xr,p); return `<li class="${r?'done':''}" data-p="${p}"><span class="dt"></span><span class="pl" title="${esc(phBoth(phOf(p)))}">${PH_SHORT[phOf(p)]||PH_JP[phOf(p)]}${PH_JA[phOf(p)]?`<small class="plja">${PH_JA[phOf(p)]}</small>`:''}</span>${r?'<span class="dv">到達済み</span><span class="sb"></span>':`<label class="dv none"><span class="dvt">—</span><input type="date" data-ms="${p}" min="2020-01-01" max="2099-12-31" value="${esc(v.ms[p]||'')}" ${v.ms[p]?'data-manual="1"':''} tabindex="0" aria-label="${PH_JP[p]}の予定日"></label><span class="sb"></span>`}</li>`; }).join('')}
         <li class="base"><span class="dt"></span><span class="pl" id="msBaseL">申込完了</span><span class="dv" id="msBaseD">—</span><span class="sb">基準</span></li></ol>
       <div class="msf"><span id="msNote"></span><button type="button" id="msReset" hidden>↺ 基準から引き直す</button></div>
     </div>
     <div class="efrow"><label for="efTerm">契約期間</label><select id="efTerm">${opt(['12','24','36'],v.term,y=>y+'か月')}</select>${badge('term')}</div>
+    ${(() => {
+      if(!x || !String(x.key).startsWith('sf:')) return '';
+      /* 【移植による変更 9/9】商談の中の Salesforce 連携は、下の 3 項目のためのもの。
+         離れた場所に置くと気づかれないので、**この 3 項目のすぐ上**に出す（2026-10-02）。
+         押すのは開いている商談 1 件だけ。 */
+      return `<div class="efsub sfsub">Salesforce と双方向の 3 項目</div>
+      <div class="sfdeal">
+        <span class="sfd-n">保存するとそのまま Salesforce にも書き込みます${x.sfPending?'<b class="sfd-w">・未送信あり</b>':''}</span>
+        <button type="button" class="adddeal" data-sfpull="${esc(x.key)}">⟳ Salesforce から読み込む</button>
+        <button type="button" class="adddeal" data-sfpush="${esc(x.key)}">↗ Salesforce へ送信</button></div>`;
+    })()}
     <div class="efrow wide"><label for="efBr">障壁の内容</label><textarea id="efBr" rows="2">${esc(v.br)}</textarea></div>
     <div class="efrow wide"><label for="efNeed">ニーズ</label><textarea id="efNeed" rows="3">${esc(v.need)}</textarea></div>
     <div class="efrow wide"><label for="efNa">ネクストアクション</label><textarea id="efNa" rows="2" placeholder="この商談を前に進める次の1手（例：見積を提出し稟議の日程を確認）">${esc(v.na)}</textarea></div>
@@ -1930,16 +1960,6 @@ function editForm(d){
    <fieldset><legend>商談（Opportunity）に保存 <span class="sub">${legend}</span></legend>
 ${dealList}
    </fieldset>
-   ${(() => {
-      const y = d.deals.find(z => z.key === key);
-      if(!y || !String(y.key).startsWith('sf:')) return '';
-      /* 【移植による変更 9/9】商談の中の Salesforce 連携。
-         障壁・ニーズ・ネクストアクションだけが対象。金額・フェーズ・日付は Salesforce でしか直せない */
-      return `<div class="sfdeal"><span class="sfd-l">障壁・ニーズ・ネクストアクション</span>
-        <span class="sfd-n">保存すると Salesforce にも書き込みます${y.sfPending?'<b class="sfd-w">・未送信あり</b>':''}</span>
-        <button type="button" class="adddeal" data-sfpull="${esc(y.key)}">⟳ Salesforce から読み込む</button>
-        <button type="button" class="adddeal" data-sfpush="${esc(y.key)}">↗ Salesforce へ送信</button></div>`;
-    })()}
    <div class="edact"><span class="sub" id="efMsg" role="status">${d.edit?'最終入力 '+new Date(d.edit.updatedAt).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):''}</span>
     <button type="submit" class="btn" id="efSave">${isNew?'商談を追加':'保存'}</button></div>
   </form>`;

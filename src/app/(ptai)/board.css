@@ -1547,7 +1547,7 @@ table.deals.iss{min-width:880px}
 
 /* Salesforce 連携の導線（商談の上＝商談そのもの／商談の中＝3 項目） */
 .dcount.sftop{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
-.sfdeal{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 0;
+.sfdeal{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
   padding:10px 12px;border:1px solid var(--line);border-radius:10px;
   background:color-mix(in oklab,var(--accent) 5%,transparent)}
 .sfd-l{font-weight:700;font-size:13px;color:var(--ink)}
@@ -1555,3 +1555,12 @@ table.deals.iss{min-width:880px}
 .sfd-w{color:var(--crit);font-weight:700}
 .sfdeal .adddeal{margin-left:0}
 .sfdeal .adddeal:last-child{margin-left:auto}
+
+/* フェーズ名の下に出す社内の言い方 */
+.phja{font-size:10.5px;line-height:1.3;color:var(--muted);margin:2px 0 4px;word-break:keep-all}
+.mstl .pl .plja{display:block;font-size:10px;line-height:1.3;color:var(--muted);font-weight:500}
+
+/* 3 項目のすぐ上に置く Salesforce 連携 */
+.efsub.sfsub{margin-top:18px}
+.sfdeal{margin:0 0 10px}
+.dflow-l .phja-i{color:var(--muted);font-size:11.5px}
