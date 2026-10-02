@@ -10,6 +10,11 @@ export const BOARD_HTML = `
         <span>データ元 <b>Twenty CRM</b>（crm.ptengine.com）</span>
         <span>取得 <b class="num" id="fetched"></b></span>
         <span>期限 <b class="num">2026-12-31</b>（制度）／ 計画期間 2026-10 → 2027-09</span>
+        <!-- 【移植による変更 9/9】Salesforce の取り込みは 1 時間おきに自動で回るが、
+             いま入れた商談をすぐ出したいときのために手動の入口も置く。
+             以前はサクセス面の「商談」見出しの中だけで、見つけられなかった。 -->
+        <button type="button" class="adddeal" data-sfsync
+          title="Salesforce の PtAI 商談をいますぐ取り込みます（通常は1時間おきに自動で入ります）">⟳ Salesforce から更新</button>
       </div>
     </div>
     <nav class="views" id="views" aria-label="表示切替"></nav>

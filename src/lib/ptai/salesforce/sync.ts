@@ -121,7 +121,10 @@ export async function syncSalesforceOpportunities(
       // 「課金開始日」は Salesforce の Payment_Day__c
       billingDate:     o.billingDate,
       termMonths:      o.termMonths,
-      need:            o.needs,
+      // ⚠ need（ニーズ）・barrier（障壁）・ネクストアクションは**画面が正**
+      //   （2026-10-01 の決定）。Salesforce が空のときに上書きすると、
+      //   毎時の同期で入力が消える。値があるときだけ写す。
+      ...(o.needs ? { need: o.needs } : {}),
       lostDetail:      o.lostDetail,
       // 担当は Notion の担当3（Salesforce の OwnerId は社内ユーザーで体系が別）
       owner:           ownerOf(hit.owners),

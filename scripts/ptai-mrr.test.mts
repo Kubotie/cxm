@@ -64,13 +64,32 @@ test('Salesforce Account ID と社名の両方で引ける', () => {
   assert.equal(i.duplicates, 0);
 });
 
-test('同じ鍵が複数行あったら合計して、重複として数える', () => {
+test('同じ鍵が複数行あっても足さない（いちばん大きい値を採る）', () => {
+  // Company Database は同じ会社の行が複数ある（旧社名・プロジェクトごとの写しなど）。
+  // mrr は Account の値が各行に同じく写っているだけなので、足すと社数ぶん膨らむ。
+  // 2026-10-02 に 62万の会社が 125万 になっていた。
   const i = indexCompanies([
-    { sfId: '001X', name: 'A社', mrr: 100 },
-    { sfId: '001X', name: 'A社', mrr: 50 },
+    { sfId: '001X', name: '旧A社', mrr: 624800 },
+    { sfId: '001X', name: 'A社',   mrr: 624800 },
   ]);
-  assert.equal(i.bySfId.get('001X'), 150);
-  assert.ok(i.duplicates >= 1);
+  assert.equal(i.bySfId.get('001X'), 624800, '足してはいけない');
+  assert.equal(i.duplicates, 1, '社名は違うので Salesforce ID でだけぶつかる');
+  assert.equal(i.conflicts, 0, '金額は同じなので食い違いではない');
+});
+
+test('金額が食い違う重複は大きい方を採り、conflicts に数える', () => {
+  const i = indexCompanies([
+    { sfId: '001Y', name: 'B社', mrr: 1_382_304 },
+    { sfId: '001Y', name: 'B社', mrr: 1_428_867 },
+  ]);
+  assert.equal(i.bySfId.get('001Y'), 1_428_867);
+  assert.ok(i.conflicts >= 1);
+});
+
+test('行の順番で結果が変わらない', () => {
+  const a = indexCompanies([{ sfId: '1', name: 'x', mrr: 10 }, { sfId: '1', name: 'x', mrr: 90 }]);
+  const b = indexCompanies([{ sfId: '1', name: 'x', mrr: 90 }, { sfId: '1', name: 'x', mrr: 10 }]);
+  assert.equal(a.bySfId.get('1'), b.bySfId.get('1'));
 });
 
 test('鍵が空の行は索引に入れない', () => {

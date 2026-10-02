@@ -23,7 +23,8 @@
 //   - 顧客名・本文をログに出さない。出すのは件数と種別だけ
 
 import {
-  upsertByExternalId, listByExternalPrefix, deleteRecord, TestWriteError,
+  upsertByExternalId, listByExternalPrefix, deleteRecord, listRecords, updateRecord,
+  TestWriteError,
 } from './twenty-test/client';
 import { TEST_OBJECTS, normalizeStage, type Stage } from './twenty-test/schema';
 import { getCustomer, updateCustomerWithExtras, listTargetRows, updateTargetRow } from './notion/client';
@@ -121,6 +122,29 @@ function dealFields(x: Record<string, unknown>, cid: string, isMain: boolean, ow
   };
 }
 
+/**
+ * ネクストアクション（1 商談に 1 つ）。
+ * `sf:` 由来の商談でも画面のものを正とするので、両方からここを通す。
+ * 空になったら消す（原本は完了時に na を空にしてくる）。
+ */
+async function writeNextAction(
+  baseExt: string, cid: string, oppId: string, x: Record<string, unknown>,
+  owner: string | null, who: ActorStamp, changes: Record<string, number>,
+): Promise<void> {
+  const naExt = `${baseExt}:na`;
+  if (str(x.na)) {
+    await upsertByExternalId(ACT.plural, ACT.singular, naExt, {
+      name: str(x.na), notionCompanyId: cid, opportunityId: oppId,
+      kind: 'NEXT_ACTION', title: str(x.na),
+      dueDate: str(x.naDate) || null, status: 'OPEN', source: 'ui', owner,
+    }, who);
+    changes.action = (changes.action ?? 0) + 1;
+  } else {
+    const old = await listByExternalPrefix(ACT.plural, ACT.singular, naExt);
+    for (const a of old) { await deleteRecord(ACT.plural, str(a.id)); changes.action = (changes.action ?? 0) + 1; }
+  }
+}
+
 async function writeEdits(
   cid: string, body: Record<string, unknown>, me: PtaiIdentity, who: ActorStamp,
 ): Promise<WriteResult> {
@@ -144,31 +168,39 @@ async function writeEdits(
   // 商談ごとに作成 or 更新
   const seen = new Set<string>();
   for (const { key, x, isMain } of incoming) {
-    // ── Salesforce 由来は読み取り専用 ───────────────────────────────────
-    //   正本は Salesforce。画面から送り返されても**書き戻さない**。
-    //   ここで弾かないと `edits:<cid>:sf:...` という複製ができる。
-    //   金額・フェーズ・完了予定日を直すときは Salesforce 側で。
-    if (key.startsWith('sf:')) continue;
+    // ── Salesforce 由来の商談 ───────────────────────────────────────────
+    //   金額・フェーズ・申込完了日・課金開始日・契約期間の**正本は Salesforce**。
+    //   ここで `edits:<cid>:sf:...` を作ると複製になるので、新しくは作らない。
+    //
+    //   ただし **障壁・ニーズ・ネクストアクション・到達予定は画面のもの**
+    //   （2026-10-01 の決定「ネクストアクション・障壁は Web で操作し Twenty に連携」）。
+    //   2026-10-02 まではここで丸ごと捨てていたため、入力しても
+    //   「Twenty 未反映」のまま永久に保存されなかった。その分だけ書く。
+    if (key.startsWith('sf:')) {
+      const hit = await listRecords(OPP.plural, OPP.singular,
+        { filter: `externalId[eq]:${key}`, pageSize: 2, maxRecords: 2 });
+      if (!hit.length) continue;            // Salesforce 側から消えた商談。作り直さない
+      const oppId = str(hit[0].id);
+      await updateRecord(OPP.plural, OPP.singular, oppId, {
+        barrier:  str(x.barrier) || null,
+        need:     str(x.need) || null,
+        msBase:   str(x.msBase) === 'bill' ? 'bill' : 'apply',
+        msTrial:  str(rec(x.ms).TRIAL) || null,
+        msQuote:  str(rec(x.ms).QUOTE) || null,
+        msVerbal: str(rec(x.ms).VERBAL_COMMIT) || null,
+        updatedByName2: who.name2,
+      });
+      changes.opportunity++;
+      await writeNextAction(key, cid, oppId, x, owner, who, changes);
+      continue;
+    }
     const ext = `edits:${cid}:${key}`;
     seen.add(ext);
     const r = await upsertByExternalId(OPP.plural, OPP.singular, ext, dealFields(x, cid, isMain, owner), who);
     changes.opportunity++;
     const oppId = str(r.record.id);
 
-    // ネクストアクション（1 商談に 1 つ）
-    const naExt = `${ext}:na`;
-    if (str(x.na)) {
-      await upsertByExternalId(ACT.plural, ACT.singular, naExt, {
-        name: str(x.na), notionCompanyId: cid, opportunityId: oppId,
-        kind: 'NEXT_ACTION', title: str(x.na),
-        dueDate: str(x.naDate) || null, status: 'OPEN', source: 'ui', owner,
-      }, who);
-      changes.action++;
-    } else {
-      // 空になったら消す（原本は完了時に na を空にする）
-      const old = await listByExternalPrefix(ACT.plural, ACT.singular, naExt);
-      for (const a of old) { await deleteRecord(ACT.plural, str(a.id)); changes.action++; }
-    }
+    await writeNextAction(ext, cid, oppId, x, owner, who, changes);
 
     // 経過ログは追記のみ。既にあるぶんは作り直さない
     const logs = arr(x.log);

@@ -14,6 +14,14 @@
 //  ⚠ 絞った結果に出てこない会社は「MRR 0 円」か「DB に無い」のどちらか。
 //     取り違えると契約のある会社を 0 円で上書きしてしまうので、
 //     1 社ずつ引き直して区別する。
+//
+//  ⚠ **同じ会社の行が複数ある。足してはいけない。**（2026-10-02 に実害）
+//     920 行のうち 132 組が同じ Salesforce Account ID を共有していて、
+//     1 組は 23 行もある。`mrr` は Salesforce の Account の MRR が各行に
+//     **同じ値で写っている**だけなので、足すと社数ぶん膨らむ。
+//     （例: 旧社名の行と現社名の行が両方あり、62万が 125万 になっていた）
+//     115/132 組は金額が全行同じ。残り 17 組は写した時点が違うとみられる
+//     ので、**いちばん大きい値**を採る。
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // ログは件数だけ。会社名は出さない。
@@ -75,31 +83,35 @@ export async function findCompany(
   const res = await request('POST', `/data_sources/${CDB}/query`, { page_size: 5, filter });
   const rows = ((res.results as Array<Record<string, unknown>>) ?? []).map(toRow);
   if (!rows.length) return null;
-  // 同じ鍵で複数行あるときは合計する（プロジェクト分割などで分かれていることがある）
-  return { sfId: rows[0].sfId, name: rows[0].name, mrr: rows.reduce((s, r) => s + r.mrr, 0) };
+  // 同じ鍵で複数行あっても**足さない**。同じ会社の写しなので、いちばん大きい値を採る
+  return { sfId: rows[0].sfId, name: rows[0].name, mrr: Math.max(...rows.map(r => r.mrr)) };
 }
 
 /** 突き合わせ用の索引 */
 export interface CompanyIndex {
   bySfId: Map<string, number>;
   byName: Map<string, number>;
-  /** 同じ鍵が複数行あった件数（合計して入れてある） */
+  /** 同じ鍵が複数行あった件数。**足さず、いちばん大きい値を採っている** */
   duplicates: number;
+  /** そのうち金額まで食い違っていた件数（写した時点が違うとみられる） */
+  conflicts: number;
   rows: number;
 }
 
 export function indexCompanies(rows: CompanyMrrRow[]): CompanyIndex {
   const bySfId = new Map<string, number>(), byName = new Map<string, number>();
-  let duplicates = 0;
+  let duplicates = 0, conflicts = 0;
+  // 同じ鍵が来たら max。足すと同じ会社の写しを何重にも数えてしまう
+  const put = (m: Map<string, number>, k: string, v: number) => {
+    if (!m.has(k)) { m.set(k, v); return; }
+    duplicates++;
+    const cur = m.get(k)!;
+    if (cur !== v) conflicts++;
+    if (v > cur) m.set(k, v);
+  };
   for (const r of rows) {
-    if (r.sfId) {
-      if (bySfId.has(r.sfId)) duplicates++;
-      bySfId.set(r.sfId, (bySfId.get(r.sfId) ?? 0) + r.mrr);
-    }
-    if (r.name) {
-      if (byName.has(r.name)) duplicates++;
-      byName.set(r.name, (byName.get(r.name) ?? 0) + r.mrr);
-    }
+    if (r.sfId) put(bySfId, r.sfId, r.mrr);
+    if (r.name) put(byName, r.name, r.mrr);
   }
-  return { bySfId, byName, duplicates, rows: rows.length };
+  return { bySfId, byName, duplicates, conflicts, rows: rows.length };
 }
