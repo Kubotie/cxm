@@ -582,7 +582,12 @@ const man1 = v => (Math.round(v/1000)/10).toLocaleString('ja-JP',
 const total = d => d.m + (d.add||0);   // 合算MRR ＝ 現在MRR ＋ 追加MRR
 const expected = d => m3(d);   // ＝ ③（見込）追加MRR。足切りはかけない
 const wonAdd = d => (d.deals&&d.deals.length>1) ? d.deals.filter(x=>x.ph==='CLOSED_WON').reduce((s,x)=>s+(x.add||0),0) : (d.add||0);
-const won = d => d.ph!=='CLOSED_WON' || wonAdd(d)<AI_MIN ? 0 : d.m + wonAdd(d);   // 足切り：確定した追加MRR が会社で10万円以上
+/* 【移植による変更 9/9】確定の定義を 1 つにする（2026-10-04）
+   旧 v1 は「現在MRR ＋ 受注した追加MRR、10万円未満は切り捨て」。
+   KPI カードの「確定」は受注した商談の金額（wonAmt）に変えたのに、
+   ステージバーと個人ビューの集計だけ旧定義が残っていて、同じ「確定」が
+   100.1万 と 26.8万 の 2 通り出ていた。カードに合わせる。 */
+const won = d => wonAmt(d);
 const ymd = s => s ? new Date(s) : null;
 const days = (a,b) => Math.round((a-b)/86400000);
 const esc = s => String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
