@@ -1598,3 +1598,5 @@ table.deals.iss{min-width:880px}
 .fbbtn{animation:fbnudge 4s ease-in-out infinite;will-change:transform}
 .fbwrap:hover .fbbtn,.fbbtn:focus-visible{animation-play-state:paused}
 @media (prefers-reduced-motion:reduce){ .fbbtn{animation:none} }
+/* 期待値が 0 の理由（商談の金額が未入力）をフェーズのカードに出す */
+.fcol .noamt{margin-top:4px;font-size:10.5px;color:var(--plane,var(--muted));font-weight:700}

@@ -34,7 +34,7 @@ const msN = m => { if(!m||typeof m!=='object') return m||null; const o={};
   return Object.keys(o).length?o:null; };
 const PH_JP = {INACTIVE:'Inactive',ACTIVE:'Active',GOAL_SHARED:'Goal Shared',QUALIFIED_CHAMPION:'Qualified Champion',EVALUATING:'Evaluating',PROBABLE:'Probable',VERBAL:'Verbal',WON:'Won',CLOSED_WON:'受注 (Closed Won)',ADMIN_CLOSE:'Admin Close',CLOSED_LOST:'Close Lost'};
 const PH_SHORT = {INACTIVE:'Inactive',ACTIVE:'Active',GOAL_SHARED:'Goal Shared',QUALIFIED_CHAMPION:'Qualified',EVALUATING:'Evaluating',PROBABLE:'Probable',VERBAL:'Verbal',WON:'Won',CLOSED_WON:'受注',ADMIN_CLOSE:'Admin Close',CLOSED_LOST:'失注'};
-const PROB = {INACTIVE:0,ACTIVE:0,GOAL_SHARED:.10,QUALIFIED_CHAMPION:.30,EVALUATING:.40,PROBABLE:.60,VERBAL:.90,WON:1,CLOSED_WON:1,ADMIN_CLOSE:0,CLOSED_LOST:0};   /* Salesforce の DefaultProbability をそのまま */
+const PROB = {INACTIVE:0,ACTIVE:0,GOAL_SHARED:.10,QUALIFIED_CHAMPION:.30,EVALUATING:.40,PROBABLE:.60,VERBAL:.90,WON:1,CLOSED_WON:1,ADMIN_CLOSE:0,CLOSED_LOST:0};   /* ⚠ 2026-10-04 以降、画面では使っていない。期待値は FORECAST（運用で決めた係数）で出す。Salesforce 側の値の記録として残す */   /* Salesforce の DefaultProbability をそのまま */
 /* 【移植による変更 9/9】社内の言い方。フェーズ名だけだと認識がずれるので
    英語名の下に小さく出す（2026-10-02 Kubotie 指定の対応表）。
 
@@ -461,7 +461,7 @@ const atLeast = (d, from) => { const i=PHASES.indexOf(from);
 function rulesHtml(){
   const dueTxt=(()=>{ const [y,m]=CONFIG.targetDue.split('-'); return `${y}年${+m}月末`; })();
   const st=CONFIG.stages; const pct=v=>Math.round(v/CONFIG.targetMrr*100)+'%';
-  const probs=PHASES.filter(p=>p!=='CLOSED_LOST').map(p=>`${PH_JP[p]} ${Math.round(PROB[p]*100)}%`).join('・');
+  const probs=PHASES.filter(p=>p!=='CLOSED_LOST'&&FORECAST[p]).map(p=>`${PH_JP[p]} ${Math.round(FORECAST[p]*100)}%`).join('・');
   return `<div class="rtip"><b>計上ルール</b><ol>
     <li><b>数える額</b>：合算MRR ＝ 現在MRR（Notion 顧客DB の最新値）＋（見込）追加MRR（Ptengine AI の商談）</li>
     <li><b>足切り</b>：会社ごとの追加MRR が <b>10万円以上</b> の会社だけ算入。10万円未満の会社は合算MRR ごと数えない</li>
@@ -483,7 +483,16 @@ const potHtml = d => { const p=potOf(d); if(!p) return '<span class="dim">—</s
     <div class="pr"><span class="capb">上限${man(p.cap)}</span><span>この業界・規模で追加できる月額MRRの目安</span></div>
     ${!c.slug||!c.lay?`<div class="pn">${!c.slug?'業界は業種名から推定。':''}${!c.lay?'規模は Twenty に未入力のため中堅とみなしています。':''}</div>`:''}</div>`;
   return `<span class="pot" data-tip="${esc(tip)}"><span class="fit ${k}">${p.fit??'—'}</span><span class="cap">上限${man(p.cap)}</span></span>`; };
-const dealExp = x => x.ph==='CLOSED_LOST' ? 0 : (x.add||0)*PROB[x.ph];
+/* 【移植による変更 9/9】期待値は ③（見込）追加MRR と同じものにする（2026-10-04 Kubotie 指摘）
+   これまで画面には 2 種類の「期待値」があった。
+     企業一覧の ③ … 商談の金額 × FORECAST（運用で決めた係数 30/50/70/90/90/100%）
+     フェーズ別の期待値 … (現在MRR ＋ 追加MRR) × PROB（Salesforce の確率 10/30/40/60%）
+                          さらに追加MRR 10万円未満は 0 にする足切りつき
+   同じ名前で別の数字が出ていたうえ、**現在MRR まで確率で割り引いていた**。
+   現在MRR はもう貰っている額なので、これから取りにいく額に確率を掛ける ③ の
+   考え方が正しい。期待値＝③ に一本化する。
+   PROB（Salesforce の DefaultProbability）は出典として残すが、画面には出さない。 */
+const dealExp = x => (x.add||0)*(FORECAST[x.ph]||0);
 const DEALS = RAW.companies.map(buildDeal); DEALS.forEach(applyPlans);
 /* ===================== 企業の追加（Notion 顧客DB・Twenty へ作成） ===================== */
 var NEWCOS = {};
@@ -571,7 +580,7 @@ const man = v => yen(v)+'万';
 const man1 = v => (Math.round(v/1000)/10).toLocaleString('ja-JP',
   {minimumFractionDigits:1, maximumFractionDigits:1})+'万';
 const total = d => d.m + (d.add||0);   // 合算MRR ＝ 現在MRR ＋ 追加MRR
-const expected = d => !(d.add>=AI_MIN) ? 0 : (d.deals&&d.deals.length>1) ? d.m*PROB[d.ph] + d.deals.reduce((s,x)=>s+dealExp(x),0) : total(d) * PROB[d.ph];
+const expected = d => m3(d);   // ＝ ③（見込）追加MRR。足切りはかけない
 const wonAdd = d => (d.deals&&d.deals.length>1) ? d.deals.filter(x=>x.ph==='CLOSED_WON').reduce((s,x)=>s+(x.add||0),0) : (d.add||0);
 const won = d => d.ph!=='CLOSED_WON' || wonAdd(d)<AI_MIN ? 0 : d.m + wonAdd(d);   // 足切り：確定した追加MRR が会社で10万円以上
 const ymd = s => s ? new Date(s) : null;
@@ -785,15 +794,19 @@ document.querySelectorAll('[data-fm]').forEach(b=>b.onclick=()=>{fcMode=b.datase
 function renderFunnel(){
   const ds=scope(); const maxAmt=Math.max(...PHASES.map(s=>sum(ds.filter(d=>d.ph===s),total)),1);
   document.getElementById('funnel').innerHTML=PHASES.map(s=>{const l=ds.filter(d=>d.ph===s); const amt=sum(l,total), ex=sum(l,expected);
+    /* 期待値は商談の金額から出すので、金額が未入力だと 0 になる。
+       「壊れている」と見えないよう、何社ぶん入っていないかを出す（2026-10-04） */
+    const noAmt=l.filter(d=>!(m2(d)>0) && !['INACTIVE','CLOSED_LOST','ADMIN_CLOSE'].includes(d.ph)).length;
     const PH_2L={INACTIVE:['Inactive',''],ACTIVE:['Active',''],GOAL_SHARED:['Goal','Shared'],QUALIFIED_CHAMPION:['Qualified','Champion'],EVALUATING:['Evaluating',''],PROBABLE:['Probable',''],VERBAL:['Verbal',''],WON:['Won',''],CLOSED_WON:['受注','Closed Won'],ADMIN_CLOSE:['Admin','Close'],CLOSED_LOST:['Close','Lost']};
     const n=PHASES.indexOf(s)+1, lost=s==='CLOSED_LOST';
-    return `<div class="fcol ${lost?'lost':''} ${l.length?'':'zero'}" role="button" tabindex="0" data-ph="${s}" aria-pressed="${phaseFilter===s}" data-tip="${esc(`<b>${phBoth(s)}</b>${l.length}社　現在MRR ${man(amt)}<br>確率 ${Math.round(PROB[s]*100)}%　期待値 ${man(ex)}<br>クリックでこのフェーズの企業を表示`)}">
+    return `<div class="fcol ${lost?'lost':''} ${l.length?'':'zero'}" role="button" tabindex="0" data-ph="${s}" aria-pressed="${phaseFilter===s}" data-tip="${esc(`<b>${phBoth(s)}</b>${l.length}社　現在MRR ${man(amt)}<br>確率 ${Math.round((FORECAST[s]||0)*100)}%　期待値 ${man1(ex)}<br>クリックでこのフェーズの企業を表示`)}">
       <div class="ph">${lost?'':`<span class="no num">${n}</span>`}<span class="nm">${(PH_2L[s]||[PH_JP[s],''])[0]}${(PH_2L[s]||[])[1]?`<small>${PH_2L[s][1]}</small>`:''}</span></div>
       ${PH_JA[s]?`<div class="phja">${PH_JA[s]}</div>`:''}
       <div class="cnt num">${l.length}<small>社</small></div>
       <div class="fb"><i style="width:${amt/maxAmt*100}%;background:var(${PCOL[s]})"></i></div>
       <div class="amt num"><small>現在MRR</small><b>${man1(amt)}</b></div>
-      <div class="pr num"><small>期待値</small>${man1(ex)}<span>${Math.round(PROB[s]*100)}%</span></div></div>`;}).join('');
+      <div class="pr num"><small>期待値</small>${man1(ex)}<span>${Math.round((FORECAST[s]||0)*100)}%</span></div>
+      ${noAmt?`<div class="noamt" title="商談の金額が入っていないので期待値に乗りません。金額は Salesforce で入れてください">金額未入力 ${noAmt}社</div>`:''}</div>`;}).join('');
   document.querySelectorAll('.fcol').forEach(c=>{const f=()=>{const s=c.dataset.ph;phaseFilter=phaseFilter===s?null:s;FS.phase=new Set(phaseFilter?[phaseFilter]:[]);saveFS();msSummary();renderFunnel();renderDeals();};c.onclick=f;c.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();f();}};});
   renderPhasePanel();
 }
@@ -883,7 +896,7 @@ function renderDeals(){
   const fo=document.getElementById('fOwner').value, fp=document.getElementById('fPhase').value, fs=document.getElementById('fStatus').value, ft=document.getElementById('fTier').value, q=document.getElementById('fQ').value.trim();
   const base = view==='team'?DEALS:DEALS.filter(d=>d.owners.includes(view));
   let ds=base.filter(d=>(!FS.owner.size||d.owners.some(o=>FS.owner.has(o)))&&(!FS.phase.size||FS.phase.has(d.ph))&&(!fs||d.ps===fs)&&(!FS.tier.size||FS.tier.has(d.t))&&(!q||d.n.includes(q))&&(!missingOnly||(!baseMo(d)||!d.add)&&d.ph!=='CLOSED_LOST'));
-  const key={co:d=>d.n,o:d=>d.owners.join(),t:d=>d.t||'Z',ps:d=>PS.indexOf(d.ps),st:d=>PHASES.indexOf(d.ph),m:d=>d.m,add:d=>d.add,aim:d=>{const p=planOf(d);return p?(p.base+p.add)*goalCtx().w(d)+1e12:aimOf(d);},tot:total,cl:d=>d.close||'9999',ap:d=>d.apply||'9999',br:d=>(d.bs?BS_OPTS.indexOf(d.bs):9)+(d.br||'~'),pr:d=>PROB[d.ph],exp:expected,add3:d=>m3(d),ind:d=>d.ind||'',pot:d=>(potOf(d)||{prio:-1}).prio,nd:d=>d.nd||'9999',le:d=>d.le}[sortKey];
+  const key={co:d=>d.n,o:d=>d.owners.join(),t:d=>d.t||'Z',ps:d=>PS.indexOf(d.ps),st:d=>PHASES.indexOf(d.ph),m:d=>d.m,add:d=>d.add,aim:d=>{const p=planOf(d);return p?(p.base+p.add)*goalCtx().w(d)+1e12:aimOf(d);},tot:total,cl:d=>d.close||'9999',ap:d=>d.apply||'9999',br:d=>(d.bs?BS_OPTS.indexOf(d.bs):9)+(d.br||'~'),pr:d=>FORECAST[d.ph]||0,exp:expected,add3:d=>m3(d),ind:d=>d.ind||'',pot:d=>(potOf(d)||{prio:-1}).prio,nd:d=>d.nd||'9999',le:d=>d.le}[sortKey];
   ds.sort((x,y)=>{const a=key(x),b=key(y);return (a>b?1:a<b?-1:0)*sortDir;});
   const th=(k,l,r,t,tp)=>`<th class="${r?'r':''}" data-k="${k}" ${t?`title="${t}"`:''} ${tp?`data-tip="${esc(tp)}"`:''} ${sortKey===k?`aria-sort="${sortDir>0?'ascending':'descending'}"`:''}>${l}${sortKey===k?(sortDir>0?' ▲':' ▼'):''}</th>`;
   const head=`<thead><tr>${th('co','企業／商談')}${th('o','担当')}${th('t','Tier')}${th('st','フェーズ')}${th('m','⑥ 現在MRR',1,'','毎朝 8 時に Company Database（Salesforce 連動）から同期した額。かっこ内は期初MRR からの増減')}${th('aim','① （目標）追加MRR',1,'この会社で追加したいMRR。クリックで入力')}${th('add','② （商談）追加MRR',1,'商談の金額の合計（失注・Admin Close は除く）')}${th('add3','③ （見込）追加MRR',1,'② を商談ごとに フェーズの係数 で割り引いた額')}${th('ap','申込完了日')}${th('cl','課金開始日')}${th('br','商談障壁')}${th('ind','業種')}${th('pot','ポテンシャル <span class="qi">?</span>',0,'',POT_HEAD_TIP)}<th>ニーズ</th><th>ネクストアクション</th>${th('nd','アクション期日')}${th('le','更新日')}</tr></thead>`;
@@ -1031,7 +1044,7 @@ function summarize(d){
   const done=d.hist.filter(h=>!h.planned).slice(0,2);
   const flags=flagsOf(d);
   const tgtM=d.owners.map(o=>CONFIG.targets[o]).filter(Boolean);
-  const p1=`<p><span class="k">現在地</span>フェーズ <b>${PH_JP[d.ph]}</b>（確率 ${Math.round(PROB[d.ph]*100)}%${d.phEst?'・暫定':''}）。案件ステージ ${RAW_JP[d.st]}${d.oppUp?`（案件の最終更新 ${d.oppUp}）`:''}。合算MRR ${man(total(d))}円（現在 ${man(d.m)}＋追加 ${d.add?man(d.add):'未入力'}）、期待値 ${man(expected(d))}円${d.owners.length>1?`（${d.owners.length}名で按分）`:''}。申込完了日 ${d.apply?d.apply.replace(/-/g,'/'):'<b>未入力</b>'}、課金開始 ${d.bill?d.bill.replace(/-/g,'/'):d.close?d.close.replace('-','/'):'<b>未入力</b>'}。</p>`;
+  const p1=`<p><span class="k">現在地</span>フェーズ <b>${PH_JP[d.ph]}</b>（確率 ${Math.round((FORECAST[d.ph]||0)*100)}%${d.phEst?'・暫定':''}）。案件ステージ ${RAW_JP[d.st]}${d.oppUp?`（案件の最終更新 ${d.oppUp}）`:''}。合算MRR ${man(total(d))}円（現在 ${man(d.m)}＋追加 ${d.add?man(d.add):'未入力'}）、期待値 ${man(expected(d))}円${d.owners.length>1?`（${d.owners.length}名で按分）`:''}。申込完了日 ${d.apply?d.apply.replace(/-/g,'/'):'<b>未入力</b>'}、課金開始 ${d.bill?d.bill.replace(/-/g,'/'):d.close?d.close.replace('-','/'):'<b>未入力</b>'}。</p>`;
   const p2=`<div class="pk"><span class="k">直近の動き</span>${recentHtml(d, done)}</div>`;
   const p3=`<p><span class="k">次の一手</span>${d.naHead?esc(d.naHead):'<b>未設定</b>'}${d.nd?`　日付 <b class="num">${d.nd.slice(5).replace('-','/')}</b>${ymd(d.nd)<TODAY?'（経過）':''}`:''}。</p>`;
   const p4=d.opp&&d.opp.need?`<p><span class="k">ニーズ</span>${esc(d.opp.need)}</p>`:'';
@@ -1686,13 +1699,13 @@ function dealsSection(d){
       <td class="r num">${x.add?man(x.add):'<span class="dim">未入力</span>'}</td>
       <td class="num">${x.apply?x.apply.slice(5).replace('-','/'):'<span class="dim">—</span>'}</td>
       <td class="num">${x.close?x.close.replace('-','/'):'<span class="dim">—</span>'}</td>
-      <td class="r num">${Math.round(PROB[x.ph]*100)}%</td>
+      <td class="r num">${Math.round((FORECAST[x.ph]||0)*100)}%</td>
       <td class="r num">${man(dealExp(x))}</td>
       <td>${na.t?esc(na.t.length>40?na.t.slice(0,40)+'…':na.t):'<span class="dim">—</span>'}</td>
       <td class="num ${late?'late':''}">${na.date?na.date.slice(5).replace('-','/'):'—'}</td></tr>`; }).join('');
   return `<div class="sec"><h3>商談 <span class="sub">${d.deals.length}件。行をクリックで入力</span></h3>
     ${d.deals.length?`<div class="dealwrap"><table class="dealtbl"><thead><tr><th>商談名</th><th>フェーズ</th><th class="r">（見込）追加MRR</th><th>申込完了日</th><th>課金開始日</th><th class="r">確率</th><th class="r">期待値</th><th>ネクストアクション</th><th>アクション期日</th></tr></thead><tbody>${rows}</tbody>
-    <tfoot><tr><td colspan="2">会社の合計</td><td class="r num">${man(m2(d))}</td><td></td><td></td><td class="r num">${Math.round(PROB[d.ph]*100)}%</td><td class="r num">${man(expected(d))}</td><td colspan="2"></td></tr></tfoot></table></div>`:'<p class="empty">商談はまだありません。商談は Salesforce で作成すると、1 時間おきの同期で出てきます。</p>'}</div>`;
+    <tfoot><tr><td colspan="2">会社の合計</td><td class="r num">${man(m2(d))}</td><td></td><td></td><td class="r num">${Math.round((FORECAST[d.ph]||0)*100)}%</td><td class="r num">${man1(expected(d))}</td><td colspan="2"></td></tr></tfoot></table></div>`:'<p class="empty">商談はまだありません。商談は Salesforce で作成すると、1 時間おきの同期で出てきます。</p>'}</div>`;
 }
 document.getElementById('dBody').addEventListener('click',e=>{
   if(openId===null) return;
