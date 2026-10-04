@@ -67,7 +67,7 @@ export const BOARD_HTML = `
       <span class="sub" id="stageSub"></span>
     </div>
     <div class="stagebar" id="stagebar"></div>
-    <div class="legend"><span><i class="dot" style="background:var(--gold)"></i>契約締結済み（フェーズ＝契約締結済み）</span><span><i class="dot" style="background:var(--accent);opacity:.55"></i>期待値MRR（現在MRR × フェーズ確率）</span><span>▍ステージ境界 = 支給率 0 / 50 / 75 / 100%</span></div>
+    <div class="legend"><span><i class="dot" style="background:var(--gold)"></i>契約締結済み（フェーズ＝契約締結済み）</span><span><i class="dot" style="background:var(--accent);opacity:.55"></i>期待値（商談の金額 × フェーズの係数）</span><span>▍ステージ境界 = 支給率 0 / 50 / 75 / 100%</span></div>
   </section>
 
   <section class="grid g-2">
@@ -75,7 +75,8 @@ export const BOARD_HTML = `
       <div class="card-h"><h2>メンバー別 目標配分と進捗</h2><span class="sub">名前クリックで個人ビュー。共同担当は均等按分</span><button type="button" class="linkbtn" data-edit>目標を編集</button></div>
       <div id="allocAlert"></div>
       <div id="members"></div>
-      <div class="legend" style="margin-top:12px"><span><i class="dot" style="background:var(--won)"></i>確定</span><span><i class="dot" style="background:var(--accent)"></i>期待値（確定除く）</span><span><i class="dot" style="background:var(--p1)"></i>パイプライン残（現在MRR − 期待値）</span><span>▎目標</span></div>
+      <!-- 【移植による変更 9/9】計画の積み上げと同じ内訳に揃えた（2026-10-04） -->
+      <div class="legend" style="margin-top:12px"><span><i class="dot" style="background:color-mix(in oklab,var(--ink) 35%,transparent)"></i>既契約（期初MRR）</span><span><i class="dot" style="background:var(--gold)"></i>受注</span><span><i class="dot" style="background:var(--accent)"></i>商談中</span><span><i class="dot" style="background:color-mix(in oklab,var(--accent) 40%,transparent)"></i>まだ商談なし</span><span>▎目標</span></div>
     </div>
     <div class="card">
       <div class="card-h"><h2 id="fcTitle">申込完了予定月別 パイプライン</h2>

@@ -706,22 +706,51 @@ function renderAllocAlert(){
     ? `<div class="alert crit" style="margin-bottom:8px;cursor:default"><div class="ic">⚠</div><div><div class="t">担当者の目標合計が全体目標に ${man(g)}円 足りません</div><div class="d">配分合計 ${man(allocSum())}円 ／ 全体目標 ${man(CONFIG.targetMrr)}円</div></div><div class="who"><button type="button" class="linkbtn" data-edit>配分を直す</button></div></div>`
     : `<div class="alert" style="margin-bottom:8px;cursor:default"><div class="ic">ℹ</div><div><div class="t">担当者の目標合計が全体目標を ${man(-g)}円 上回っています</div><div class="d">配分合計 ${man(allocSum())}円 ／ 全体目標 ${man(CONFIG.targetMrr)}円</div></div><div class="who"></div></div>`;
 }
+/* ═══ 【移植による変更 9/9】メンバー別は「計画」を担当者ごとに割ったもの ═══
+   2026-10-04 Kubotie 了承。ここだけ旧 v1 のままで、上のカードと食い違っていた。
+     ・確定 … 旧 won（現在MRR ＋ 受注商談、10万円足切り）。カードの「確定」
+              （受注した商談の金額）と別物で、Utty が 100.1万 と 27万 の二重表示
+     ・パイプライン残 … 条件が `d.st!=='NONE'`（商談のある会社だけ）だったため、
+              商談ゼロの担当はバーが空になっていた（Paul 26社・Baba 29社が 0）
+   計画バー（goalRows）と同じ積み上げを share で按分する。
+   **全員ぶん足すと計画バーと一致する**（担当が MEMBERS に無い会社が無いことを確認済み）。 */
+function memberRow(m){
+  let base=0, won=0, deal=0, aim=0, exp=0, n=0, all=0;
+  DEALS.forEach(d=>{
+    const k=share(d,m); if(!k) return;
+    all++; exp+=expected(d)*k;
+    const p=planOf(d); if(!p) return;
+    n++;
+    base+=p.base*k;
+    const v=p.add*k;
+    if(wonAmt(d)>0)                won+=v;
+    else if(openDealsOf(d).length) deal+=v;
+    else                           aim+=v;
+  });
+  return {m, base, won, deal, aim, exp, n, all, tgt:CONFIG.targets[m]||0};
+}
 function renderMembers(){
   const ms = view==='team'?MEMBERS:[view];
-  const act = DEALS.filter(d=>!inactive(d));
-  const vals = ms.map(m=>{const ds=act.filter(d=>d.owners.includes(m)); const f=g=>ds.reduce((s,d)=>s+g(d)*share(d,m),0); return {m,w:f(won),e:f(expected),p:f(d=>d.st!=='NONE'?total(d):0),n:ds.length,tgt:CONFIG.targets[m]||0};});
-  const maxV=Math.max(...vals.map(v=>Math.max(v.tgt,v.p)),1)*1.05; const x=v=>v/maxV*100;
+  const vals = ms.map(memberRow);
+  const tot = v => v.base+v.won+v.deal+v.aim;
+  const maxV = Math.max(...vals.map(v=>Math.max(v.tgt,tot(v))),1)*1.05;
+  const x = v => v/maxV*100;
   const el=document.getElementById('members');
-  el.innerHTML=vals.map(({m,w,e,p,n,tgt})=>{const ee=e-w, pp=Math.max(0,p-e);
+  el.innerHTML=vals.map(v=>{ const t=tot(v);
+    const tip = `<b>${v.m}</b>計画 ${man1(t)}（既契約 ${man1(v.base)}／受注 ${man1(v.won)}`
+      + `／商談中 ${man1(v.deal)}／まだ商談なし ${man1(v.aim)}）<br>`
+      + `期待値 ${man1(v.exp)}・目標 ${v.tgt?man(v.tgt)+'円':'未設定'}<br>`
+      + `担当 ${v.all}社（うち計画に入っている ${v.n}社）`;
     return `<div class="mrow">
-      <div class="who"><span class="avatar" style="background:${CONFIG.memberColor[m]}">${m[0]}</span><button type="button" data-m="${m}">${m}</button></div>
-      <div class="bar" data-tip="<b>${m}</b>確定 ${man(w)} ／ 期待値 ${man(ee)} ／ 残 ${man(pp)}<br>目標 ${tgt?man(tgt)+'円':'未設定'}・担当 ${n}社">
-        <div class="seg" style="left:0;width:${x(w)}%;background:var(--won)"></div>
-        <div class="seg" style="left:${x(w)}%;width:${x(ee)}%;background:var(--accent)"></div>
-        <div class="seg" style="left:${x(w+ee)}%;width:${x(pp)}%;background:var(--p1)"></div>
-        ${tgt?`<div class="goal" style="left:${x(tgt)}%"></div>`:''}
+      <div class="who"><span class="avatar" style="background:${CONFIG.memberColor[v.m]}">${v.m[0]}</span><button type="button" data-m="${v.m}">${v.m}</button></div>
+      <div class="bar" data-tip="${esc(tip)}">
+        <div class="seg" style="left:0;width:${x(v.base)}%;background:color-mix(in oklab,var(--ink) 35%,transparent)"></div>
+        <div class="seg" style="left:${x(v.base)}%;width:${x(v.won)}%;background:var(--gold)"></div>
+        <div class="seg" style="left:${x(v.base+v.won)}%;width:${x(v.deal)}%;background:var(--accent)"></div>
+        <div class="seg" style="left:${x(v.base+v.won+v.deal)}%;width:${x(v.aim)}%;background:color-mix(in oklab,var(--accent) 40%,transparent)"></div>
+        ${v.tgt?`<div class="goal" style="left:${x(v.tgt)}%"></div>`:''}
       </div>
-      <div class="nums num"><span>目標<b>${tgt?man(tgt):'—'}</b></span><span>期待値<b>${man(e)}</b></span><span>達成率<b>${tgt?Math.round(e/tgt*100)+'%':'—'}</b></span></div>
+      <div class="nums num"><span>目標<b>${v.tgt?man(v.tgt):'—'}</b></span><span>計画<b>${man1(t)}</b></span><span>達成率<b>${v.tgt?Math.round(t/v.tgt*100)+'%':'—'}</b></span></div>
     </div>`;}).join('');
   el.querySelectorAll('button[data-m]').forEach(b=>b.onclick=()=>{view=b.dataset.m;phaseFilter=null;statusFilter=null;renderAll();});
 }
@@ -777,7 +806,7 @@ function renderForecast(){
     ${hasAny&&fcCum?`<path d="${path(cumL)}" fill="none" stroke="var(--accent-ink)" stroke-width="2.5"/>${cumL.map((v,i)=>`<circle cx="${cx(i)}" cy="${y(v)}" r="3.5" fill="var(--accent-ink)"/>`).join('')}<text class="lbl" x="${cx(lastI)-8}" y="${y(cumL[lastI])-10}" text-anchor="end" style="fill:var(--accent-ink)">累積 ${man(cumL[lastI])}</text>`:''}
     ${labels}
     ${hasAny?'':`<text x="${L+pw/2}" y="${T+ph/2-8}" text-anchor="middle" style="font-size:13px;fill:var(--ink-2)">${lab}予定日が入った案件はまだありません</text><text x="${L+pw/2}" y="${T+ph/2+12}" text-anchor="middle" style="font-size:11.5px;fill:var(--muted)">案件詳細の「入力」タブで申込完了日・課金開始日を登録できます</text>`}
-    <text x="${L}" y="${H-4}" style="fill:var(--muted)">単位：万円（${fcMode==='exp'?'期待値＝合算MRR × フェーズ確率':'想定＝合算MRR'}）　${fcCum?`— 累積　- - 目標ライン（${dueJP()}に100%）`:''}</text>
+    <text x="${L}" y="${H-4}" style="fill:var(--muted)">単位：万円（${fcMode==='exp'?'期待値＝商談の金額 × フェーズの係数':'想定＝合算MRR'}）　${fcCum?`— 累積　- - 目標ライン（${dueJP()}に100%）`:''}</text>
   </svg>`;
   document.getElementById('fcLegend').innerHTML=PH.map(p=>`<span><i class="dot" style="background:var(${PCOL[p]})"></i>${PH_JP[p]}</span>`).join('');
   const act=none.filter(d=>d.ph!=='INACTIVE'); const pastOpen=past.filter(d=>d.ph!=='CLOSED_WON');
