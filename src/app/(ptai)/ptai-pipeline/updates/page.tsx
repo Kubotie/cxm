@@ -21,6 +21,18 @@ const KIND_JP: Record<Item["kind"], string> = {
 
 const RELEASES: Release[] = [
   {
+    date: "2026-10-04",
+    items: [
+      {
+        kind: "fix",
+        title: "画面上部の「Salesforce から更新」が効いていませんでした",
+        body:
+          "押しても何も起きない状態でした。いまは押すとその場で取り込みます。" +
+          "企業詳細の中にある同じボタンは元から動いていたので、そちらを使えていた方は変わりません。",
+      },
+    ],
+  },
+  {
     date: "2026-10-02",
     label: "Salesforce との連携まわりを大きく入れ替えました",
     items: [

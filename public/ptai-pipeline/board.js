@@ -215,6 +215,18 @@ async function sfSync(btn){
   setTimeout(()=>{ if(btn){ btn.disabled=false; btn.textContent=label; } SF_SYNC_BUSY=false; }, 2500);
 }
 
+/* 【移植による変更 9/9】Salesforce 取り込みボタンの受け口（2026-10-04）
+   以前は企業詳細パネル（#dBody）の中にしか受け口が無く、**画面上部に置いた
+   同じボタンが何も起きなかった**（Kubotie 指摘）。document で受ければ
+   どこに置いても効く。capture にしているのは、商談カードを開く処理より
+   先に捕まえるため（以前 #dBody で stopPropagation していたのと同じ意図）。 */
+document.addEventListener('click', function(e){
+  const sf = e.target.closest && e.target.closest('[data-sfsync]');
+  if(!sf) return;
+  e.stopPropagation(); e.preventDefault();
+  sfSync(sf);
+}, true);
+
 let SF_DEAL_BUSY = false;
 async function sfDeal(btn, key, dir){
   if(SF_DEAL_BUSY) return;
@@ -1684,8 +1696,8 @@ function dealsSection(d){
 }
 document.getElementById('dBody').addEventListener('click',e=>{
   if(openId===null) return;
-  /* 【移植による変更 6/6】Salesforce 取り込みボタン。商談カードを開く処理より先に捕まえる */
-  const sf=e.target.closest('[data-sfsync]'); if(sf){ e.stopPropagation(); sfSync(sf); return; }
+  /* 【移植による変更 6/6】Salesforce 取り込みボタンの受け口は document 側に移した
+     （画面上部にも置いたため。下の sfSync の登録を見ること）。 */
   const sp=e.target.closest('[data-sfpull],[data-sfpush]');
   if(sp){ e.stopPropagation(); e.preventDefault();
     sfDeal(sp, sp.dataset.sfpull||sp.dataset.sfpush, sp.dataset.sfpush?'push':'pull'); return; }
