@@ -42,13 +42,15 @@ export function BoardScripts() {
     window.__pgaBoardLoaded = true;
 
     (async () => {
-      // Salesforce の商談を最新にしてから RAW を読む。
+      // Salesforce の商談の取り込みを裏で走らせる。
       // 1 時間以内に同期済みならサーバー側で何もしない（?ifStale=1）。
       // Vercel の Hobby プランは Cron が 1 日 1 回までなので、
-      // 「1 時間おき」はここで担保する。失敗しても画面は出す。
-      try {
-        await fetch("/api/ptai/sf-sync?ifStale=1", { method: "POST", credentials: "same-origin" });
-      } catch { /* 同期できなくても表示は続ける */ }
+      // 「1 時間おき」はここで担保する。
+      // ⚠ 完了を待たない。2026-10-06 まで待っていたので、1 時間ぶりに開いた人は
+      //    取り込み（商談ごとに Twenty へ書く）が終わるまで真っ白だった。
+      //    取り込んだ商談は /api/ptai/db のポーリングで画面に入ってくる。
+      void fetch("/api/ptai/sf-sync?ifStale=1", { method: "POST", credentials: "same-origin" })
+        .catch(() => { /* 同期できなくても表示は続ける */ });
 
       try {
         const res = await fetch("/api/ptai/raw", { credentials: "same-origin" });

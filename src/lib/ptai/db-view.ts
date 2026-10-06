@@ -76,6 +76,24 @@ async function fetchAll(
   }
 }
 
+/** AI_RECENT の新旧比較。occurredAt（生成時刻）を優先し、無ければ更新時刻 */
+const recentAt = (r: Record<string, unknown>): string =>
+  str(r.occurredAt) || str(r.updatedAt) || str(r.createdAt);
+
+/**
+ * AI_RECENT の note（JSON）を overview ほかに戻す。
+ * 2026-10-06 より前の行は "[object Object]…" などの壊れた文字列なので捨てる
+ * （見出しだけで中身が空の要約を出すより、未作成として出し直してもらう方がよい）。
+ */
+export function recentExtra(note: unknown): Record<string, unknown> {
+  const s = str(note);
+  if (!s.startsWith('{')) return {};
+  try {
+    const o = JSON.parse(s);
+    return o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+  } catch { return {}; }
+}
+
 /** testOpportunity 1 件 → edits の opp / deals[] に入る形 */
 function toEditDeal(row: Record<string, unknown>, key: string) {
   const ms = clean({
@@ -298,11 +316,29 @@ export async function buildDbView(): Promise<DbViewResult> {
 
   const peopleBy = byCompany(people);
   const orgs: Array<{ id: string; data: unknown }> = [];
-  for (const [cid, rows] of peopleBy) {
+  for (const [cid, all] of peopleBy) {
+    // ⚠ ノードの id は **externalId の末尾**。Twenty のレコード id を返すと、
+    //    次の保存で `orgs:<cid>:<レコードid>` という別の鍵になり、全員が
+    //    作り直される（edits の dealKey と同じ罠。2026-10-06 に組織図も直した）。
+    //    親も Twenty の parentId（レコード id）からノード id に引き直す。
+    const prefix = `orgs:${cid}:`;
+    const nodeId = (n: Record<string, unknown>): string => {
+      const ext = str(n.externalId);
+      return ext.startsWith(prefix) ? ext.slice(prefix.length) : str(n.id);
+    };
+    // 同じ鍵の重複行（保存が重なった名残）は 1 件にして返す
+    const byKey = new Map<string, Record<string, unknown>>();
+    for (const n of all) {
+      const k = nodeId(n), cur = byKey.get(k);
+      if (!cur || str(n.updatedAt) > str(cur.updatedAt)) byKey.set(k, n);
+    }
+    const rows = [...byKey.values()];
+    const recToNode = new Map<string, string>();
+    for (const n of all) recToNode.set(str(n.id), nodeId(n));
     const nodes = [...rows]
       .sort((a, b) => (num(a.order) ?? 0) - (num(b.order) ?? 0))
       .map(n => clean({
-        id:      str(n.id),
+        id:      nodeId(n),
         kind:    (str(n.nodeType) || 'person').toLowerCase(),
         name:    str(n.name),
         title:   str(n.title) || null,
@@ -318,7 +354,7 @@ export async function buildDbView(): Promise<DbViewResult> {
                : n.confirmed === false ? 'est'
                : str(n.infoSource) === 'ESTIMATED' ? 'est' : 'ok',
         inf:     n.influential === true ? true : null,
-        parent:  str(n.parentId) || null,
+        parent:  str(n.parentId) ? (recToNode.get(str(n.parentId)) ?? null) : null,
         note:    str(n.memo) || null,
         src:     str(n.sourceNote) || null,
       }));
@@ -335,36 +371,62 @@ export async function buildDbView(): Promise<DbViewResult> {
   }
 
   // ── recent ────────────────────────────────────────────────────────────────
-  const recent = activities
-    .filter(r => str(r.type) === 'AI_RECENT')
-    .map(r => ({
-      id: str(r.notionCompanyId),
-      data: clean({
-        companyId:   str(r.notionCompanyId),
-        companyName: custById.get(str(r.notionCompanyId))?.name ?? '',
-        summary:     str(r.text) || null,
-        overview:    str(r.note) || null,
-        genAt:       str(r.occurredAt) || null,
-      }),
-    }));
+  //   1 社 1 件。移行で作った recent:<旧ID> と画面の recent:<cid> が並ぶ会社があるので
+  //   新しい方を採る（同じ id で 2 件返すと、どちらが勝つかが並び順で決まる）。
+  const recentBy = new Map<string, Record<string, unknown>>();
+  for (const r of activities) {
+    if (str(r.type) !== 'AI_RECENT') continue;
+    const cid = str(r.notionCompanyId);
+    const cur = recentBy.get(cid);
+    if (!cur || recentAt(r) > recentAt(cur)) recentBy.set(cid, r);
+  }
+  const recent = [...recentBy].map(([cid, r]) => ({
+    id: cid,
+    data: clean({
+      ...recentExtra(r.note),
+      companyId:   cid,
+      companyName: custById.get(cid)?.name ?? '',
+      summary:     str(r.text) || null,
+      genAt:       str(r.occurredAt) || null,
+    }),
+  }));
 
   // ── feed ──────────────────────────────────────────────────────────────────
   // 原本の「新着・更新」は**商談の変更だけ**を出す欄（§B-07）。
-  // 操作記録には組織図の変更履歴なども入るので、ここで商談ぶんに絞る。
+  // 画面が feed.add で送った行（externalId が ui:feed:）だけにする。保存のたびに
+  // サーバーが残す要約（「商談を保存（N 件）」）まで流していたので、
+  // 何をしたか分からない「• 商談を保存（0 件） →」が並んでいた（2026-10-06 Utty 指摘）。
+  // 会社は鍵（ui:feed:<cid>:…）から、無い古い行は商談キーから引く。
+  const oppByKey = new Map<string, Record<string, unknown>>();
+  for (const o of opps) {
+    const ext = str(o.externalId);
+    if (ext.startsWith('sf:')) oppByKey.set(ext, o);
+    else { const m = ext.match(/^edits:([^:]+):(.+)$/); if (m) oppByKey.set(`${m[1]}|${m[2]}`, o); }
+  }
   const feed = oplogs
-    .filter(r => str(r.object) === 'testOpportunity')
-    .map(r => ({
-    id: str(r.id),
-    data: clean({
-      at:      str(r.at) || null,
-      by:      str(r.actor) || null,
-      cid:     str(r.recordId) || null,
-      kind:    str(r.field) || null,
-      label:   str(r.message) || null,
-      from:    str(r.from) || null,
-      to:      str(r.to) || null,
-    }),
-  }));
+    .filter(r => str(r.object) === 'testOpportunity' && str(r.externalId).startsWith('ui:feed:'))
+    .map(r => {
+      const parts = str(r.externalId).split(':');            // ui feed [cid] ts rand
+      const key = str(r.recordId);
+      let cid = parts.length >= 5 ? parts[2] : '';
+      const opp = oppByKey.get(key) ?? (cid ? oppByKey.get(`${cid}|${key}`) : undefined);
+      if (!cid && opp) cid = str(opp.notionCompanyId);
+      return {
+        id: str(r.id),
+        data: clean({
+          at:      str(r.at) || null,
+          by:      str(r.actor) || null,
+          cid:     cid || null,
+          key:     key || null,
+          company: custById.get(cid)?.name ?? null,
+          deal:    opp ? str(opp.name) || null : null,
+          kind:    str(r.field) || null,
+          label:   str(r.message) || null,
+          from:    str(r.from) || null,
+          to:      str(r.to) || null,
+        }),
+      };
+    });
 
   // ── minutes（議事録タブの取り込み結果）─────────────────────────────────
   //   原本の形に戻す:

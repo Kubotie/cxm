@@ -67,3 +67,43 @@ test('返すのは Twenty の選択肢にある 3 値だけ', () => {
     assert.ok(allowed.has(nodeSource(s)), `${s} → ${nodeSource(s)}`);
   }
 });
+
+// ── recent（取り組みサマリー）の往復 ─────────────────────────────────────
+// overview はオブジェクト。2026-10-06 まで str() で捨てていて、保存すると要約が消えていた。
+
+import { recentNote } from '../src/lib/ptai/db-write.ts';
+import { recentExtra } from '../src/lib/ptai/db-view.ts';
+
+test('サマリーの overview・events などが保存して読み戻しても残る', () => {
+  const body = {
+    companyId: 'c1', companyName: 'X', summary: 's', genAt: '2026-10-06T00:00:00.000Z',
+    overview: { engagement: 'e', deal: 'd', activity: 'a', risks: ['r'] },
+    momentum: 'up', events: [{ date: '2026-10-01', what: 'w', source: 'm' }], gaps: ['g'],
+  };
+  const back = recentExtra(recentNote(body));
+  assert.deepEqual(back.overview, body.overview);
+  assert.deepEqual(back.events, body.events);
+  assert.equal(back.momentum, 'up');
+  assert.equal('summary' in back, false);   // text 列に別に持つ
+});
+
+test('移行時の壊れた note（[object Object]…）は読まない', () => {
+  assert.deepEqual(recentExtra('[object Object]\n勢い: up'), {});
+  assert.deepEqual(recentExtra(null), {});
+  assert.deepEqual(recentExtra('{壊れた'), {});
+});
+
+// ── 組織図の重複行（2026-10-06）────────────────────────────────────────
+import { orgKeepers } from '../src/lib/ptai/db-write.ts';
+
+test('同じ鍵の行が複数あれば、どの保存から見ても同じ最古の 1 件を残す', () => {
+  const rows = [
+    { id: 'b', externalId: 'orgs:c:n1', createdAt: '2026-10-06T01:00:00Z' },
+    { id: 'a', externalId: 'orgs:c:n1', createdAt: '2026-10-06T00:00:00Z' },
+    { id: 'c', externalId: 'orgs:c:n2', createdAt: '2026-10-06T00:00:00Z' },
+  ];
+  const k = orgKeepers(rows);
+  assert.equal(k.get('orgs:c:n1')?.id, 'a');
+  assert.equal(orgKeepers([...rows].reverse()).get('orgs:c:n1')?.id, 'a');
+  assert.equal(k.get('orgs:c:n2')?.id, 'c');
+});

@@ -62,6 +62,21 @@
   var rev = null;
   var started = false;
   var polling = false;
+  /* 書き込みの世代。保存より前に始まったポーリングの結果は**捨てる**。
+     保存には数秒かかるので、その間に出た GET が保存前の Twenty を読み、
+     保存完了の後に届いて画面を元に戻していた（2026-10-06 Eri 指摘
+     「NextAction の期日が 3 回に 1 回保存できない」）。 */
+  var writes = 0;            /* 実行中の書き込み数 */
+  /* 書き込みの後は「どの版とも一致しない rev」を送って全件取り直す。null（rev なし）にすると
+     初回読み込み扱いになり、サーバーが一部読めなかった結果まで受け取ってしまう */
+  var STALE = 'stale';
+  var failStreak = 0;        /* 続けて読めなかった回数。続くときは一部欠けでも受け取る */
+  var writeGen = 0;          /* 書き込みが始まる／終わるたびに増える */
+  async function guarded(fn) {
+    writes++; writeGen++;
+    try { return await fn(); }
+    finally { writes--; writeGen++; rev = STALE; }
+  }
 
   function docSnap(collection, docId) {
     var rows = state[collection] || [];
@@ -99,14 +114,21 @@
   async function poll() {
     if (polling) return;
     polling = true;
+    var gen = writeGen;
     try {
-      var json = await api('/db' + (rev ? '?rev=' + encodeURIComponent(rev) : ''), { method: 'GET' });
+      /* 3 回続けて読めなければ rev を付けずに引く（サーバーは一部欠けでも返す）。
+         一部の読み取りがずっと失敗していると、他の人の変更がいつまでも入らないため */
+      var useRev = rev && failStreak < 3;
+      var json = await api('/db' + (useRev ? '?rev=' + encodeURIComponent(rev) : ''), { method: 'GET' });
+      failStreak = 0;
+      if (writes || gen !== writeGen) return;   /* 保存と行き違った結果。次の回で取り直す */
       if (json && json.unchanged) return;
       if (!json || !json.collections) return;
       state = json.collections;
       rev = json.rev || null;
       notify();
     } catch (e) {
+      failStreak++;
       if (e && e.code === 'session_expired') {
         listeners.forEach(function (l) { if (l.errCb) l.errCb(err('revoked')); });
         stopPolling();
@@ -156,23 +178,27 @@
         return docSnap(collection, docId);
       },
       set: async function (body) {
-        try {
-          await api('/db', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: path, data: body }),
-          });
-        } catch (e) { throw mapWriteError(e); }
+        await guarded(async function () {
+          try {
+            await api('/db', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: path, data: body }),
+            });
+          } catch (e) { throw mapWriteError(e); }
+        });
         applyLocal(collection, docId, body);
-        rev = null;                       /* 次のポーリングで必ず取り直す */
+        rev = STALE;                      /* 次のポーリングで必ず取り直す */
         notify(collection);
       },
       delete: async function () {
-        try {
-          await api('/db?path=' + encodeURIComponent(path), { method: 'DELETE' });
-        } catch (e) { throw mapWriteError(e); }
+        await guarded(async function () {
+          try {
+            await api('/db?path=' + encodeURIComponent(path), { method: 'DELETE' });
+          } catch (e) { throw mapWriteError(e); }
+        });
         removeLocal(collection, docId);
-        rev = null;
+        rev = STALE;
         notify(collection);
       },
       onSnapshot: function (cb, errCb) {
@@ -189,16 +215,17 @@
     opts = opts || {};
     var self = {
       add: async function (body) {
-        var out;
-        try {
-          out = await api('/db', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection: name, data: body }),
-          });
-        } catch (e) { throw mapWriteError(e); }
+        var out = await guarded(async function () {
+          try {
+            return await api('/db', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ collection: name, data: body }),
+            });
+          } catch (e) { throw mapWriteError(e); }
+        });
         applyLocal(name, (out && out.id) || String(Date.now()), body);
-        rev = null;
+        rev = STALE;
         notify(name);
         return { id: out && out.id };
       },

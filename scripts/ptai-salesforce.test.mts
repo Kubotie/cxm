@@ -184,3 +184,25 @@ test('読み取る項目に書き戻す 3 項目が入っている（入れ忘�
       `${SF_EDITABLE[k].field} が SELECT に無い`);
   }
 });
+
+// ── 取り込みの振り分けと変更履歴（2026-10-06）────────────────────────────
+
+import { pickCompany, syncChanges } from '../src/lib/ptai/salesforce/sync.ts';
+
+test('同じ取引先 ID の会社が複数あれば、いま付いている会社を保つ', () => {
+  const c = [{ cid: 'b' }, { cid: 'a' }];
+  assert.equal(pickCompany(c, 'b')?.cid, 'b');
+  assert.equal(pickCompany(c, null)?.cid, 'a');      // 無ければ毎回同じ先頭
+  assert.equal(pickCompany(c, 'zzz')?.cid, 'a');
+  assert.equal(pickCompany([], null), undefined);
+});
+
+test('取り込みで変わった項目だけを拾い、初回は数えない', () => {
+  const before = { stage: 'EVALUATING', addMrr: 268000, applyDate: '2026-11-12', billingDate: null };
+  assert.deepEqual(syncChanges(undefined, before), []);
+  assert.deepEqual(syncChanges(before, { ...before }), []);
+  const d = syncChanges(before, { ...before, stage: 'PROBABLE', billingDate: '2026-12-01' });
+  assert.deepEqual(d.map(x => x.kind), ['ph', 'bill']);
+  assert.equal(d[1].from, '');
+  assert.equal(d[1].to, '2026-12-01');
+});

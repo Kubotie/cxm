@@ -19,6 +19,10 @@ export const maxDuration = 300;
 /** 画面を開いたときの自動同期で使う間隔。これより新しければ何もしない */
 const AUTO_MAX_AGE_MS = 60 * 60_000;
 
+/** このインスタンスで走っている取り込み。重なったら同じ結果を待つ（新規商談の二重作成を防ぐ）。
+ *  2026-10-06 から画面を開いたときの取り込みを待たなくなり、その間に「Salesforce から更新」を押せるため */
+let running: ReturnType<typeof syncSalesforceOpportunities> | null = null;
+
 export async function POST(req: NextRequest) {
   const me = await getPtaiIdentity();
   if (!me) return NextResponse.json({ ok: false, code: 'session_expired' }, { status: 401 });
@@ -37,7 +41,11 @@ export async function POST(req: NextRequest) {
     // 1 時間おきの更新は**画面を開いたときに古ければ走らせる**で担保する。
     const ifStale = req.nextUrl.searchParams.get('ifStale') === '1';
     const actor = await actorStampFor(me.id, me.name);
-    const r = await syncSalesforceOpportunities(actor, false, ifStale ? AUTO_MAX_AGE_MS : undefined);
+    if (!running) {
+      running = syncSalesforceOpportunities(actor, false, ifStale ? AUTO_MAX_AGE_MS : undefined)
+        .finally(() => { running = null; });
+    }
+    const r = await running;
     if (r.skipped) {
       return NextResponse.json(r, { headers: { 'Cache-Control': 'no-store' } });
     }

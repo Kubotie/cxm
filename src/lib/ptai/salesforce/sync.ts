@@ -22,6 +22,48 @@ import type { ActorStamp } from '../staff';
 
 const OPP = TEST_OBJECTS.opportunity;
 const ACT = TEST_OBJECTS.action;
+const LOG = TEST_OBJECTS.operationLog;
+
+/** 新着欄と変更履歴に残す項目（Salesforce でしか直せないもの）。kind は画面の FEED_F の鍵 */
+const TRACKED: Array<{ kind: string; label: string; field: string }> = [
+  { kind: 'ph',    label: 'フェーズ',     field: 'stage' },
+  { kind: 'add',   label: '（見込）追加MRR', field: 'addMrr' },
+  { kind: 'apply', label: '申込完了日',   field: 'applyDate' },
+  { kind: 'bill',  label: '課金開始日',   field: 'billingDate' },
+];
+const norm = (v: unknown): string => {
+  if (v === null || v === undefined || v === '') return '';
+  if (typeof v === 'number') return String(v);
+  const s = String(v);
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : s;
+};
+
+/**
+ * 取り込みで変わった項目。前回の写し（before）が無い＝初回の取り込みは変更として数えない。
+ * 2026-10-06 まで取り込みは履歴を残さず、申込完了日・課金開始日の変更が追えなかった（Utty 指摘）。
+ */
+export function syncChanges(
+  before: Record<string, unknown> | undefined, after: Record<string, unknown>,
+): Array<{ kind: string; label: string; from: string; to: string }> {
+  if (!before) return [];
+  const out: Array<{ kind: string; label: string; from: string; to: string }> = [];
+  for (const t of TRACKED) {
+    const a = norm(before[t.field]), b = norm(after[t.field]);
+    if (a !== b) out.push({ kind: t.kind, label: t.label, from: a, to: b });
+  }
+  return out;
+}
+
+/**
+ * 取引先 ID が同じ会社が Notion に複数あるとき（1 社を ToB／ToC の 2 行に分けている等）の振り分け。
+ * 2026-10-06 までは Notion が返した順で後ろの行が勝ち、どちらに付くか決まっていなかった（Eri 指摘）。
+ *   1. いま Twenty で付いている会社が候補にあれば、それを保つ（Twenty で付け替えたものを戻さない）
+ *   2. 無ければページ ID の順で先頭（毎回同じ結果になる）
+ */
+export function pickCompany<T extends { cid: string }>(cands: T[], current: string | null): T | undefined {
+  if (cands.length <= 1) return cands[0];
+  return cands.find(c => c.cid === current) ?? [...cands].sort((a, b) => a.cid.localeCompare(b.cid))[0];
+}
 
 /** `sfPending` の読み書き。カンマ区切りの素朴な持ち方 */
 const parsePending = (v: unknown): Set<SfEditableKey> =>
@@ -42,6 +84,10 @@ export interface SyncResult {
   deleted: number;
   /** 取引先が無い／Notion に無い会社ぶん */
   skippedNoCompany: number;
+  /** 取り込めなかった商談の名前（最大 10。画面に出す用。ログには出さない） */
+  skippedNames?: string[];
+  /** 同じ取引先 ID の会社が複数あり、振り分けで 1 つ選んだ件数 */
+  ambiguous?: number;
   /** 最近やったばかりで何もしなかった */
   skipped?: boolean;
   message: string | null;
@@ -98,20 +144,25 @@ export async function syncSalesforceOpportunities(
     listCustomers({ maxPages: 20 }),
   ]);
 
-  // Salesforce の Account ID → Notion のページ ID
-  const cidByAccount = new Map<string, { cid: string; owners: string[] }>();
+  // Salesforce の Account ID → Notion のページ ID（同じ ID の行が複数ありうる）
+  const cidByAccount = new Map<string, Array<{ cid: string; owners: string[] }>>();
   for (const c of customers) {
-    if (c.sfAccountId) cidByAccount.set(c.sfAccountId, { cid: c.pageId, owners: c.owners3 });
+    if (!c.sfAccountId) continue;
+    const list = cidByAccount.get(c.sfAccountId) ?? [];
+    list.push({ cid: c.pageId, owners: c.owners3 });
+    cidByAccount.set(c.sfAccountId, list);
   }
 
   // 送信できていない項目がある商談は、その項目だけ上書きしない。
   // 先に 1 回だけ全件引いて控えておく（商談ごとに引くと件数ぶん往復する）
   const pendingByExt = new Map<string, Set<SfEditableKey>>();
   const idByExt      = new Map<string, string>();
+  const rowByExt     = new Map<string, Record<string, unknown>>();
   for (const row of await listRecords(OPP.plural, OPP.singular, { pageSize: 200, maxRecords: 2000 })) {
     const ext = String(row.externalId ?? '');
     if (!ext.startsWith(SF_EXTERNAL_PREFIX)) continue;
     idByExt.set(ext, String(row.id));
+    rowByExt.set(ext, row);
     const p = parsePending(row.sfPending);
     if (p.size) pendingByExt.set(ext, p);
   }
@@ -120,15 +171,29 @@ export async function syncSalesforceOpportunities(
   const seen = new Set<string>();
 
   for (const o of opps) {
-    const hit = o.accountId ? cidByAccount.get(o.accountId) : undefined;
-    if (!hit) { r.skippedNoCompany++; continue; }
+    const ext = `${SF_EXTERNAL_PREFIX}${o.id}`;
+    const cands = o.accountId ? cidByAccount.get(o.accountId) ?? [] : [];
+    const hit = pickCompany(cands, String(rowByExt.get(ext)?.notionCompanyId ?? '') || null);
+    if (!hit) {
+      r.skippedNoCompany++;
+      // 画面に出すための名前（ログには出さない）
+      if ((r.skippedNames ??= []).length < 10) r.skippedNames.push(o.name);
+      continue;
+    }
+    if (cands.length > 1) r.ambiguous = (r.ambiguous ?? 0) + 1;
     r.matched++;
 
-    const ext = `${SF_EXTERNAL_PREFIX}${o.id}`;
     seen.add(ext);
     if (dryRun) continue;
     const pend = pendingByExt.get(ext) ?? new Set<SfEditableKey>();
 
+    const fields = {
+      stage:       SF_TO_DASHBOARD_STAGE[o.stage] ?? 'INACTIVE',
+      addMrr:      o.netMrr,
+      applyDate:   o.closeDate,
+      billingDate: o.billingDate,
+    };
+    const diff = syncChanges(rowByExt.get(ext), fields);
     const res = await upsertByExternalId(OPP.plural, OPP.singular, ext, {
       name:            o.name,
       notionCompanyId: hit.cid,
@@ -152,6 +217,7 @@ export async function syncSalesforceOpportunities(
       isMain:          false,
     }, actor);
     res.created ? r.created++ : r.updated++;
+    for (const c of diff.slice(0, 4)) await logSyncChange(ext, hit.cid, c, actor);
 
     // ネクストアクションは別レコード（testAction）。Salesforce の Next Action を写す
     if (!pend.has('nextAction')) {
@@ -172,9 +238,27 @@ export async function syncSalesforceOpportunities(
   }
 
   if (r.skippedNoCompany) {
-    r.message = `${r.skippedNoCompany} 件は取引先が Notion 顧客管理DB に見つからず取り込めませんでした`;
+    r.message = `${r.skippedNoCompany} 件は取引先が Notion 顧客管理DB に見つからず取り込めませんでした`
+      + '（Notion の「Salesforce Account ID」に取引先 ID を入れると取り込まれます）';
   }
   return r;
+}
+
+/**
+ * 取り込みで変わった項目を操作記録に残す。新着欄（db-view の feed）が `ui:feed:<cid>:` で拾う。
+ * 失敗しても取り込みは止めない。
+ */
+async function logSyncChange(
+  ext: string, cid: string, c: { kind: string; label: string; from: string; to: string }, actor: ActorStamp,
+): Promise<void> {
+  try {
+    await upsertByExternalId(LOG.plural, LOG.singular,
+      `ui:feed:${cid.replace(/:/g, '')}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`, {
+        name: `${c.label}（Salesforce）`, at: new Date().toISOString(), actor: 'Salesforce',
+        action: 'sync', object: 'testOpportunity', recordId: ext, field: c.kind,
+        from: c.from || null, to: c.to || null, source: 'sync', message: c.label,
+      }, actor);
+  } catch { /* 記録できなくても取り込みは成立している */ }
 }
 
 /**

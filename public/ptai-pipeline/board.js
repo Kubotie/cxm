@@ -209,6 +209,9 @@ async function sfSync(btn){
       if(btn) btn.textContent = j.message || '取り込めませんでした';
     } else {
       if(btn) btn.textContent = `${j.matched}件を取り込みました`;
+      /* 【移植による変更】取り込めなかった商談を知らせる（2026-10-06 Eri 指摘「紐づかない商談がある」）。
+         件数はサーバーが返していたが、画面には出ていなかった */
+      if(j.skippedNoCompany) alert(`${j.skippedNoCompany}件の商談は、取引先が Notion 顧客管理DB の会社と結び付かず取り込めませんでした。\n\n${(j.skippedNames||[]).map(n=>'・'+n).join('\n')}\n\nNotion の該当企業の「Salesforce Account ID」に、Salesforce の取引先 ID（001 で始まる 18 桁）を入れてから、もう一度読み込んでください。`);
       /* 画面の再読み込みは db のポーリングに任せる（最大 6 秒） */
     }
   }catch(_){ if(btn) btn.textContent = '取り込めませんでした'; }
@@ -311,6 +314,10 @@ function buildDeal(c,i){
     d.ph = top.ph; d.phEst = top.est;
     d.add = live.reduce((s,x)=>s+(x.add||0),0);
     d.apply = minStr(live.map(x=>x.apply)); d.close = minStr(live.map(x=>x.close));
+    /* 【移植による変更】会社の行にも課金開始日と障壁を出す（2026-10-06 Utty 指摘「反映されていない」）。
+       課金開始日は日付まで（無ければ月）、障壁はいちばん進んでいる商談のもの。 */
+    d.bill = minStr(live.map(x=>x.bill));
+    { const b = top.br ? top : live.find(x=>x.br); if(b){ d.br = b.br; d.brDeal = b; } }
     if(deals.some(x=>!x.primary)){ d.src = Object.assign({}, d.src, {add:'edit'}); }
   }
   return d;
@@ -321,7 +328,9 @@ let IS_APPROVER=false;
 const needsApproval = (from,to) => from!==to && (from==='CLOSED_WON' || to==='CLOSED_WON');
 function phChip(d,x){
   const pend = x.pending && x.pending!==x.ph;
-  return `<span class="phw"><button type="button" class="chip ph phbtn" data-phedit="${d.id}|${esc(x.key)}" style="background:var(${PCOL[x.ph]});${x.ph==='CLOSED_LOST'?'color:var(--ink)':''}" title="クリックでフェーズを変更">${PH_JP[x.ph]}</button>${x.est?'<span class="chip estm">暫定</span>':''}${pend?(IS_APPROVER?`<button type="button" class="chip apr" data-approve="${d.id}|${esc(x.key)}" title="${PH_JP[x.pending]}への変更を承認">${PH_JP[x.pending]}を承認</button>`:`<span class="chip estm" title="${PH_JP[x.pending]}への変更を承認者（Utty）が確認中">承認待ち</span>`):''}</span>`;
+  /* 【移植による変更】Salesforce 由来の商談はフェーズを画面で変えられない（保存しても捨てられる）。チップは表示だけにする（2026-10-06） */
+  const sf=String(x.key).startsWith('sf:');
+  return `<span class="phw"><${sf?'span':'button type="button"'} class="chip ph ${sf?'':'phbtn'}" ${sf?'':`data-phedit="${d.id}|${esc(x.key)}"`} style="background:var(${PCOL[x.ph]});${x.ph==='CLOSED_LOST'?'color:var(--ink)':''}" title="${sf?'フェーズは Salesforce で変更してください':'クリックでフェーズを変更'}">${PH_JP[x.ph]}</${sf?'span':'button'}>${x.est?'<span class="chip estm">暫定</span>':''}${pend?(IS_APPROVER?`<button type="button" class="chip apr" data-approve="${d.id}|${esc(x.key)}" title="${PH_JP[x.pending]}への変更を承認">${PH_JP[x.pending]}を承認</button>`:`<span class="chip estm" title="${PH_JP[x.pending]}への変更を承認者（Utty）が確認中">承認待ち</span>`):''}</span>`;
 }
 function phaseBody(d, key, patch){
   const prev=EDITS[d.cid]||{}; const now=new Date().toISOString();
@@ -828,20 +837,28 @@ document.getElementById('fcCum').addEventListener('input',e=>{fcCum=e.target.che
 document.querySelectorAll('[data-fm]').forEach(b=>b.onclick=()=>{fcMode=b.dataset.fm;document.querySelectorAll('[data-fm]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));renderForecast();});
 
 /* ===================== ステージ別 ===================== */
+/* 【移植による変更】フェーズ別は**商談単位**で数える（2026-10-06 Utty 指摘「受注の現在MRR 200.1万は誤り」）。
+   旧は会社をいちばん進んだ商談のフェーズに入れ、合算MRR（現在MRR＋全商談の追加MRR）を足していたため、
+   ・受注していない同じ会社の商談の金額が受注の列に混ざる
+   ・課金が始まった受注ぶんが現在MRR と追加MRR で二重になる
+   ・ラベルは「現在MRR」なのに中身は合算MRR
+   だった。列には「そのフェーズにある商談の追加MRR」を出し、会社はそのフェーズの商談を持つ会社を数える。 */
+const phasesOf = d => (d.deals&&d.deals.length) ? [...new Set(d.deals.map(x=>x.ph))] : [d.ph];
+const addAt = (d, s) => (d.deals&&d.deals.length) ? d.deals.filter(x=>x.ph===s).reduce((t,x)=>t+(x.add||0),0) : (d.ph===s ? (d.add||0) : 0);
 function renderFunnel(){
-  const ds=scope(); const maxAmt=Math.max(...PHASES.map(s=>sum(ds.filter(d=>d.ph===s),total)),1);
-  document.getElementById('funnel').innerHTML=PHASES.map(s=>{const l=ds.filter(d=>d.ph===s); const amt=sum(l,total), ex=sum(l,expected);
+  const ds=scope(); const maxAmt=Math.max(...PHASES.map(s=>ds.reduce((t,d)=>t+addAt(d,s),0)),1);
+  document.getElementById('funnel').innerHTML=PHASES.map(s=>{const l=ds.filter(d=>phasesOf(d).includes(s)); const amt=l.reduce((t,d)=>t+addAt(d,s),0), ex=amt*(FORECAST[s]||0);
     /* 期待値は商談の金額から出すので、金額が未入力だと 0 になる。
        「壊れている」と見えないよう、何社ぶん入っていないかを出す（2026-10-04） */
-    const noAmt=l.filter(d=>!(m2(d)>0) && !['INACTIVE','CLOSED_LOST','ADMIN_CLOSE'].includes(d.ph)).length;
+    const noAmt=l.filter(d=>!(addAt(d,s)>0) && !['INACTIVE','CLOSED_LOST','ADMIN_CLOSE'].includes(s)).length;
     const PH_2L={INACTIVE:['Inactive',''],ACTIVE:['Active',''],GOAL_SHARED:['Goal','Shared'],QUALIFIED_CHAMPION:['Qualified','Champion'],EVALUATING:['Evaluating',''],PROBABLE:['Probable',''],VERBAL:['Verbal',''],WON:['Won',''],CLOSED_WON:['受注','Closed Won'],ADMIN_CLOSE:['Admin','Close'],CLOSED_LOST:['Close','Lost']};
     const n=PHASES.indexOf(s)+1, lost=s==='CLOSED_LOST';
-    return `<div class="fcol ${lost?'lost':''} ${l.length?'':'zero'}" role="button" tabindex="0" data-ph="${s}" aria-pressed="${phaseFilter===s}" data-tip="${esc(`<b>${phBoth(s)}</b>${l.length}社　現在MRR ${man(amt)}<br>確率 ${Math.round((FORECAST[s]||0)*100)}%　期待値 ${man1(ex)}<br>クリックでこのフェーズの企業を表示`)}">
+    return `<div class="fcol ${lost?'lost':''} ${l.length?'':'zero'}" role="button" tabindex="0" data-ph="${s}" aria-pressed="${phaseFilter===s}" data-tip="${esc(`<b>${phBoth(s)}</b>${l.length}社　商談の追加MRR ${man(amt)}<br>確率 ${Math.round((FORECAST[s]||0)*100)}%　期待値 ${man1(ex)}<br>クリックでこのフェーズの企業を表示`)}">
       <div class="ph">${lost?'':`<span class="no num">${n}</span>`}<span class="nm">${(PH_2L[s]||[PH_JP[s],''])[0]}${(PH_2L[s]||[])[1]?`<small>${PH_2L[s][1]}</small>`:''}</span></div>
       ${PH_JA[s]?`<div class="phja">${PH_JA[s]}</div>`:''}
       <div class="cnt num">${l.length}<small>社</small></div>
       <div class="fb"><i style="width:${amt/maxAmt*100}%;background:var(${PCOL[s]})"></i></div>
-      <div class="amt num"><small>現在MRR</small><b>${man1(amt)}</b></div>
+      <div class="amt num"><small>追加MRR</small><b>${man1(amt)}</b></div>
       <div class="pr num"><small>期待値</small>${man1(ex)}<span>${Math.round((FORECAST[s]||0)*100)}%</span></div>
       ${noAmt?`<div class="noamt" title="商談の金額が入っていないので期待値に乗りません。金額は Salesforce で入れてください">金額未入力 ${noAmt}社</div>`:''}</div>`;}).join('');
   document.querySelectorAll('.fcol').forEach(c=>{const f=()=>{const s=c.dataset.ph;phaseFilter=phaseFilter===s?null:s;FS.phase=new Set(phaseFilter?[phaseFilter]:[]);saveFS();msSummary();renderFunnel();renderDeals();};c.onclick=f;c.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();f();}};});
@@ -859,7 +876,7 @@ function flagsOf(d){
 function renderPhasePanel(){
   const el=document.getElementById('phasePanel');
   if(phaseFilter===null){el.hidden=true;el.innerHTML='';return;}
-  const s=phaseFilter; const list=scope().filter(d=>d.ph===s).sort((a,b)=>b.m-a.m);
+  const s=phaseFilter; const list=scope().filter(d=>phasesOf(d).includes(s)).sort((a,b)=>b.m-a.m);
   el.hidden=false;
   const card=d=>{const late=d.nd&&ymd(d.nd)<TODAY&&ACTIVE_PS.includes(d.ps), soon=d.nd&&!late&&days(ymd(d.nd),TODAY)<=7;
     const fl=flagsOf(d);
@@ -868,7 +885,7 @@ function renderPhasePanel(){
       <div class="r2"><div>現在MRR<b>${man1(d.m)}</b></div><div>期待値<b>${man1(expected(d))}</b></div><div>最終更新<b>${d.le.slice(5).replace('-','/')}</b></div></div>
       ${fl.length?`<div class="r3">${fl.map(([c,l])=>`<span class="chip ${c}">${c&&c!=='split'?'<i></i>':''}${esc(l)}</span>`).join('')}</div>`:''}
       <div class="na"><b>Next</b> ${esc(d.naHead||'（未入力）')}${d.nd?` <span class="${late?'late':soon?'soon':''}">／${d.nd.slice(5).replace('-','/')}${late?'（'+days(TODAY,ymd(d.nd))+'日超過）':''}</span>`:''}</div></div>`;};
-  el.innerHTML=`<div class="ph-h"><h3><i style="background:var(${PCOL[s]})"></i>${PH_JP[s]} の企業 <span class="sub" style="margin-left:0">${list.length}社・現在MRR ${man1(sum(list,total))}・期待値 ${man1(sum(list,expected))}</span></h3>
+  el.innerHTML=`<div class="ph-h"><h3><i style="background:var(${PCOL[s]})"></i>${PH_JP[s]} の企業 <span class="sub" style="margin-left:0">${list.length}社・追加MRR ${man1(list.reduce((t,d)=>t+addAt(d,s),0))}・期待値 ${man1(list.reduce((t,d)=>t+addAt(d,s),0)*(FORECAST[s]||0))}</span></h3>
     <span class="sub"><button type="button" id="ppToTable">企業一覧で見る ↓</button>　<button type="button" id="ppClose">閉じる ×</button></span></div>
     <div class="plist">${list.map(card).join('')||'<div class="empty">このステージの企業はありません</div>'}</div>`;
   el.querySelectorAll('.pcard').forEach(c=>{const f=()=>openDeal(+c.dataset.id,'sum');c.onclick=f;c.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();f();}};});
@@ -932,7 +949,7 @@ function renderDeals(){
   renderGoal(); renderFeed();
   const fo=document.getElementById('fOwner').value, fp=document.getElementById('fPhase').value, fs=document.getElementById('fStatus').value, ft=document.getElementById('fTier').value, q=document.getElementById('fQ').value.trim();
   const base = view==='team'?DEALS:DEALS.filter(d=>d.owners.includes(view));
-  let ds=base.filter(d=>(!FS.owner.size||d.owners.some(o=>FS.owner.has(o)))&&(!FS.phase.size||FS.phase.has(d.ph))&&(!fs||d.ps===fs)&&(!FS.tier.size||FS.tier.has(d.t))&&(!q||d.n.includes(q))&&(!missingOnly||(!baseMo(d)||!d.add)&&d.ph!=='CLOSED_LOST'));
+  let ds=base.filter(d=>(!FS.owner.size||d.owners.some(o=>FS.owner.has(o)))&&(!FS.phase.size||phasesOf(d).some(p=>FS.phase.has(p)))&&(!fs||d.ps===fs)&&(!FS.tier.size||FS.tier.has(d.t))&&(!q||d.n.includes(q))&&(!missingOnly||(!baseMo(d)||!d.add)&&d.ph!=='CLOSED_LOST'));
   const key={co:d=>d.n,o:d=>d.owners.join(),t:d=>d.t||'Z',ps:d=>PS.indexOf(d.ps),st:d=>PHASES.indexOf(d.ph),m:d=>d.m,add:d=>d.add,aim:d=>{const p=planOf(d);return p?(p.base+p.add)*goalCtx().w(d)+1e12:aimOf(d);},tot:total,cl:d=>d.close||'9999',ap:d=>d.apply||'9999',br:d=>(d.bs?BS_OPTS.indexOf(d.bs):9)+(d.br||'~'),pr:d=>FORECAST[d.ph]||0,exp:expected,add3:d=>m3(d),ind:d=>d.ind||'',pot:d=>(potOf(d)||{prio:-1}).prio,nd:d=>d.nd||'9999',le:d=>d.le}[sortKey];
   ds.sort((x,y)=>{const a=key(x),b=key(y);return (a>b?1:a<b?-1:0)*sortDir;});
   const th=(k,l,r,t,tp)=>`<th class="${r?'r':''}" data-k="${k}" ${t?`title="${t}"`:''} ${tp?`data-tip="${esc(tp)}"`:''} ${sortKey===k?`aria-sort="${sortDir>0?'ascending':'descending'}"`:''}>${l}${sortKey===k?(sortDir>0?' ▲':' ▼'):''}</th>`;
@@ -942,6 +959,9 @@ function renderDeals(){
   const pages=Math.max(1,Math.ceil(ds.length/pageSize)); page=Math.min(Math.max(1,page),pages);
   const all=ds; ds=all.slice((page-1)*pageSize, page*pageSize);
   const fillBtn=(d,x)=>`<button type="button" class="fill" data-fill="${d.id}" data-dk="${x?x.key:'new'}">＋入力</button>`;
+  /* 【移植による変更】Salesforce が正本の列（金額・申込完了日・課金開始日）は「＋入力」を出さない（2026-10-06）。
+     押しても画面では直せず、奥の入力欄も読むだけなので、Salesforce で入れることを示す */
+  const sfFill=(d,x)=>x&&String(x.key).startsWith('sf:')?'<span class="dim" title="Salesforce で入力してください（1 時間おきに反映）">SF で入力</span>':fillBtn(d,x);
   const dateCell=(v,late,yr)=>`<span class="${late?'late':''}">${v}</span>${yr}`;
   let gHit=null; { const {tgt,w}=goalCtx();
   if(sortKey==='aim'&&sortDir<0&&tgt){ let c=0; for(const d of all){ const p=planOf(d); if(!p) continue; c+=(p.base+p.add)*w(d); if(c>=tgt){ gHit=d.id; break; } } } }
@@ -959,8 +979,9 @@ function renderDeals(){
       <td class="r num aimc">${aimCell(d)}</td>
       <td class="r num">${m2(d)?man1(m2(d)):'<span class="dim">—</span>'}</td>
       <td class="r num">${m3(d)?man1(m3(d)):'<span class="dim">—</span>'}</td>
-      <td></td><td></td>
-      <td></td>
+      <td class="num" title="${nD>1?'商談のうち最も早い日':''}">${d.apply?dateCell(d.apply.slice(5).replace('-','/'), false, d.apply.slice(0,4)!==String(TODAY.getFullYear())?`<span class="dim">'${d.apply.slice(2,4)}</span>`:''):'<span class="dim">—</span>'}</td>
+      <td class="num" title="${nD>1?'商談のうち最も早い日':''}">${d.bill?d.bill.slice(5).replace('-','/'):d.close?d.close.replace('-','/'):'<span class="dim">—</span>'}</td>
+      <td class="brc">${d.br?`<div class="brt" title="${esc(d.br)}${d.brDeal&&nD>1?'（'+esc(d.brDeal.name)+'）':''}">${esc(d.br)}</div>`:'<span class="dim">—</span>'}</td>
       <td style="white-space:nowrap">${IND_JP[d.ind]||'<span class="dim">—</span>'}</td>
       <td>${potHtml(d)}</td>
       <td></td>
@@ -978,10 +999,10 @@ function renderDeals(){
       <td></td><td></td>
       <td>${phChip(d,x)}</td>
       <td></td><td></td>
-      <td class="r num">${x.add?man1(x.add)+(x.src&&x.src.add==='edit'&&x.primary?'<span class="chip estm">入力</span>':''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
+      <td class="r num">${x.add?man1(x.add)+(x.src&&x.src.add==='edit'&&x.primary?'<span class="chip estm">入力</span>':''):(lost?'<span class="dim">—</span>':sfFill(d,x))}</td>
       <td class="r num">${x.add?man1((x.add||0)*(FORECAST[x.ph]||0)):'<span class="dim">—</span>'}</td>
-      <td class="num">${x.apply?dateCell(x.apply.slice(5).replace('-','/'), x.apply<dstr(TODAY)&&!['CLOSED_WON','CLOSED_LOST','VERBAL','WON'].includes(x.ph), x.apply.slice(0,4)!==String(TODAY.getFullYear())?`<span class="dim">'${x.apply.slice(2,4)}</span>`:''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
-      <td class="num">${x.close?dateCell(x.close.replace('-','/'), x.close<ymOf(TODAY)&&!fin, ''):(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
+      <td class="num">${x.apply?dateCell(x.apply.slice(5).replace('-','/'), x.apply<dstr(TODAY)&&!['CLOSED_WON','CLOSED_LOST','VERBAL','WON'].includes(x.ph), x.apply.slice(0,4)!==String(TODAY.getFullYear())?`<span class="dim">'${x.apply.slice(2,4)}</span>`:''):(lost?'<span class="dim">—</span>':sfFill(d,x))}</td>
+      <td class="num">${x.bill?dateCell(x.bill.slice(5).replace('-','/'), x.bill<dstr(TODAY)&&!fin, x.bill.slice(0,4)!==String(TODAY.getFullYear())?`<span class="dim">'${x.bill.slice(2,4)}</span>`:''):x.close?dateCell(x.close.replace('-','/'), x.close<ymOf(TODAY)&&!fin, ''):(lost?'<span class="dim">—</span>':sfFill(d,x))}</td>
       <td class="brc">${x.bs||x.br?`${x.bs?`<span class="chip bs-${BS_OPTS.indexOf(x.bs)}">${esc(x.bs)}</span>`:''}${x.br?`<div class="brt" title="${esc(x.br)}">${esc(x.br)}</div>`:''}`:(lost?'<span class="dim">—</span>':fillBtn(d,x))}</td>
       <td></td>
       <td></td>
@@ -1094,10 +1115,31 @@ let openId=null, dTab='sum', editDeal=null, DEAL_OPEN=null;
 let drawerFull=false; try{ drawerFull=localStorage.getItem('pgaBoard.drawerFull')==='1'; }catch(_){}
 const drawer=document.getElementById('drawer'), scrim=document.getElementById('scrim');
 function openDeal(id,tab,dk){ editDeal=dk||null; DEAL_OPEN=null; drawer.classList.toggle("full",drawerFull); openId=id;if(tab)dTab=tab;renderDrawer();drawer.classList.add('on');scrim.classList.add('on');drawer.setAttribute('aria-hidden','false');document.body.style.overflow='hidden';setTimeout(()=>drawer.querySelector('.close')?.focus(),50);}
-function closeDeal(){drawer.classList.remove('on');scrim.classList.remove('on');drawer.setAttribute('aria-hidden','true');document.body.style.overflow='';openId=null;}
+function closeDeal(){drawer.classList.remove('on');scrim.classList.remove('on');drawer.setAttribute('aria-hidden','true');document.body.style.overflow='';openId=null;writeHash();}
+/* 【移植による変更】見ている画面を URL の # に持つ（2026-10-06 Utty 指摘「リロードすると毎回トップに戻る」）。
+   #v=<ビュー>&co=<会社>&tab=<タブ>&deal=<商談キー>。履歴は増やさない（replaceState）。
+   会社は DEALS の添字ではなく cid で持つ（添字は読み込みのたびに変わりうる）。 */
+function writeHash(){
+  try{
+    const p=new URLSearchParams();
+    if(view&&view!=='team') p.set('v',view);
+    const d=openId!==null?DEALS[openId]:null;
+    if(d){ p.set('co',d.cid); p.set('tab',dTab); if(dTab==='edit'&&editDeal&&editDeal!=='new') p.set('deal',editDeal); }
+    const h=p.toString(); const want=h?'#'+h:'';
+    if(location.hash!==want) history.replaceState(null,'',location.pathname+location.search+want);
+  }catch(_){}
+}
+function restoreHash(){
+  try{
+    const p=new URLSearchParams(location.hash.slice(1));
+    const v=p.get('v'); if(v&&(v==='team'||MEMBERS.includes(v))) view=v;
+    const co=p.get('co'); const d=co?DEALS.find(x=>x.cid===co):null;
+    return d ? ()=>openDeal(d.id, p.get('tab')||'sum', p.get('deal')||null) : null;
+  }catch(_){ return null; }
+}
 scrim.onclick=closeDeal; document.addEventListener('keydown',e=>{if(e.key==='Escape'&&openId!==null)closeDeal();});
 function renderDrawer(){
-  const d=DEALS[openId]; if(!d) return; const {flags,html}=summarize(d);
+  const d=DEALS[openId]; if(!d) return; const {flags,html}=summarize(d); writeHash();
   const head=document.getElementById('dHead');
   head.innerHTML=`<div class="row">
       <div><div class="eyebrow">${TIER_JP(d.t)}・${IND_JP[d.ind]||'業種未設定'}　担当 ${d.owners.map(o=>`<span class="ownerchip"><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${CONFIG.memberColor[o]}"></i> ${o}</span>`).join(' ')}</div>
@@ -1117,7 +1159,7 @@ function renderDrawer(){
   if(dTab==='sum'){
     const fl=flags.filter(([c])=>c!=='crit');
     inner=`<div class="sx">${fl.length?`<div class="flags">${fl.map(([c,l])=>`<span class="chip ${c}">${c&&c!=='split'?'<i></i>':''}${esc(l)}</span>`).join('')}</div>`:''}
-      ${sumInfo(d)}${sumOverview(d)}${sumRecent(d)}${sumDeals(d)}${sumKeyDates(d)}</div>`;
+      ${sumKeyDates(d)}${sumInfo(d)}${sumOverview(d)}${sumRecent(d)}${sumDeals(d)}</div>`;   /* 【移植による変更】キー日程を先頭に（2026-10-06 Utty 指摘） */
   } else if(dTab==='org'){
     inner=orgTab(d);
   } else if(dTab==='plan'){
@@ -1302,8 +1344,51 @@ async function saveOrg(d, org, summary){
   const body={cid:d.cid, company:d.n, nodes:org.nodes, questions:org.questions||[], sources:org.sources||[], genAt:org.genAt||null, genBy:org.genBy||null, memos:org.memos||[],
     history:[{at:new Date().toISOString(), summary}].concat(org.history||[]).slice(0,15), updatedAt:new Date().toISOString(), syncedAt:null};
   ORGS[d.cid]=body; renderDrawer();
-  if(db){ try{ await db.doc('orgs/'+d.cid).set(body); }catch(e){ const ui=orgUi(d); ui.ai.msg='保存できませんでした。編集権限を確認してください（この画面には反映済み）'; renderDrawer(); } }
+  if(db) orgPersist(d, body);
 }
+/* 【移植による変更】組織図の保存を会社ごとに 1 本ずつにする（2026-10-06 Utty 指摘「人物が二重に作成される」）。
+   保存は人数ぶん Twenty に書くので数十秒かかる。その間に次の保存が走ると、
+   同じ人を 2 本の保存が同時に「無いので作る」に進み、二重にできていた。
+   保存中に来た分は最後の 1 つだけ覚えておき、終わってから送る。 */
+const ORG_SAVE = {};
+async function orgPersist(d, body){
+  const q = ORG_SAVE[d.cid] = ORG_SAVE[d.cid] || {busy:false, next:null};
+  if(q.busy){ q.next = body; return; }
+  q.busy = true;
+  try{
+    for(let b=body; b; b=q.next, q.next=null){
+      try{ await db.doc('orgs/'+d.cid).set(b); }
+      catch(e){ const ui=orgUi(d); ui.ai.msg='保存できませんでした。編集権限を確認してください（この画面には反映済み）'; renderDrawer(); }
+    }
+  } finally { q.busy = false; }
+}
+/* 【移植による変更】既存の人物を AI が別 id で作り直したら、既存のノードに寄せる（2026-10-06）。
+   AI は currentNodes の人を新しい id で返すことがあり、そのまま反映すると二重になる。
+   敬称と空白を除いた氏名が一致し、片方だけが既存なら既存の id を残し、
+   消えた id を親にしていた子は付け替える。
+   どちらも新規の同名は別人の可能性（姓だけの資料では特に）があるので寄せず、確認事項に回す。 */
+const orgPersonKey = n => n.kind==='person' ? String(n.name||'').replace(/[\s\u3000]/g,'').replace(/(様|さん|氏|殿)$/,'') : '';
+function orgDedupe(nodes, cur){
+  const curById = new Map(cur.map(n=>[n.id,n]));
+  const rank = n => { const o=curById.get(n.id); return o ? (o.st==='ok'?0:1) : 2; };
+  const keep = new Map(), alias = new Map(), same = new Set();
+  nodes.forEach(n=>{ const k=orgPersonKey(n); if(!k) return;
+    const w=keep.get(k);
+    if(!w){ keep.set(k,n); return; }
+    /* 寄せるのは「片方だけ既存」のときだけ。両方新規・両方既存は別人の可能性があるので残して確認に回す */
+    if((rank(n)===2) === (rank(w)===2)){ same.add(n.name); return; }
+    const [win, lose] = rank(n)<rank(w) ? [n,w] : [w,n];
+    if(rank(win)!==0){
+      if(lose.title && win.title && !win.title.includes(lose.title)) win.title = win.title + '／' + lose.title;
+      else if(!win.title) win.title = lose.title;
+      if(!win.note && lose.note) win.note = lose.note;
+    }
+    keep.set(k, win); alias.set(lose.id, win.id); });
+  const resolve = id => { let x=id, i=0; while(alias.has(x) && i++<20) x=alias.get(x); return x; };
+  const out = alias.size ? nodes.filter(n=>!alias.has(n.id)).map(n=>{ const p=n.parent?resolve(n.parent):null; return {...n, parent: p===n.id?null:p}; }) : nodes;
+  return {nodes: out, sameNames: [...same]};
+}
+
 const orgClone = org => ({...org, seed:false, nodes: org.nodes.map(n=>({...n}))});
 function wireOrgTab(d){
   const ui=orgUi(d), ai=ui.ai;
@@ -1367,6 +1452,8 @@ const ORG_INSTR = `あなたは Ptmind の法人営業を支援するアナリ�
 - contact は 接点あり（Ptmind と会った・やり取りした）か 未接触。
 - conf は情報の確度：公開（公開情報）／社内（議事録・チャット・担当者メモなど自社が得た情報）／推定（推測）。推測でノードやレポートラインを置いた場合は必ず「推定」。
 - note にその人の関心・発言・懸念を1〜2文で。src に根拠（例「9/17 議事録」「8月 Teams」「担当者メモ」「適時開示」）。
+- 同じ人物は必ず 1 ノードにする。表と本文で同じ人が再掲されていても 1 つにまとめる。複数のチーム・部署を兼務している人は、主な所属を parent にし、兼務先は title に「／」で併記する（例「課長（Aチーム）／Bチーム兼務」）。currentNodes に同じ人がいればその id を使う。
+- name に敬称（様・さん・氏）は付けない。
 - 新しい資料と古い資料が矛盾するときは新しい方を採り、変わった点を message に書く。
 - 資料から分からない点、次の商談で確認すべき点を questions に挙げる（5件まで）。
 - 出力は次の JSON だけ（st は出力しなくてよい）：
@@ -1409,7 +1496,7 @@ async function orgGenerate(d, opt={}){
     const build=(sc)=>{ const mats=[];
       hist.slice(-12).forEach(m=>mats.push({type:m.type, date:m.date, title:m.type, text:String(m.text).slice(0,Math.round(1500*sc))}));
       if(memoNow) mats.push({type:'担当者メモ（最新・最優先）', date:dstr(TODAY), title:'最新の指示', text:memoNow.slice(0,Math.round(3000*sc))});
-      texts.forEach(f=>mats.push({type:'アップロードしたファイル', date:'', title:f.name, text:f.text.slice(0,Math.round(6000*sc))}));
+      texts.forEach(f=>mats.push({type:'アップロードしたファイル', date:'', title:f.name, text:f.text.slice(0,Math.round(15000*sc))}));   /* 【移植による変更】6000 字では組織図 MD の後半が落ち、結果が毎回揺れていた（2026-10-06） */
       if(!card) (d.od||[]).forEach(x=>mats.push({type:'組織資料（repo）', date:x.d, title:x.t, text:x.b.slice(0,Math.round(4500*sc))}));
       let bud=Math.round(5000*sc); ctx.items.forEach(it=>{ if(bud<200) return; const t=it.text.slice(0,Math.min(1200,bud)); bud-=t.length; mats.push({type:it.type, date:it.date, title:it.title, text:t}); });
       const nodes=base.map(n=>({id:n.id,kind:n.kind,name:n.name,title:n.title,parent:n.parent,role:n.role||'',inf:!!n.inf,stance:n.stance||'',contact:n.contact||'',conf:n.conf||'',note:(n.note||'').slice(0,160),src:n.src||'',st:n.st||'est'}));
@@ -1424,9 +1511,11 @@ async function orgGenerate(d, opt={}){
       conf:ORG_CONF.includes(n.conf)?n.conf:'推定', note:String(n.note||''), src:String(n.src||''), st:'est'}));
     // 確定済みは元のまま
     cur.filter(n=>n.st==='ok').forEach(o=>{ const i=nodes.findIndex(n=>n.id===o.id); if(i>=0) nodes[i]={...o}; else nodes.push({...o}); });
+    { const seen=new Set(); nodes=nodes.filter(n=>!seen.has(n.id)&&seen.add(n.id)); }
+    const dd = orgDedupe(nodes, cur); nodes = dd.nodes;
     nodes.forEach(n=>{ const o=curMap.get(n.id); if(o&&o.st!=='ok'&&['kind','name','title','parent','role','stance','contact','conf'].every(k=>(o[k]||'')===(n[k]||''))) n.st=o.st||'est'; });
     const ids=new Set(nodes.map(n=>n.id)); nodes.forEach(n=>{ if(n.parent&&!ids.has(n.parent)) n.parent=null; });
-    ai.draft={nodes, questions:(out.questions||[]).map(String).slice(0,8), sources:(out.sources||[]).map(String).slice(0,10), message:String(out.message||'')};
+    ai.draft={nodes, questions:(out.questions||[]).map(String).concat(dd.sameNames.map(x=>`「${x}」が 2 人います。同一人物（兼務）なら片方を消してください`)).slice(0,8), sources:(out.sources||[]).map(String).slice(0,10), message:String(out.message||'')};
     if(memoNow){ ai.thread=(ai.thread||[]).concat([{who:'user',text:memoNow}]); ai.memo=''; }
     if(out.message) ai.thread=(ai.thread||[]).concat([{who:'ai',text:String(out.message)}]);
     ai.diff=orgDiff(cur, nodes); ai.msg=card?`名刺 ${imgs.length}枚を読み取りました。下の変更案を確認して反映してください`:sc<1?'資料が多いため一部を短くして読みました':'';
@@ -1514,7 +1603,7 @@ async function saveAim(d, yen){
 function renderAll(){
   document.getElementById('eyebrowTgt').textContent=man(CONFIG.targetMrr); document.getElementById('eyebrowDue').textContent=dueJP();
   renderViews(); renderMemberHead(); renderKpis(); renderStage(); renderAllocAlert(); renderMembers(); renderForecast(); renderFunnel(); renderAlerts(); renderPlanning(); renderIssues();
-  renderDeals();
+  renderDeals(); writeHash();
   document.getElementById('pageTitle').textContent = view==='team'?'Ptengine AI Pipeline Board':`Ptengine AI Pipeline Board — ${view}`;
   document.querySelectorAll('[data-edit]').forEach(b=>{b.onclick=e=>{e.stopPropagation();openEditor();};if(b.getAttribute('role')==='button')b.onkeydown=e=>{if(e.key==='Enter')openEditor();};});
 }
@@ -1716,14 +1805,13 @@ document.addEventListener('click', e=>{
 function sumInfo(d){
   const c=RAW.companies[d.id]||{};
   const f=(l,v)=>`<div class="sx-i"><span>${l}</span><div>${v}</div></div>`;
-  const dom = d.dom ? `<a href="${esc(/^https?:/.test(d.dom)?d.dom:'https://'+d.dom)}" target="_blank" rel="noopener">${esc(d.dom.replace(/^https?:\/\//,''))} ↗</a>` : '—';
-  return `<section class="sx-sec"><header class="sx-sh"><h3>基本情報</h3><span class="sx-meta">Twenty CRM・Tier と業種はクリックで変更</span></header>
+  /* 【移植による変更】ICP判定・課題認識・ドメインは外す（2026-10-06 Utty 指摘「ICP判定は不要」）。
+     いまの取り込み経路では 3 つとも常に空（raw-view で null 固定）で、「—」しか出ていなかった */
+  return `<section class="sx-sec"><header class="sx-sh"><h3>基本情報</h3><span class="sx-meta">Notion 顧客管理DB・Tier と業種はクリックで変更</span></header>
     <div class="sx-info">
       ${f('Tier', coEd(d,'tier'))}${f('業種', coEd(d,'ind'))}
       ${f('主担当', `${esc(d.owners.join('、'))}<small>${c.asg?'Notion 担当3':'Twenty の値'}</small>`)}
       ${f('Ptengine AI担当', `${esc(d.rawOwn.join('、')||'—')}<small>Twenty</small>`)}
-      ${f('ICP判定', esc(d.icp?d.icp.replace('_',' '):'—'))}${f('課題認識', esc(d.aw||'—'))}
-      ${f('ドメイン', dom)}
     </div>
   </section>`;
 }
@@ -2021,16 +2109,22 @@ function editForm(d){
     na:r.na||'', naDate:r.naDate||'', lost:r.lostReason||'', lostD:r.lostDetail||'', ms:msN(r.ms)||{}, msBase:r.msBase||'apply'
   };
   const xr = x || {ph:phN(r.phase||'INACTIVE')};
+  /* 【移植による変更】Salesforce 由来の商談は、金額・フェーズ・日付・契約期間を**読むだけ**にする（2026-10-06 Utty 指摘）。
+     サーバーはこれらを保存しない（正本は Salesforce）のに入力欄が開いていたため、
+     入れても次の読み込みで元に戻り「反映されない」に見えていた。 */
+  const sfLock = !!(x && String(x.key).startsWith('sf:'));
+  const lk = sfLock ? 'disabled title="Salesforce が正本です。Salesforce で直してください"' : '';
+  const lkHint = sfLock ? '<span class="efhint">Salesforce で直す（1 時間おきに反映）</span>' : '';
   const badge = k => isMain&&x ? srcBadge(k,d) : '';
   const chips = d.deals.map(y=>`<button type="button" data-dsel="${esc(y.key)}" aria-pressed="${y.key===key}" title="${esc(y.name)}">${esc(y.name.replace(/^Ptengine AI - /,''))}</button>`).join('')
     ;   /* 【移植による変更 9/9】新規商談のタブは出さない（商談は Salesforce で作る） */
   const isOpen = x ? DEAL_OPEN===d.cid+'|'+key : editDeal==='new';
   const FIELDS = isOpen ? `<div class="dbody">${wonLocked(x)?`<div class="lockn"><b>受注済みの商談です。</b>ここで保存した変更と削除は、Utty が承認すると反映されます。${x.pe||x.pdel?'すでに承認待ちの申請があります（新しく保存すると置き換わります）。':''}</div>`:''}
     <div class="efrow wide"><label for="efName">商談名</label><input id="efName" type="text" value="${esc(v.name)}" style="font:inherit;font-size:13px;padding:6px 8px;border-radius:7px;border:1px solid var(--ring);background:var(--surface);color:var(--ink);width:100%" placeholder="Ptengine AI - 企業名（部門名）"></div>
-    <div class="efrow"><label for="efPhase">フェーズ</label><select id="efPhase">${opt(PHASES,(x&&x.pending)||v.phase,p=>phBoth(p)+(p==='CLOSED_WON'&&!IS_APPROVER?'・承認が必要':''))}</select>${badge('ph')}${isMain&&x&&x.est?`<span class="efhint">暫定：${PH_JP[x.ph]}</span>`:''}</div>
-    <div class="efrow"><label for="efAdd">追加MRR</label><span class="inwrap"><input id="efAdd" type="number" min="0" step="1" inputmode="numeric" value="${v.add}"><em>万円</em></span>${badge('add')}</div>
-    <div class="efrow"><label for="efApply">申込完了日</label><input id="efApply" type="date" value="${esc(v.apply)}">${badge('apply')}<span class="efhint">予定日。完了したら実際の日付に直す</span></div>
-    <div class="efrow"><label for="efBill">課金開始日</label><input id="efBill" type="date" value="${esc(v.bill)}">${v.bill?badge('bill'):badge('close')}${!v.bill&&x&&x.close?`<span class="efhint">いまは課金開始月 ${x.close.replace('-','/')} のみ（日付を入れると置き換え）</span>`:''}</div>
+    <div class="efrow"><label for="efPhase">フェーズ</label><select id="efPhase" ${lk}>${opt(PHASES,(x&&x.pending)||v.phase,p=>phBoth(p)+(p==='CLOSED_WON'&&!IS_APPROVER?'・承認が必要':''))}</select>${badge('ph')}${isMain&&x&&x.est?`<span class="efhint">暫定：${PH_JP[x.ph]}</span>`:''}${lkHint}</div>
+    <div class="efrow"><label for="efAdd">追加MRR</label><span class="inwrap"><input id="efAdd" type="number" min="0" step="1" inputmode="numeric" value="${v.add}" ${lk}><em>万円</em></span>${badge('add')}</div>
+    <div class="efrow"><label for="efApply">申込完了日</label><input id="efApply" type="date" value="${esc(v.apply)}" ${lk}>${badge('apply')}${sfLock?lkHint:'<span class="efhint">予定日。完了したら実際の日付に直す</span>'}</div>
+    <div class="efrow"><label for="efBill">課金開始日</label><input id="efBill" type="date" value="${esc(v.bill)}" ${lk}>${v.bill?badge('bill'):badge('close')}${!v.bill&&x&&x.close?`<span class="efhint">いまは課金開始月 ${x.close.replace('-','/')} のみ（日付を入れると置き換え）</span>`:''}</div>
     <input id="efClose" type="hidden" value="${esc(v.close)}">
     <div class="msbox" id="msBox" data-saved="${MS_PH.some(p=>v.ms[p])?'1':''}">
       <div class="msh"><span class="mt">到達予定</span><span class="qi" data-tip="${esc(MS_TIP)}">?</span>
@@ -2039,7 +2133,7 @@ function editForm(d){
         <li class="base"><span class="dt"></span><span class="pl" id="msBaseL">申込完了</span><span class="dv" id="msBaseD">—</span><span class="sb">基準</span></li></ol>
       <div class="msf"><span id="msNote"></span><button type="button" id="msReset" hidden>↺ 基準から引き直す</button></div>
     </div>
-    <div class="efrow"><label for="efTerm">契約期間</label><select id="efTerm">${opt(['12','24','36'],v.term,y=>y+'か月')}</select>${badge('term')}</div>
+    <div class="efrow"><label for="efTerm">契約期間</label><select id="efTerm" ${lk}>${opt(['12','24','36'],v.term,y=>y+'か月')}</select>${badge('term')}</div>
     ${(() => {
       if(!x || !String(x.key).startsWith('sf:')) return '';
       /* 【移植による変更 9/9】商談の中の Salesforce 連携は、下の 3 項目のためのもの。
@@ -2071,7 +2165,7 @@ function editForm(d){
     ;   /* 【移植による変更 9/9】「商談を追加」の見出しは出さない（商談は Salesforce で作る） */
   const legend = isNew ? '新しい商談' : isMain ? (d.oid?esc(d.opp.raw):'Twenty に未作成（商談は Salesforce で作ってください）') : 'ダッシュボードで追加した商談';
   return `<form id="efForm" class="ef" novalidate>
-   <p class="sub" style="margin:0 0 12px">入力した値はすぐにダッシュボードに反映され、閲覧者全員に共有されます。Twenty への書き込みは同期のときに行います（同期までは「Twenty 未反映」と表示）。</p>
+   <p class="sub" style="margin:0 0 12px">入力した値はすぐにダッシュボードに反映され、閲覧者全員に共有されます。金額・フェーズ・日付・契約期間は Salesforce が正本なので、Salesforce で直してください（1 時間おきに反映）。</p>
    <fieldset><legend>商談（Opportunity）に保存 <span class="sub">${legend}</span></legend>
 ${dealList}
    </fieldset>
@@ -2118,7 +2212,7 @@ async function renderFeed(){
   el.innerHTML = show.length ? show.map(r=>`<li data-fid="${esc(r.cid)}" role="button" tabindex="0"><span class="fi fi-${esc(r.kind)}">${ic[r.kind]||'•'}</span>
       <div class="fb"><div class="fh"><b>${esc(r.company)}</b><span class="fd">${esc(short(r.deal))}</span></div><div class="fw">${what(r)}</div></div>
       <div class="fm"><span class="fwho"></span><span class="ft">${ago(r.at)}</span></div></li>`).join('') : '<li class="empty">直近14日の更新はありません。商談管理タブで入力すると、ここに流れます</li>';
-  el.querySelectorAll('li[data-fid]').forEach((li,i)=>{ const r=show[i]; const w=li.querySelector('.fwho'); w.textContent = r.by ? ((ps[r.by]&&ps[r.by].name)||'') : ''; 
+  el.querySelectorAll('li[data-fid]').forEach((li,i)=>{ const r=show[i]; const w=li.querySelector('.fwho'); w.textContent = r.by ? ((ps[r.by]&&ps[r.by].name)||(r.by==='Salesforce'?'Salesforce':'')) : ''; 
     const go=()=>{ const d=DEALS.find(x=>x.cid===r.cid); if(d) openDeal(d.id,'edit', r.key); }; li.onclick=go; li.onkeydown=e=>{ if(e.key==='Enter') go(); }; });
   const mb=document.getElementById('feedMore'); mb.hidden=list.length<=8; mb.textContent=feedAll?'最新だけ表示':`すべて表示（${list.length}件）`; mb.onclick=()=>{ feedAll=!feedAll; renderFeed(); };
 }
@@ -2130,8 +2224,10 @@ async function saveEditDoc(d, body, doneMsg){
   if(!db){ await ensureFollowUps(DEALS[d.id]); renderDrawer(); const m=document.getElementById('efMsg'); if(m) m.textContent='この画面に反映しました（保存はされません）'; return; }
   if(btn) btn.disabled=true; if(msg) msg.textContent='保存中…';
   const ref=db.doc('edits/'+d.cid); let err=null;
-  for(let k=0;k<2;k++){ try{ await ref.set(body); err=null; break; }catch(e){ err=e; if(e.code!=='unavailable') break; await new Promise(r=>setTimeout(r,600+Math.random()*600)); } }
-  if(!err){ await ensureFollowUps(DEALS[d.id]); renderDrawer(); const m=document.getElementById('efMsg'); if(m) m.textContent=doneMsg||'保存しました（Twenty へは次回の同期で反映）'; }
+  /* 【移植による変更】混み合い（Twenty の回数制限）で落ちることがあるので 3 回まで、間隔を空けて送り直す。
+     全置換なので送り直しても二重にはならない（2026-10-06 Eri 指摘） */
+  for(let k=0;k<3;k++){ try{ await ref.set(body); err=null; break; }catch(e){ err=e; if(e.code!=='unavailable') break; if(msg) msg.textContent='混み合っています。送り直しています…'; await new Promise(r=>setTimeout(r,(1500<<k)+Math.random()*800)); } }
+  if(!err){ await ensureFollowUps(DEALS[d.id]); renderDrawer(); const m=document.getElementById('efMsg'); if(m) m.textContent=doneMsg||'保存しました'; }
   else { renderDrawer(); const m=document.getElementById('efMsg'); if(m) m.textContent = err.code==='quota_exceeded'?'保存容量の上限に達しています':'保存できませんでした。編集権限があるか確認してください（この画面には反映済み）'; }
 }
 function wireMs(d){
@@ -2210,6 +2306,8 @@ function wireEditForm(d){
     const locked = hasDeal && key!=='new' && wonLocked(curX);
     if(newPh && curPh && !IS_APPROVER && needsApproval(curPh,newPh)){ pendPh=newPh; newPh = key==='main' ? ((EDITS[d.cid]&&EDITS[d.cid].opp&&EDITS[d.cid].opp.phase)||null) : curPh; }
     else if(newPh && !curPh && !IS_APPROVER && newPh==='CLOSED_WON'){ pendPh=newPh; newPh=null; }
+    /* 【移植による変更】期日だけでは保存されない（ネクストアクションは本文が無いと消える）。黙って捨てずに知らせる */
+    if(hasDeal && v('efNaDate') && !v('efNa') && v('efNaDate')!==((curX&&curX.naDate)||'')){ const m=document.getElementById('efMsg'); if(m) m.textContent='アクション期日を保存するには、ネクストアクションの内容も入れてください'; document.getElementById('efNa')?.focus(); return; }
     const deal={name:v('efName')||null, phase:newPh, pendingPhase:pendPh, applyDate:v('efApply')||null, billingDate:v('efBill')||null, addMrr:man2y(v('efAdd')), term:v('efTerm')?+v('efTerm'):null,  barrier:v('efBr')||null, need:v('efNeed')||null, na:v('efNa')||null, naDate:v('efNaDate')||null, lostReason:v('efLost')||null, lostDetail:v('efLostD')||null, ...msRead()};
     { let lg=curX?[...(curX.log||[])]:[]; const add=e=>{ lg=logAdd({log:lg},e); };
       if(curX && newPh && newPh!==curPh) add({t:'ph',from:curPh,to:newPh});
@@ -2515,9 +2613,13 @@ async function minutesLoad(d){ const u=minUi(d); if(!db){ u.loaded=true; return;
 const titleDate = t => { const m=String(t||'').match(/(20\d{2})(\d{2})(\d{2})/); return m?`${m[1]}-${m[2]}-${m[3]}`:''; };
 function notionBody(t){
   const m=String(t||'').match(/<content>([\s\S]*?)<\/content>/); let b=m?m[1]:String(t||'');
-  b=b.replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/\[\\\[\d+\\\]\]\([^)]*\)/g,'').replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'$1')
-     .replace(/<\/td>\s*/g,'　').replace(/<\/tr>/g,'\n').replace(/<(unknown|empty-block|col|colgroup|\/colgroup)[^>]*\/?>/g,'')
-     .replace(/\*\*/g,'').replace(/^\s*<\/?(columns|column|callout|table|tr|td)[^>]*>\s*$/gm,'');
+  /* 【移植による変更】太字・リンク・表を残す（2026-10-06 Utty 指摘「議事録がローデータっぽくて見づらい」）。
+     旧は ** とリンクを消し、表を全角スペース区切りの行にしていたので、表示側の Markdown 変換が効かなかった。
+     表は | a | b | の行にする（セル内の改行は「、」）。画像と脚注リンクだけ消す。 */
+  b=b.replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/\[\\\[\d+\\\]\]\([^)]*\)/g,'')
+     .replace(/<td[^>]*>([\s\S]*?)<\/td>\s*/g,(m,c)=>stripHtml(c.replace(/<br\s*\/?>/gi,'、')).replace(/\s*\n+\s*/g,'、').replace(/\|/g,'／')+' | ')
+     .replace(/<tr[^>]*>\s*/g,'| ').replace(/\s*<\/tr>\s*/g,'\n').replace(/<(unknown|empty-block|col|colgroup|\/colgroup)[^>]*\/?>/g,'')
+     .replace(/^\s*<\/?(columns|column|callout|table|tr|td)[^>]*>\s*$/gm,'');
   return stripHtml(b).replace(/^[\t ]+/gm,m=>m.replace(/\t/g,'  ')).replace(/\n{3,}/g,'\n\n').trim();
 }
 async function notionMinutesList(d){
@@ -2569,7 +2671,7 @@ function minutesTab(d){
       .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
       .replace(/`([^`]+)`/g, '<code>$1</code>');
     for (const raw of lines) {
-      const l = raw.trim();
+      const l = raw.trim(); const ind = Math.min(4, Math.floor((raw.match(/^ */)[0].length) / 2));   /* 入れ子の深さ（2 スペースで 1 段） */
       if (!l) { closeUl(); closeTbl(); continue; }
       const h = l.match(/^(#{1,6})\s+(.*)$/);
       if (h) { closeUl(); closeTbl(); const n = Math.min(h[1].length + 2, 6); out.push(`<h${n} class="mdh">${inline(h[2])}</h${n}>`); continue; }
@@ -2584,7 +2686,7 @@ function minutesTab(d){
       }
       closeTbl();
       const li = l.match(/^[-*+]\s+(.*)$/) || l.match(/^\d+[.)]\s+(.*)$/);
-      if (li) { if (!ul) { out.push('<ul class="mdl">'); ul = true; } out.push(`<li>${inline(li[1])}</li>`); continue; }
+      if (li) { if (!ul) { out.push('<ul class="mdl">'); ul = true; } out.push(`<li${ind?` style="margin-left:${ind*16}px"`:''}>${inline(li[1])}</li>`); continue; }
       closeUl();
       out.push(`<p>${inline(l)}</p>`);
     }
@@ -2988,7 +3090,7 @@ function keyDatesKv(d){
 function keyDatesLine(d){
   const kd=kdOf(d);
   const t=k=>{ const v=kd[k]; return `${KD_LAB[k]} <b>${esc(kdText(k,v))}</b>${v&&!v.none&&v.st!=='ok'?'（推定）':''}`; };
-  return `<div class="kdline">キー日程：${['fiscal','budget','renewal'].map(t).join('／')}　<button type="button" class="linkbtn" id="kdGo">基本情報で編集</button></div>`;
+  return `<div class="kdline">キー日程：${['fiscal','budget','renewal'].map(t).join('／')}　<button type="button" class="linkbtn" id="kdGo">要約タブで編集</button></div>`;
 }
 function wireKeyDates(d){
   document.querySelectorAll('[data-kdin]').forEach(el=>el.onchange=()=>{ const k=el.dataset.kdin; const kd=kdOf(d);
@@ -3178,7 +3280,14 @@ document.getElementById('edForm').addEventListener('submit',async e=>{
     const next={}; qs.docs.forEach(doc=>{ if(doc.exists) next[doc.id]=doc.data(); }); NEWCOS=next; applyNewcos(); renderAll(); if(openId!==null) renderDrawer();
   }, err=>{ if(err&&err.code==='revoked') db=null; });
   db.collection('feed').orderBy('at','desc').limit(200).onSnapshot(qs=>{
-    FEED=qs.docs.filter(doc=>doc.exists).map(doc=>doc.data()); renderFeed();
+    /* 【移植による変更】保存先（Twenty の操作記録）に担当の列が無いので、会社から引き直す（2026-10-06）。
+       無いと担当で絞ったときに全件消えていた */
+    /* Salesforce からの取り込みで変わった項目（by='Salesforce'）は生の値で届くので、画面の表記に直す */
+    const sfFmt = r => { if(r.by!=='Salesforce') return r; const F=FEED_F.find(x=>x[0]===r.kind); if(!F) return r;
+      const val = v => v ? (r.kind==='add' ? F[2](+v) : F[2](v)) : '—';
+      return {...r, label:F[1], from:val(r.from), to:val(r.to)}; };
+    FEED=qs.docs.filter(doc=>doc.exists).map(doc=>{ const r=sfFmt(doc.data()); if(r.owners&&r.owners.length) return r;
+      const d=DEALS.find(x=>x.cid===r.cid); return d?{...r, owners:d.owners, company:r.company||d.n}:r; }); renderFeed();
   }, err=>{ if(err&&err.code==='revoked') db=null; });
   db.collection('aplans').onSnapshot(qs=>{
     const next={}; qs.docs.forEach(doc=>{ if(doc.exists) next[doc.id]=doc.data(); }); APLAN=next;
@@ -3195,7 +3304,9 @@ document.getElementById('edForm').addEventListener('submit',async e=>{
 })();
 
 document.getElementById('fetched').textContent = RAW.fetched.replace('T',' ').replace('Z',' UTC');
+const reopen = restoreHash();
 initFilters(); initGoalForm(); initNewco(); document.getElementById('isAll').addEventListener('input',renderIssues); renderGaps(); renderAll();
+if(reopen) reopen();
 
 /* ===== 詳細パネルの幅（左端をドラッグ） ===== */
 (()=>{

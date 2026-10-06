@@ -384,20 +384,75 @@ export function nodeSource(src: string): 'ui' | 'ai' | 'card' {
   return 'ai';
 }
 
+/**
+ * 組織図の付帯情報（出典・確認事項・生成元）を testComment に置く。
+ * db-view は orgs:<cid>:source:N / :question:N / :meta を読むが、2026-10-06 まで
+ * 書いていなかったので、保存すると出典と確認事項が消えて見えた。
+ * 原本が送ってこなかった項目は触らない（手入力の保存で AI の出典を消さない）。
+ */
+async function writeOrgMeta(cid: string, body: Record<string, unknown>, who: ActorStamp): Promise<void> {
+  const CMT = TEST_OBJECTS.comment;
+  const author = str(body.genBy) || 'AI';
+  const at = str(body.genAt) ? new Date(str(body.genAt)).toISOString() : new Date().toISOString();
+  const put = (ext: string, text: string) => upsertByExternalId(CMT.plural, CMT.singular, ext, {
+    name: text.slice(0, 60), notionCompanyId: cid, targetType: 'COMPANY', targetId: cid,
+    body: text, author, at, source: 'ai',
+  }, who);
+  const lists: Array<['source' | 'question', unknown]> = [['source', body.sources], ['question', body.questions]];
+  const sent = lists.filter(([, v]) => Array.isArray(v));
+  if (!sent.length && !str(body.genAt)) return;
+  const keep = new Set<string>();
+  for (const [kind, v] of sent) {
+    for (const [i, t] of (v as unknown[]).map(x => String(x ?? '')).filter(Boolean).entries()) {
+      const ext = `orgs:${cid}:${kind}:${i}`;
+      keep.add(ext);
+      await put(ext, t);
+    }
+  }
+  if (str(body.genAt)) await put(`orgs:${cid}:meta`, '組織図の生成元');
+  // 送ってきた種類のうち、件数が減ったぶんを消す
+  const kinds = new Set(sent.map(([k]) => k));
+  for (const c of await listByExternalPrefix(CMT.plural, CMT.singular, `orgs:${cid}:`)) {
+    const m = str(c.externalId).match(/^orgs:[^:]+:(source|question):\d+$/);
+    if (m && kinds.has(m[1] as 'source' | 'question') && !keep.has(str(c.externalId))) {
+      await deleteRecord(CMT.plural, str(c.id));
+    }
+  }
+}
+
+/**
+ * 同じ externalId の行が複数あるとき、どれを残すか。**全保存で同じ答え**になるよう、
+ * いちばん古い行（createdAt、同時刻なら id）を採る。今回更新した行を残す方式だと、
+ * 2 人が同時に保存したときに互いの行を消し合い、その人が 1 行も残らない。
+ */
+export function orgKeepers(rows: Record<string, unknown>[]): Map<string, Record<string, unknown>> {
+  const keep = new Map<string, Record<string, unknown>>();
+  for (const r of rows) {
+    const ext = str(r.externalId), cur = keep.get(ext);
+    const older = !cur || str(r.createdAt) < str(cur.createdAt)
+      || (str(r.createdAt) === str(cur.createdAt) && str(r.id) < str(cur.id));
+    if (older) keep.set(ext, r);
+  }
+  return keep;
+}
+
 async function writeOrgs(cid: string, body: Record<string, unknown>, me: PtaiIdentity, who: ActorStamp): Promise<WriteResult> {
   const changes: Record<string, number> = { person: 0, personDeleted: 0, fromAi: 0, fromCard: 0 };
   const nodes = arr(body.nodes);
+  const prefix = `orgs:${cid}:`;
+  const before = orgKeepers(await listByExternalPrefix(PERS.plural, PERS.singular, prefix));
 
   // 1 パス目: 親を付けずに作る／直す
-  const idMap = new Map<string, string>();
   const seen = new Set<string>();
+  const done = new Set<string>();
   for (const [i, n] of nodes.entries()) {
     const nid = str(n.id);
-    if (!nid) continue;
-    const ext = `orgs:${cid}:${nid}`;
+    if (!nid || done.has(nid)) continue;   // 同じ id が 2 回来たら 1 人として扱う
+    done.add(nid);
+    const ext = `${prefix}${nid}`;
     seen.add(ext);
     const src = nodeSource(str(n.src));
-    const r = await upsertByExternalId(PERS.plural, PERS.singular, ext, {
+    const data = {
       name: str(n.name), notionCompanyId: cid,
       nodeType: str(n.kind) || 'person', order: i,
       title: str(n.title) || null,
@@ -412,28 +467,39 @@ async function writeOrgs(cid: string, body: Record<string, unknown>, me: PtaiIde
       isDecisionMaker: str(n.role) === '決裁者' || str(n.role) === '最終決裁者',
       influential: n.inf === true,
       memo: str(n.note) || null, sourceNote: str(n.src) || null, source: src,
-    }, who);
-    idMap.set(nid, str(r.record.id));
+    };
+    const hit = before.get(ext);
+    if (hit) await updateRecord(PERS.plural, PERS.singular, str(hit.id), { ...data, updatedByName2: who.name2 });
+    else await upsertByExternalId(PERS.plural, PERS.singular, ext, data, who);
     changes.person++;
     if (src === 'ai') changes.fromAi++;
     if (src === 'card') changes.fromCard++;
   }
 
-  // 2 パス目: 親子関係（全員の id が決まってから）
-  for (const n of nodes) {
-    const nid = str(n.id), pid = str(n.parent);
-    const childId = idMap.get(nid);
-    if (!childId) continue;
-    const parentId = pid ? idMap.get(pid) ?? null : null;
-    await upsertByExternalId(PERS.plural, PERS.singular, `orgs:${cid}:${nid}`, { parentId }, who);
-  }
-
-  for (const p of await listByExternalPrefix(PERS.plural, PERS.singular, `orgs:${cid}:`)) {
+  // 図から外れた人と、同じ externalId の重複行を消す（引き直してから決める）。
+  // Twenty に一意制約は無いので、保存が 2 本重なると同じ鍵の行が 2 件できる
+  // （2026-10-06 Utty 指摘「人物が二重に作成される」）。
+  const after = await listByExternalPrefix(PERS.plural, PERS.singular, prefix);
+  const keep = orgKeepers(after);
+  for (const p of after) {
     const ext = str(p.externalId);
-    if (seen.has(ext) || ext.includes(':memo:')) continue;
+    if (ext.includes(':memo:')) continue;
+    if (seen.has(ext) && str(keep.get(ext)?.id) === str(p.id)) continue;
     await deleteRecord(PERS.plural, str(p.id));
     changes.personDeleted++;
   }
+
+  // 2 パス目: 親子関係（残す行が決まってから。消した行を親にしないため）
+  for (const n of nodes) {
+    const nid = str(n.id), pid = str(n.parent);
+    const child = keep.get(`${prefix}${nid}`);
+    if (!nid || !child) continue;
+    const parentId = pid ? str(keep.get(`${prefix}${pid}`)?.id) || null : null;
+    if ((str(child.parentId) || null) === parentId) continue;
+    await updateRecord(PERS.plural, PERS.singular, str(child.id), { parentId });
+  }
+
+  await writeOrgMeta(cid, body, who);
 
   await writeLog(who, 'update', 'testPerson', null,
     `組織図を保存（${changes.person} 行。AI 生成 ${changes.fromAi} / 名刺 ${changes.fromCard}）`,
@@ -441,11 +507,21 @@ async function writeOrgs(cid: string, body: Record<string, unknown>, me: PtaiIde
   return { ok: true, changes };
 }
 
+/** recent ドキュメントのうち text 列に入らない部分（overview・events ほか）を JSON にする */
+export function recentNote(body: Record<string, unknown>): string | null {
+  const { summary, genAt, companyId, companyName, ...rest } = body;
+  void summary; void genAt; void companyId; void companyName;
+  return Object.keys(rest).length ? JSON.stringify(rest) : null;
+}
+
 async function writeRecent(cid: string, body: Record<string, unknown>, me: PtaiIdentity, who: ActorStamp): Promise<WriteResult> {
   await upsertByExternalId(ACTV.plural, ACTV.singular, `recent:${cid}`, {
     name: '直近の動き（AI 推計）', notionCompanyId: cid, type: 'AI_RECENT',
     occurredAt: str(body.genAt) || new Date().toISOString(),
-    text: str(body.summary) || null, note: str(body.overview) || null, actor: 'ai',
+    // ⚠ overview はオブジェクト。2026-10-06 まで str() に通して捨てていたので、
+    //   次のポーリングで要約が空に戻っていた（Utty 指摘）。summary 以外は note に
+    //   JSON でまるごと持ち、db-view で戻す。
+    text: str(body.summary) || null, note: recentNote(body), actor: 'ai',
   }, who);
   // testActivity に source 列は無いので actor:'ai' が印。操作ログ側に残しておく
   await writeLog(who, 'update', 'testActivity', null, '直近の動きを AI で生成', { source: 'ai' });
@@ -616,10 +692,13 @@ export async function addDocNew(
   if (collection !== 'feed') return { ok: false, status: 501, error: 'not_supported' };
   const f = rec(body);
   const who = await actorStampFor(me.id, me.name);
-  const ext = `ui:feed:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+  // 会社 id を鍵に入れておく。testOperationLog に会社の列は無く、recordId には
+  // 商談キーが入るので、2026-10-06 まで新着欄で会社名が出ず、押しても飛べなかった
+  const cid = str(f.cid).replace(/:/g, '');
+  const ext = `ui:feed:${cid ? cid + ':' : ''}${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
   try {
     const r = await upsertByExternalId(LOG.plural, LOG.singular, ext, {
-      name: str(f.label) || str(f.kind) || '変更',
+      name: (str(f.label) || str(f.kind) || '変更') + (str(f.deal) ? `（${str(f.deal)}）` : ''),
       at: str(f.at) || new Date().toISOString(), actor: str(f.by) || who.name2,
       action: 'update', object: 'testOpportunity', recordId: str(f.key) || null,
       field: str(f.kind) || null,

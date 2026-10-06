@@ -27,10 +27,15 @@ import { buildDbView } from '@/lib/ptai/db-view';
 import { writeDoc, addDocNew } from '@/lib/ptai/db-write';
 
 export const dynamic = 'force-dynamic';
+// 組織図の保存は 1 人あたり Twenty へ数回書くので、数十人だと数十秒かかる。
+// 途中で打ち切られると新しい行だけ残り、旧い行が消えずに二重になる
+export const maxDuration = 300;
 
 /** 複数タブ・複数人のポーリングで NocoDB を叩きすぎないための短期メモ */
 let memo: { at: number; rev: string; body: string } | null = null;
 const MEMO_MS = 2500;
+/** 書き込みの世代。PUT/POST より前に始まった GET の結果を memo に入れない */
+let writeGen = 0;
 
 function unauthorized() {
   return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });
@@ -55,11 +60,21 @@ export async function GET(req: NextRequest) {
     return new NextResponse(memo.body, { headers: { 'Content-Type': 'application/json' } });
   }
 
+  const gen = writeGen;
   // twenty 経路: Twenty test* ＋ Notion から組み立てる。pga_docs は読まない
+  let partial = false;
   let collections: Record<string, Array<{ id: string; data: unknown }>> = {};
   if (source === 'twenty') {
     const view = await buildDbView();
+    // 一部の読み取りに失敗すると、その collection は空で返ってくる。
+    // すでに画面にデータがある（rev を持っている）なら、空で上書きして
+    // ネクストアクションなどを一瞬消すより、今回は返さず前回のままにさせる。
+    if (clientRev && view.diagnostics.partialFailures.length) {
+      console.warn('[ptai/db] 一部読めず', JSON.stringify(view.diagnostics.partialFailures));
+      return NextResponse.json({ error: 'partial_read' }, { status: 503 });
+    }
     collections = view.collections;
+    partial = view.diagnostics.partialFailures.length > 0;
   } else {
     const docs = await listAllDocs();
     for (const d of docs) {
@@ -69,7 +84,10 @@ export async function GET(req: NextRequest) {
 
   const rev = createHash('sha1').update(JSON.stringify(collections)).digest('hex').slice(0, 16);
   const body = JSON.stringify({ rev, collections });
-  memo = { at: Date.now(), rev, body };
+  // 読んでいる間に保存が入ったら、この結果は保存前のものかもしれない。
+  // memo に入れると 2.5 秒間ほかのタブにも古い状態を配ってしまう
+  // 一部欠けた結果も memo に入れない（rev を持つクライアントにまで配られてしまう）
+  if (gen === writeGen && !partial) memo = { at: Date.now(), rev, body };
 
   if (clientRev && clientRev === rev) return NextResponse.json({ unchanged: true, rev });
   return new NextResponse(body, { headers: { 'Content-Type': 'application/json' } });
@@ -82,11 +100,12 @@ export async function PUT(req: NextRequest) {
   const body = await req.json().catch(() => ({})) as { path?: string; data?: unknown };
   const parsed = parsePath(body.path);
   if (!parsed) return NextResponse.json({ error: 'invalid_argument' }, { status: 400 });
+  writeGen++;   // 書いている途中の状態も memo に入れない
 
   // twenty 経路: Twenty test* ＋ Notion へ振り分ける。承認ガードは db-write が通す
   if (getPtaiDataSource() === 'twenty') {
     const r = await writeDoc(parsed.collection, parsed.docId, body.data ?? null, me);
-    memo = null;
+    memo = null; writeGen++;
     if (!r.ok) {
       console.warn('[ptai/db] 保存できず', JSON.stringify({ error: r.error, collection: parsed.collection }));
       return NextResponse.json({ error: r.error, message: r.message }, { status: r.status });
@@ -108,7 +127,7 @@ export async function PUT(req: NextRequest) {
   }
 
   await setDoc(parsed.collection, parsed.docId, body.data ?? null);
-  memo = null;
+  memo = null; writeGen++;
   return NextResponse.json({ ok: true });
 }
 
@@ -119,15 +138,16 @@ export async function POST(req: NextRequest) {
   if (!body.collection || !isPtaiCollection(body.collection)) {
     return NextResponse.json({ error: 'invalid_argument' }, { status: 400 });
   }
+  writeGen++;   // 書いている途中の状態も memo に入れない
 
   if (getPtaiDataSource() === 'twenty') {
     const r = await addDocNew(body.collection, body.data ?? null, me);
-    memo = null;
+    memo = null; writeGen++;
     if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status });
     return NextResponse.json({ ok: true, id: r.id });
   }
   const id = await addDoc(body.collection, body.data ?? null);
-  memo = null;
+  memo = null; writeGen++;
   return NextResponse.json({ ok: true, id });
 }
 
@@ -145,7 +165,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   await deleteDoc(parsed.collection, parsed.docId);
-  memo = null;
+  memo = null; writeGen++;
   return NextResponse.json({ ok: true });
 }
 
