@@ -985,7 +985,7 @@ function renderDeals(){
       <td style="white-space:nowrap">${IND_JP[d.ind]||'<span class="dim">—</span>'}</td>
       <td>${potHtml(d)}</td>
       <td></td>
-      <td>${d.naHead?`<div class="txt" title="${esc(d.naHead)}${d.naDeal&&nD>1?'（'+esc(d.naDeal.name)+'）':''}">${esc(d.naHead)}</div>${d.naDeal&&nD>1?`<div class="nadl">${esc(d.naDeal.name.replace(/^Ptengine AI\s*[-－]\s*/,'').replace(new RegExp('^'+coShort(d.n).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'_?'),'')||d.naDeal.name)}</div>`:''}`:'<span class="dim">—</span>'}</td>
+      <td class="nac">${naCell(d)}</td>
       <td class="num ${late?'late':soon?'soon':''}">${d.nd?d.nd.slice(5).replace('-','/'):'<span class="dim">—</span>'}${late?`<div style="font-size:11px">${days(TODAY,ymd(d.nd))}日超過</div>`:''}</td>
       <td class="num">${d.le.slice(5).replace('-','/')}</td></tr>`;
     const sep = d.id===gHit ? `<tr class="gsep"><td colspan="17"><span>ここまでで目標 ${man(goalCtx().tgt)} に到達</span></td></tr>` : '';
@@ -1015,7 +1015,7 @@ function renderDeals(){
   const tbl=document.getElementById('deals'); tbl.innerHTML=head+`<tbody>${rows||'<tr><td colspan="17" class="dim" style="padding:18px 8px">条件に合う企業はありません</td></tr>'}</tbody>`+foot;
   renderPager(all.length,pages);
   tbl.querySelectorAll('tbody tr[data-id]').forEach(tr=>tr.onclick=e=>e.target.closest('input')?null:tr.dataset.dk?openDeal(+tr.dataset.id,'edit',tr.dataset.dk):openDeal(+tr.dataset.id,'sum'));
-  wireAim(tbl);
+  wireAim(tbl); wireNa(tbl);
   tbl.querySelectorAll('button[data-caret]').forEach(b=>b.onclick=e=>{e.stopPropagation(); const c=b.dataset.caret; EXPANDED.has(c)?EXPANDED.delete(c):EXPANDED.add(c); syncAllOpen(); renderDeals();});
   tbl.querySelectorAll('button[data-add]').forEach(b=>b.onclick=e=>{e.stopPropagation(); openDeal(+b.dataset.add,'edit','new');});
   tbl.querySelectorAll('button[data-fill]').forEach(b=>b.onclick=e=>{e.stopPropagation();openDeal(+b.dataset.fill,'edit',b.dataset.dk);});
@@ -1580,6 +1580,71 @@ function aimCell(d){
   return a ? `<button type="button" class="aimv ${low?'low':''}" data-aimv="${d.id}" title="${low?'10万円未満は目標に数えません。':''}クリックで編集">${man1(a)}<i aria-hidden="true">✎</i></button>`
            : `<button type="button" class="aimv empty" data-aimv="${d.id}" title="この会社で追加したいMRRを入力">＋目標</button>`;
 }
+/* ═══ 【移植による変更 9/9】企業一覧でネクストアクションを直接入力する ═══
+   2026-10-07 Kubotie 要望。商談を開かずに、表のセルで書いて保存できるようにする。
+   保存すると Salesforce にも送られる（db-write が sf: の商談を見て送る）。
+
+   どの商談に書くか:
+     ・いま出ているネクストアクションの商談（d.naDeal）があればそれ
+     ・無ければ、生きている商談がちょうど 1 件ならそれ
+     ・それ以外（商談が無い／複数ある）は決められないので、セルを押したら
+       企業詳細を開く。表で勝手にどれかへ書かない。                        */
+const liveDealsOf = d => (d.deals||[]).filter(x=>!['CLOSED_LOST','ADMIN_CLOSE','CLOSED_WON'].includes(x.ph));
+function naTarget(d){
+  if(d.naDeal) return d.naDeal;
+  const l=liveDealsOf(d);
+  return l.length===1 ? l[0] : null;
+}
+function naCell(d){
+  const y=naTarget(d), nD=(d.deals||[]).length;
+  const sub2 = d.naDeal&&nD>1
+    ? `<div class="nadl">${esc(d.naDeal.name.replace(/^Ptengine AI\s*[-－]\s*/,'').replace(new RegExp('^'+coShort(d.n).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'_?'),'')||d.naDeal.name)}</div>`
+    : '';
+  if(!y) return nD
+    ? `<button type="button" class="naopen" data-naopen="${d.id}" title="商談が ${nD} 件あります。どれに書くかを選んでください">${d.naHead?esc(d.naHead):'<span class="dim">—</span>'}</button>${sub2}`
+    : '<span class="dim">—</span>';
+  return d.naHead
+    ? `<button type="button" class="nav" data-nav="${d.id}" title="${esc(d.naHead)}／クリックで編集">${esc(d.naHead)}<i aria-hidden="true">✎</i></button>${sub2}`
+    : `<button type="button" class="nav empty" data-nav="${d.id}" title="この商談を前に進める次の1手を入力">＋次の一手</button>`;
+}
+function wireNa(root){
+  root.querySelectorAll('button[data-naopen]').forEach(b=>{ b.onclick=e=>{ e.stopPropagation(); openDeal(+b.dataset.naopen,'edit'); }; });
+  root.querySelectorAll('button[data-nav]').forEach(btn=>{ btn.onclick=e=>{ e.stopPropagation();
+    const d=DEALS[+btn.dataset.nav], y=naTarget(d); if(!y) return;
+    const td=btn.parentNode;
+    td.innerHTML=`<span class="naedit"><textarea rows="2" aria-label="${esc(d.n)} のネクストアクション" placeholder="次の1手（例：見積を提出し稟議の日程を確認）">${esc(y.na||'')}</textarea>`
+      + `<input type="date" value="${esc(y.naDate||'')}" aria-label="アクション期日"></span>`;
+    const ta=td.querySelector('textarea'), dt=td.querySelector('input');
+    ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+    let done=false;
+    const finish=save=>{ if(done) return; done=true;
+      const t=ta.value.trim(), dv=dt.value||null;
+      if(save && (t!==(y.na||'') || dv!==(y.naDate||null))) saveNa(d, y.key, t, dv);
+      else { td.innerHTML=naCell(d); wireNa(td); } };
+    [ta,dt].forEach(el=>{
+      el.onclick=ev=>ev.stopPropagation();
+      el.onkeydown=ev=>{ ev.stopPropagation();
+        if(ev.key==='Enter' && !ev.shiftKey && el===ta){ ev.preventDefault(); finish(true); }
+        if(ev.key==='Escape') finish(false); };
+      el.onblur=()=>setTimeout(()=>{ if(!td.contains(document.activeElement)) finish(true); }, 0);
+    });
+  }; });
+}
+async function saveNa(d, key, text, date){
+  const cur = EDITS[d.cid] || {companyId:d.cid, companyName:d.n, opportunityId:d.oid||null, opp:{}, company:{}, deals:[]};
+  const deals = [...(cur.deals||[])];
+  const i = deals.findIndex(x=>x && x.key===key);
+  /* ⚠ sf: の商談は db-write が barrier/need を**送られた値で上書き**する。
+     鍵だけの object を送ると障壁とニーズが消えるので、いまの値を必ず添える。 */
+  const y = (d.deals||[]).find(z=>z.key===key) || {};
+  const base = i>=0 ? deals[i] : {key, name:y.name||null, phase:y.ph||null, barrier:y.br||'', need:y.need||''};
+  const next = {...base, na:text||'', naDate:date||null};
+  if(i>=0) deals[i]=next; else deals.push(next);
+  const body = {...cur, deals, updatedAt:new Date().toISOString(), syncedAt: cur.syncedAt||null};
+  EDITS[d.cid]=body; rebuildDeals(); renderAll(); if(openId!==null) renderDrawer();
+  if(db){ try{ await db.doc('edits/'+d.cid).set(body); }catch(e){ planMsg('ネクストアクションを保存できませんでした'); } }
+}
+
 function wireAim(root){
   root.querySelectorAll('button[data-aimv]').forEach(btn=>{ btn.onclick=e=>{ e.stopPropagation();
     const d=DEALS[+btn.dataset.aimv], a=aimOf(d), td=btn.parentNode;
@@ -1836,6 +1901,14 @@ document.getElementById('dBody').addEventListener('click',e=>{
   if(openId===null) return;
   /* 【移植による変更 6/6】Salesforce 取り込みボタンの受け口は document 側に移した
      （画面上部にも置いたため。下の sfSync の登録を見ること）。 */
+  /* 【移植による変更 9/9】要約の行 → その商談の入力を開いて該当の欄にカーソルを置く */
+  const of=e.target.closest('[data-dopenf]');
+  if(of){ e.stopPropagation(); e.preventDefault();
+    const [k,fid]=of.dataset.dopenf.split('|'); const id=DEALS[openId].cid+'|'+k;
+    if(DEAL_OPEN!==id){ DEAL_OPEN=id; editDeal=k; renderDrawer(); }
+    setTimeout(()=>{ const el=document.getElementById(fid);
+      if(el){ el.scrollIntoView({block:'center'}); el.focus(); } }, 60);
+    return; }
   const sp=e.target.closest('[data-sfpull],[data-sfpush]');
   if(sp){ e.stopPropagation(); e.preventDefault();
     sfDeal(sp, sp.dataset.sfpull||sp.dataset.sfpush, sp.dataset.sfpush?'push':'pull'); return; }
@@ -2091,8 +2164,11 @@ function dealSum(d,y){
   const date=(l,v)=>v?`<span class="ddate ${v<T&&y.ph!=='CLOSED_WON'&&l==='申込完了'?'late':''}"><small>${l}</small><b class="num">${mdj(v)}</b>${y.ph!=='CLOSED_WON'?`<em>${relDay(v)}</em>`:''}</span>`:`<span class="ddate none"><small>${l}</small><b>—</b></span>`;
   const bill = y.bill || (y.close?y.close+'-01':null);
   const naLate=y.na&&y.naDate&&y.naDate<T;
-  const na = y.ph==='CLOSED_WON' ? '' : `<div class="dna ${naLate?'late':''} ${y.na?'':'empty'}"><span class="atag dl">ネクストアクション</span><span class="t">${y.na?esc(y.na):'未設定です。商談の入力で次の一手を入れてください'}</span>${y.naDate?`<span class="num d">${mdj(y.naDate)}<em>${relDay(y.naDate)}</em></span>`:y.na?'<span class="d dim">期日なし</span>':''}${y.na?`<button type="button" class="nadone" data-nadone="${esc(y.key)}" data-tip="このアクションを完了にして、道のりの経過に残します">✓ 完了</button>`:''}</div>`;
-  const bar2 = y.ph==='CLOSED_WON' ? '' : `<div class="dbr ${y.br?'known':'unk'}"><span class="atag br">障壁</span><span class="t">${y.br?esc(y.br):'<span class="dim">障壁の内容が未入力です</span>'}</span></div>`;
+  /* 【移植による変更 9/9】要約の行から直接開く（2026-10-07 Kubotie 指摘）
+     「未設定です。商談の入力で…」と出ているのに、商談のタイトル行を押さないと
+     入力欄が出てこず、編集できないと思われていた。行ごとクリックできるようにする。 */
+  const na = y.ph==='CLOSED_WON' ? '' : `<div class="dna edit ${naLate?'late':''} ${y.na?'':'empty'}" role="button" tabindex="0" data-dopenf="${esc(y.key)}|efNa" title="クリックで入力"><span class="atag dl">ネクストアクション</span><span class="t">${y.na?esc(y.na):'未設定です。商談の入力で次の一手を入れてください'}</span>${y.naDate?`<span class="num d">${mdj(y.naDate)}<em>${relDay(y.naDate)}</em></span>`:y.na?'<span class="d dim">期日なし</span>':''}${y.na?`<button type="button" class="nadone" data-nadone="${esc(y.key)}" data-tip="このアクションを完了にして、道のりの経過に残します">✓ 完了</button>`:''}</div>`;
+  const bar2 = y.ph==='CLOSED_WON' ? '' : `<div class="dbr edit ${y.br?'known':'unk'}" role="button" tabindex="0" data-dopenf="${esc(y.key)}|efBr" title="クリックで入力"><span class="atag br">障壁</span><span class="t">${y.br?esc(y.br):'<span class="dim">障壁の内容が未入力です</span>'}</span></div>`;
   return `<div class="dsum">${aprBox(d,y)}${bar}<div class="ddates">${date('申込完了',y.apply)}${date('課金開始',bill)}</div>${jrRow(y)}${na}${bar2}</div>`;
 }
 function editForm(d){
@@ -2169,7 +2245,10 @@ function editForm(d){
    <fieldset><legend>商談（Opportunity）に保存 <span class="sub">${legend}</span></legend>
 ${dealList}
    </fieldset>
-   <div class="edact"><span class="sub" id="efMsg" role="status">${d.edit?'最終入力 '+new Date(d.edit.updatedAt).toLocaleString('ja-JP',{timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):''}</span>
+   <div class="edact"><span class="sub" id="efMsg" role="status">${(()=>{ /* 【移植による変更 9/9】Salesforce 由来だけの会社は edits に updatedAt が無く
+        「最終入力 Invalid Date」と出ていた（2026-10-07）。日付として読めるときだけ出す */
+      const t=d.edit&&d.edit.updatedAt?new Date(d.edit.updatedAt):null;
+      return t&&!isNaN(t.getTime()) ? '最終入力 '+t.toLocaleString('ja-JP',{timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; })()}</span>
     <button type="submit" class="btn" id="efSave">${isNew?'商談を追加':'保存'}</button></div>
   </form>`;
 }

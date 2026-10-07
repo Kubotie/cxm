@@ -1600,3 +1600,25 @@ table.deals.iss{min-width:880px}
 @media (prefers-reduced-motion:reduce){ .fbbtn{animation:none} }
 /* 期待値が 0 の理由（商談の金額が未入力）をフェーズのカードに出す */
 .fcol .noamt{margin-top:4px;font-size:10.5px;color:var(--plane,var(--muted));font-weight:700}
+
+/* ─── 企業一覧でネクストアクションを直接入力する ───────────────────────── */
+.nac .nav,.nac .naopen{
+  display:block;width:100%;text-align:left;font:inherit;color:var(--ink);
+  background:transparent;border:1px solid transparent;border-radius:7px;
+  padding:3px 6px;cursor:pointer;line-height:1.5;
+}
+.nac .nav:hover,.nac .naopen:hover{background:var(--accent-soft);border-color:var(--ring)}
+.nac .nav i{font-style:normal;margin-left:5px;font-size:10px;color:var(--muted);opacity:0}
+.nac .nav:hover i{opacity:1}
+.nac .nav.empty{color:var(--muted);font-size:11.5px;border-style:dashed;border-color:var(--ring)}
+.nac .naedit{display:flex;flex-direction:column;gap:4px}
+.nac .naedit textarea{
+  width:100%;font:inherit;font-size:12px;line-height:1.5;resize:vertical;
+  border:1px solid var(--accent);border-radius:7px;padding:4px 6px;background:var(--surface);color:var(--ink);
+}
+.nac .naedit input[type=date]{font:inherit;font-size:11.5px;border:1px solid var(--ring);border-radius:6px;padding:2px 5px;background:var(--surface);color:var(--ink)}
+
+/* 商談の要約から直接入力を開く */
+.dsum .dna.edit,.dsum .dbr.edit{cursor:pointer}
+.dsum .dna.edit:hover,.dsum .dbr.edit:hover{background:var(--accent-soft)}
+.dsum .dna.edit:focus-visible,.dsum .dbr.edit:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
