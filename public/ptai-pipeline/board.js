@@ -1985,12 +1985,17 @@ function logRow(y){
   return `<div class="dlog"><div class="dlh"><span class="lab">経過</span><span class="dim">NA 完了 ${nNa}件${inPh!==null?`・${PH_JP[y.ph]}に入って${inPh}日`:''}</span></div>
     <ol>${(open?rows:rows.slice(0,3)).join('')}</ol>${rows.length>3?`<button type="button" class="lgmore" data-logmore="${esc(k)}">${open?'直近3件だけ表示':`すべて表示（${rows.length}件）`}</button>`:''}</div>`;
 }
-async function completeNa(d,key,note){
+/* 【移植による変更 9/9】完了と次の一手は同時に保存する（2026-10-07 Kubotie 指示）
+   以前は「完了 → na を空にする → あとで入れてください」だったため、
+   空のまま放置されやすかった。**次の一手を入れないと完了にできない**ようにする。
+   1 回の保存で「完了の記録」と「次の一手」を一緒に書くので、
+   途中で離脱して抜け殻になることもない。 */
+async function completeNa(d,key,note,nextNa,nextDue){
   const x=d.deals.find(y=>y.key===key); if(!x||!x.na) return;
   const log=logAdd(x,{t:'na',text:x.na,due:x.naDate||null,note:note||null,ph:x.ph});
-  await saveEditDoc(d, phaseBody(d,key,{na:null,naDate:null,log}), 'アクションを完了しました。次のネクストアクションを入れてください');
+  await saveEditDoc(d, phaseBody(d,key,{na:nextNa,naDate:nextDue||null,log}),
+    '完了を記録し、次の一手を登録しました');
   DEAL_OPEN=d.cid+'|'+key; editDeal=key; renderDrawer();
-  setTimeout(()=>{ const t=document.getElementById('efNa'); if(t){ t.scrollIntoView({block:'center'}); t.focus(); } },30);
 }
 document.addEventListener('click', e=>{
   const m=e.target.closest('[data-logmore]'); if(m){ e.preventDefault(); const k=m.dataset.logmore; LOGOPEN.has(k)?LOGOPEN.delete(k):LOGOPEN.add(k); renderDrawer(); return; }
@@ -1998,10 +2003,27 @@ document.addEventListener('click', e=>{
   e.preventDefault(); e.stopPropagation();
   const d=DEALS[openId], key=b.dataset.nadone; const row=b.closest('.dna');
   const f=document.createElement('div'); f.className='nadf';
-  f.innerHTML=`<input type="text" placeholder="結果メモ（任意）例：稟議は11月に回ると確認" aria-label="結果メモ"><button type="button" class="btn sm" data-ok>完了にする</button><button type="button" class="btn ghost sm" data-cancel>やめる</button>`;
-  row.after(f); b.hidden=true; const inp=f.querySelector('input'); inp.focus();
-  const ok=()=>completeNa(d,key,inp.value.trim()); f.querySelector('[data-ok]').onclick=ok;
-  inp.onkeydown=ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); ok(); } if(ev.key==='Escape'){ f.remove(); b.hidden=false; } };
+  /* 次の一手は必須。空のままでは完了にできない */
+  f.innerHTML=`<div class="nadf-r"><label>結果メモ<span class="opt">任意</span></label>`
+    + `<input type="text" data-note placeholder="例：稟議は11月に回ると確認" aria-label="結果メモ"></div>`
+    + `<div class="nadf-r"><label>次の一手<span class="req">必須</span></label>`
+    + `<textarea data-next rows="2" placeholder="この商談を前に進める次の1手（例：見積を提出し稟議の日程を確認）" aria-label="次のネクストアクション" required></textarea></div>`
+    + `<div class="nadf-r"><label>次の期日<span class="opt">任意</span></label>`
+    + `<input type="date" data-nextdue aria-label="次のアクション期日"></div>`
+    + `<div class="nadf-a"><span class="nadf-m" role="status"></span>`
+    + `<button type="button" class="btn sm" data-ok>完了して次の一手を登録</button>`
+    + `<button type="button" class="btn ghost sm" data-cancel>やめる</button></div>`;
+  row.after(f); b.hidden=true;
+  const note=f.querySelector('[data-note]'), nxt=f.querySelector('[data-next]'), due=f.querySelector('[data-nextdue]');
+  const msg=f.querySelector('.nadf-m');
+  nxt.focus();
+  const ok=()=>{ const n=nxt.value.trim();
+    if(!n){ msg.textContent='次の一手を入れてください'; nxt.focus(); return; }
+    completeNa(d,key,note.value.trim(),n,due.value||null); };
+  f.querySelector('[data-ok]').onclick=ok;
+  [note,nxt,due].forEach(el=>{ el.onkeydown=ev=>{ ev.stopPropagation();
+    if(ev.key==='Enter' && !(el===nxt && ev.shiftKey)){ ev.preventDefault(); ok(); }
+    if(ev.key==='Escape'){ f.remove(); b.hidden=false; } }; });
   f.querySelector('[data-cancel]').onclick=()=>{ f.remove(); b.hidden=false; };
 }, true);
 function msRow(y){

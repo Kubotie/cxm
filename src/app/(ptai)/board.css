@@ -1622,3 +1622,17 @@ table.deals.iss{min-width:880px}
 .dsum .dna.edit,.dsum .dbr.edit{cursor:pointer}
 .dsum .dna.edit:hover,.dsum .dbr.edit:hover{background:var(--accent-soft)}
 .dsum .dna.edit:focus-visible,.dsum .dbr.edit:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+/* ネクストアクション完了：次の一手まで入れて初めて完了になる */
+.nadf{display:flex;flex-direction:column;gap:8px;margin:8px 0 2px;padding:12px 14px;
+  border:1px solid var(--accent);border-radius:10px;background:var(--surface)}
+.nadf-r{display:grid;grid-template-columns:92px 1fr;gap:10px;align-items:start}
+.nadf-r label{font-size:12px;font-weight:700;color:var(--ink-2);padding-top:5px;display:flex;gap:5px;align-items:center}
+.nadf-r .req{font-size:9.5px;font-weight:800;color:#fff;background:var(--crit);border-radius:4px;padding:1px 4px}
+.nadf-r .opt{font-size:9.5px;font-weight:700;color:var(--muted);border:1px solid var(--ring);border-radius:4px;padding:0 4px}
+.nadf-r input,.nadf-r textarea{width:100%;font:inherit;font-size:12.5px;line-height:1.55;
+  border:1px solid var(--ring);border-radius:7px;padding:5px 8px;background:var(--surface);color:var(--ink)}
+.nadf-r textarea{resize:vertical}
+.nadf-r input[type=date]{width:auto}
+.nadf-a{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+.nadf-m{margin-right:auto;font-size:12px;color:var(--crit);font-weight:700}

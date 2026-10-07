@@ -147,6 +147,42 @@ async function writeNextAction(
   }
 }
 
+/**
+ * 商談の経過ログ（フェーズが進んだ・障壁を更新・ネクストアクション完了）。
+ * **追記のみ**。既にあるぶんは作り直さない。
+ *
+ * ⚠ 2026-10-07 まで `sf:` の商談ではここを通っておらず、ネクストアクションを
+ *   完了にしても**行動履歴にも道のりにも残らなかった**（画面を開き直すと消えた）。
+ *   いまの商談はすべて Salesforce 由来なので、実質どこにも記録されていなかった。
+ */
+async function writeLogs(
+  ext: string, cid: string, oppId: string, x: Record<string, unknown>,
+  who: ActorStamp, changes: Record<string, number>,
+): Promise<void> {
+  const logs = arr(x.log);
+  if (!logs.length) return;
+  const existing = await listByExternalPrefix(ACTV.plural, ACTV.singular, `${ext}:log:`);
+  const have = new Set(existing.map(a => str(a.externalId)));
+  for (const [i, l] of logs.entries()) {
+    const lext = `${ext}:log:${i}`;
+    if (have.has(lext)) continue;
+    const t = str(l.t);
+    await upsertByExternalId(ACTV.plural, ACTV.singular, lext, {
+      name: str(l.text) || t, notionCompanyId: cid, opportunityId: oppId,
+      type: t === 'ph' ? 'STAGE_CHANGE' : t === 'br' ? 'BARRIER_UPDATE' : 'ACTION_DONE',
+      occurredAt: str(l.at) || new Date().toISOString(),
+      // ネクストアクション完了は「どのフェーズのときの一手だったか」を fromStage に入れる。
+      // 道のりがフェーズごとに束ねるのに使う
+      fromStage: normalizeStage(t === 'na' ? l.ph : l.from),
+      toStage:   normalizeStage(l.to),
+      dueDate:   t === 'na' ? (str(l.due) || null) : null,
+      text: str(l.text) || null, note: str(l.note) || null,
+      actor: str(l.by) || who.name2,
+    }, who);
+    changes.activity = (changes.activity ?? 0) + 1;
+  }
+}
+
 async function writeEdits(
   cid: string, body: Record<string, unknown>, me: PtaiIdentity, who: ActorStamp,
 ): Promise<WriteResult> {
@@ -206,6 +242,7 @@ async function writeEdits(
       if (!push.ok) changes.sfFailed = (changes.sfFailed ?? 0) + 1;
       if (push.truncated.length) changes.sfTruncated = (changes.sfTruncated ?? 0) + push.truncated.length;
       await writeNextAction(key, cid, oppId, x, owner, who, changes);
+      await writeLogs(key, cid, oppId, x, who, changes);
       continue;
     }
     // ── 画面で入力した商談（Salesforce に無いもの）─────────────────────
@@ -224,24 +261,7 @@ async function writeEdits(
 
     await writeNextAction(ext, cid, oppId, x, owner, who, changes);
 
-    // 経過ログは追記のみ。既にあるぶんは作り直さない
-    const logs = arr(x.log);
-    const existing = await listByExternalPrefix(ACTV.plural, ACTV.singular, `${ext}:log:`);
-    const have = new Set(existing.map(a => str(a.externalId)));
-    for (const [i, l] of logs.entries()) {
-      const lext = `${ext}:log:${i}`;
-      if (have.has(lext)) continue;
-      const t = str(l.t);
-      await upsertByExternalId(ACTV.plural, ACTV.singular, lext, {
-        name: str(l.text) || t, notionCompanyId: cid, opportunityId: oppId,
-        type: t === 'ph' ? 'STAGE_CHANGE' : t === 'br' ? 'BARRIER_UPDATE' : 'ACTION_DONE',
-        occurredAt: str(l.at) || new Date().toISOString(),
-        fromStage: normalizeStage(l.from), toStage: normalizeStage(l.to),
-        text: str(l.text) || null, note: str(l.note) || null,
-        actor: str(l.by) || who.name2,
-      }, who);
-      changes.activity++;
-    }
+    await writeLogs(ext, cid, oppId, x, who, changes);
   }
 
   // 送られてこなかった商談は消えたということ（全置換の意味）。

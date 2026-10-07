@@ -154,6 +154,9 @@ const SCHEMA = [
       ['toStage',         'SELECT', '変更後フェーズ', { options: stageOpts() }],
       ['text',            'TEXT',   '内容'],
       ['note',            'TEXT',   '補足'],
+      // ネクストアクション完了のとき、そのアクションに入っていた期日。
+      // 道のりで「期日超過で完了」を出すのに使う（2026-10-07 追加）
+      ['dueDate',         'DATE',   '完了したアクションの期日'],
       ['sourceUrl',       'LINKS',  '出典URL'],
       ['actor',           'TEXT',   '実行者'],
       // 議事録の出典。Notion（JP_Docs）と Mii（Twenty Note）は**別系統で、同じ会議が

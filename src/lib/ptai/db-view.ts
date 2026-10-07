@@ -129,10 +129,15 @@ function toEditDeal(row: Record<string, unknown>, key: string) {
 function toLogEntry(row: Record<string, unknown>) {
   const type = str(row.type);
   const t = type === 'STAGE_CHANGE' ? 'ph' : type === 'BARRIER_UPDATE' ? 'br' : 'na';
+  const stage = normalizeStage(row.fromStage);
   return clean({
     t,
     at:   str(row.occurredAt) || null,
-    from: normalizeStage(row.fromStage),
+    // ネクストアクション完了は fromStage に「そのときのフェーズ」を入れている。
+    // 道のりがフェーズごとに束ねるのに使う（2026-10-07）
+    from: t === 'na' ? null : stage,
+    ph:   t === 'na' ? stage : null,
+    due:  t === 'na' ? date(row.dueDate) : null,
     to:   normalizeStage(row.toStage),
     text: str(row.text) || null,
     note: str(row.note) || null,
