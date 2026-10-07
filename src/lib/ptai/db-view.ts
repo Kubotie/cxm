@@ -130,8 +130,13 @@ function toLogEntry(row: Record<string, unknown>) {
   const type = str(row.type);
   const t = type === 'STAGE_CHANGE' ? 'ph' : type === 'BARRIER_UPDATE' ? 'br' : 'na';
   const stage = normalizeStage(row.fromStage);
+  // externalId の `…:log:<id>` の <id> を持ち帰る。次に保存するとき同じ鍵を使い、
+  // 配列の位置ではなく中身で突き合わせられるようにする
+  const ext = str(row.externalId);
+  const i = ext.lastIndexOf(':log:');
   return clean({
     t,
+    id:   i >= 0 ? ext.slice(i + 5) : null,
     at:   str(row.occurredAt) || null,
     // ネクストアクション完了は fromStage に「そのときのフェーズ」を入れている。
     // 道のりがフェーズごとに束ねるのに使う（2026-10-07）
@@ -221,8 +226,11 @@ export async function buildDbView(): Promise<DbViewResult> {
 
     const withExtras = (row: Record<string, unknown>, key: string) => {
       const d = toEditDeal(row, key) as Record<string, unknown>;
+      // ⚠ 発生順に並べる。Twenty の返す順は保証されず、画面側は配列の位置で
+      //    ログを足していくので、順が揺れると取り違える（2026-10-07）
       const logs = (logsByOpp.get(str(row.id)) ?? [])
         .filter(l => str(l.type) !== 'AI_RECENT' && str(l.type) !== 'MEETING')
+        .sort((a, b) => str(a.occurredAt) < str(b.occurredAt) ? -1 : 1)
         .map(toLogEntry);
       if (logs.length) d.log = logs;
       const na = (naByOpp.get(str(row.id)) ?? []).find(a => str(a.status) !== 'DONE');

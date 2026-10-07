@@ -164,7 +164,9 @@ async function writeLogs(
   const existing = await listByExternalPrefix(ACTV.plural, ACTV.singular, `${ext}:log:`);
   const have = new Set(existing.map(a => str(a.externalId)));
   for (const [i, l] of logs.entries()) {
-    const lext = `${ext}:log:${i}`;
+    // 鍵は**中身の id**。配列の位置だと、読み戻す順が変わったときに
+    // 別のログを「もうある」と誤判定して取りこぼす（2026-10-07）
+    const lext = `${ext}:log:${str(l.id) || i}`;
     if (have.has(lext)) continue;
     const t = str(l.t);
     await upsertByExternalId(ACTV.plural, ACTV.singular, lext, {
