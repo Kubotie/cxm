@@ -1617,10 +1617,18 @@ function wireNa(root){
     const ta=td.querySelector('textarea'), dt=td.querySelector('input');
     ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
     let done=false;
-    const finish=save=>{ if(done) return; done=true;
+    const revert=()=>{ td.innerHTML=naCell(d); wireNa(td); };
+    const finish=save=>{ if(done) return;
       const t=ta.value.trim(), dv=dt.value||null;
+      /* ⚠ 空にして離れただけで消えないようにする（2026-10-07）。
+         本文が空だと保存時にネクストアクションごと消えるので、
+         もともと入っていたときは必ず確認を取る。取り消したら元に戻す。 */
+      if(save && t==='' && (y.na||'')!==''){
+        if(!confirm('ネクストアクションを消しますか？\n\n「' + y.na + '」\n\nSalesforce 側からも消えます。')){ done=true; revert(); return; }
+      }
+      done=true;
       if(save && (t!==(y.na||'') || dv!==(y.naDate||null))) saveNa(d, y.key, t, dv);
-      else { td.innerHTML=naCell(d); wireNa(td); } };
+      else revert(); };
     [ta,dt].forEach(el=>{
       el.onclick=ev=>ev.stopPropagation();
       el.onkeydown=ev=>{ ev.stopPropagation();
@@ -2387,6 +2395,11 @@ function wireEditForm(d){
     else if(newPh && !curPh && !IS_APPROVER && newPh==='CLOSED_WON'){ pendPh=newPh; newPh=null; }
     /* 【移植による変更】期日だけでは保存されない（ネクストアクションは本文が無いと消える）。黙って捨てずに知らせる */
     if(hasDeal && v('efNaDate') && !v('efNa') && v('efNaDate')!==((curX&&curX.naDate)||'')){ const m=document.getElementById('efMsg'); if(m) m.textContent='アクション期日を保存するには、ネクストアクションの内容も入れてください'; document.getElementById('efNa')?.focus(); return; }
+    /* ⚠ フォームでも、入っていたネクストアクションを空にしたら必ず確認する（2026-10-07）。
+       空のまま保存すると商談から消え、Salesforce 側からも消えるため。 */
+    if(hasDeal && !v('efNa') && (curX&&curX.na) &&
+       !confirm('ネクストアクションを消しますか？\n\n「' + curX.na + '」\n\nSalesforce 側からも消えます。')){
+      const el=document.getElementById('efNa'); if(el){ el.value=curX.na; el.focus(); } return; }
     const deal={name:v('efName')||null, phase:newPh, pendingPhase:pendPh, applyDate:v('efApply')||null, billingDate:v('efBill')||null, addMrr:man2y(v('efAdd')), term:v('efTerm')?+v('efTerm'):null,  barrier:v('efBr')||null, need:v('efNeed')||null, na:v('efNa')||null, naDate:v('efNaDate')||null, lostReason:v('efLost')||null, lostDetail:v('efLostD')||null, ...msRead()};
     { let lg=curX?[...(curX.log||[])]:[]; const add=e=>{ lg=logAdd({log:lg},e); };
       if(curX && newPh && newPh!==curPh) add({t:'ph',from:curPh,to:newPh});
