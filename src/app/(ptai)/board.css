@@ -1636,3 +1636,7 @@ table.deals.iss{min-width:880px}
 .nadf-r input[type=date]{width:auto}
 .nadf-a{display:flex;align-items:center;gap:8px;justify-content:flex-end}
 .nadf-m{margin-right:auto;font-size:12px;color:var(--crit);font-weight:700}
+
+/* 障壁もネクストアクションと同じく一覧から直接入力する（2026-10-08） */
+.brc.nac .brt{display:none}
+.brc.nac .nav{white-space:normal}

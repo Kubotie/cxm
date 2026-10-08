@@ -981,7 +981,7 @@ function renderDeals(){
       <td class="r num">${m3(d)?man1(m3(d)):'<span class="dim">—</span>'}</td>
       <td class="num" title="${nD>1?'商談のうち最も早い日':''}">${d.apply?dateCell(d.apply.slice(5).replace('-','/'), false, d.apply.slice(0,4)!==String(TODAY.getFullYear())?`<span class="dim">'${d.apply.slice(2,4)}</span>`:''):'<span class="dim">—</span>'}</td>
       <td class="num" title="${nD>1?'商談のうち最も早い日':''}">${d.bill?d.bill.slice(5).replace('-','/'):d.close?d.close.replace('-','/'):'<span class="dim">—</span>'}</td>
-      <td class="brc">${d.br?`<div class="brt" title="${esc(d.br)}${d.brDeal&&nD>1?'（'+esc(d.brDeal.name)+'）':''}">${esc(d.br)}</div>`:'<span class="dim">—</span>'}</td>
+      <td class="brc nac">${brCell(d)}</td>
       <td style="white-space:nowrap">${IND_JP[d.ind]||'<span class="dim">—</span>'}</td>
       <td>${potHtml(d)}</td>
       <td></td>
@@ -1015,7 +1015,7 @@ function renderDeals(){
   const tbl=document.getElementById('deals'); tbl.innerHTML=head+`<tbody>${rows||'<tr><td colspan="17" class="dim" style="padding:18px 8px">条件に合う企業はありません</td></tr>'}</tbody>`+foot;
   renderPager(all.length,pages);
   tbl.querySelectorAll('tbody tr[data-id]').forEach(tr=>tr.onclick=e=>e.target.closest('input')?null:tr.dataset.dk?openDeal(+tr.dataset.id,'edit',tr.dataset.dk):openDeal(+tr.dataset.id,'sum'));
-  wireAim(tbl); wireNa(tbl);
+  wireAim(tbl); wireNa(tbl); wireBr(tbl);
   tbl.querySelectorAll('button[data-caret]').forEach(b=>b.onclick=e=>{e.stopPropagation(); const c=b.dataset.caret; EXPANDED.has(c)?EXPANDED.delete(c):EXPANDED.add(c); syncAllOpen(); renderDeals();});
   tbl.querySelectorAll('button[data-add]').forEach(b=>b.onclick=e=>{e.stopPropagation(); openDeal(+b.dataset.add,'edit','new');});
   tbl.querySelectorAll('button[data-fill]').forEach(b=>b.onclick=e=>{e.stopPropagation();openDeal(+b.dataset.fill,'edit',b.dataset.dk);});
@@ -1590,6 +1590,10 @@ function aimCell(d){
      ・それ以外（商談が無い／複数ある）は決められないので、セルを押したら
        企業詳細を開く。表で勝手にどれかへ書かない。                        */
 const liveDealsOf = d => (d.deals||[]).filter(x=>!['CLOSED_LOST','ADMIN_CLOSE','CLOSED_WON'].includes(x.ph));
+/** 商談名から「Ptengine AI - 」と会社名を取って短くする（表のセルに添えるため） */
+const dealShort = (d, y) => (y&&y.name||'')
+  .replace(/^Ptengine AI\s*[-－]\s*/,'')
+  .replace(new RegExp('^'+coShort(d.n).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'_?'),'') || (y&&y.name) || '';
 function naTarget(d){
   if(d.naDeal) return d.naDeal;
   const l=liveDealsOf(d);
@@ -1597,9 +1601,7 @@ function naTarget(d){
 }
 function naCell(d){
   const y=naTarget(d), nD=(d.deals||[]).length;
-  const sub2 = d.naDeal&&nD>1
-    ? `<div class="nadl">${esc(d.naDeal.name.replace(/^Ptengine AI\s*[-－]\s*/,'').replace(new RegExp('^'+coShort(d.n).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'_?'),'')||d.naDeal.name)}</div>`
-    : '';
+  const sub2 = d.naDeal&&nD>1 ? `<div class="nadl">${esc(dealShort(d, d.naDeal))}</div>` : '';
   if(!y) return nD
     ? `<button type="button" class="naopen" data-naopen="${d.id}" title="商談が ${nD} 件あります。どれに書くかを選んでください">${d.naHead?esc(d.naHead):'<span class="dim">—</span>'}</button>${sub2}`
     : '<span class="dim">—</span>';
@@ -1638,19 +1640,70 @@ function wireNa(root){
     });
   }; });
 }
-async function saveNa(d, key, text, date){
+/* 商談 1 件の一部だけを直して保存する。表のセルからの編集はすべてここを通る。
+   ⚠ sf: の商談は db-write が barrier / need / ネクストアクションを
+     **送られた値で上書き**する。鍵だけの object を送ると残りが消えるので、
+     いまの値を必ず添えてから patch を重ねること。 */
+async function patchDeal(d, key, patch, failMsg){
   const cur = EDITS[d.cid] || {companyId:d.cid, companyName:d.n, opportunityId:d.oid||null, opp:{}, company:{}, deals:[]};
   const deals = [...(cur.deals||[])];
   const i = deals.findIndex(x=>x && x.key===key);
-  /* ⚠ sf: の商談は db-write が barrier/need を**送られた値で上書き**する。
-     鍵だけの object を送ると障壁とニーズが消えるので、いまの値を必ず添える。 */
   const y = (d.deals||[]).find(z=>z.key===key) || {};
-  const base = i>=0 ? deals[i] : {key, name:y.name||null, phase:y.ph||null, barrier:y.br||'', need:y.need||''};
-  const next = {...base, na:text||'', naDate:date||null};
+  const base = i>=0 ? deals[i]
+    : {key, name:y.name||null, phase:y.ph||null, barrier:y.br||'', need:y.need||'', na:y.na||'', naDate:y.naDate||null};
+  const next = {...base, ...patch};
   if(i>=0) deals[i]=next; else deals.push(next);
   const body = {...cur, deals, updatedAt:new Date().toISOString(), syncedAt: cur.syncedAt||null};
   EDITS[d.cid]=body; rebuildDeals(); renderAll(); if(openId!==null) renderDrawer();
-  if(db){ try{ await db.doc('edits/'+d.cid).set(body); }catch(e){ planMsg('ネクストアクションを保存できませんでした'); } }
+  if(db){ try{ await db.doc('edits/'+d.cid).set(body); }catch(e){ planMsg(failMsg); } }
+}
+const saveNa = (d,key,text,date) =>
+  patchDeal(d, key, {na:text||'', naDate:date||null}, 'ネクストアクションを保存できませんでした');
+const saveBr = (d,key,text) =>
+  patchDeal(d, key, {barrier:text||''}, '障壁を保存できませんでした');
+
+/* ═══ 【移植による変更 9/9】企業一覧で障壁を直接入力する（2026-10-08 Kubotie 要望）═══
+   ネクストアクションと同じ作り。保存すると Salesforce の「導入障壁」にも送られる。
+   どの商談に書くかの決め方も同じで、決められないときは企業詳細を開く。 */
+function brTarget(d){
+  if(d.brDeal) return d.brDeal;
+  const l=liveDealsOf(d);
+  return l.length===1 ? l[0] : null;
+}
+function brCell(d){
+  const y=brTarget(d), nD=(d.deals||[]).length;
+  const sub2 = d.brDeal&&nD>1 ? `<div class="nadl">${esc(dealShort(d, d.brDeal))}</div>` : '';
+  if(!y) return nD
+    ? `<button type="button" class="naopen" data-bropen="${d.id}" title="商談が ${nD} 件あります。どれに書くかを選んでください">${d.br?esc(d.br):'<span class="dim">—</span>'}</button>${sub2}`
+    : '<span class="dim">—</span>';
+  return d.br
+    ? `<button type="button" class="nav" data-brv="${d.id}" title="${esc(d.br)}／クリックで編集">${esc(d.br)}<i aria-hidden="true">✎</i></button>${sub2}`
+    : `<button type="button" class="nav empty" data-brv="${d.id}" title="受注までに越える必要があることを入力">＋障壁</button>`;
+}
+function wireBr(root){
+  root.querySelectorAll('button[data-bropen]').forEach(b=>{ b.onclick=e=>{ e.stopPropagation(); openDeal(+b.dataset.bropen,'edit'); }; });
+  root.querySelectorAll('button[data-brv]').forEach(btn=>{ btn.onclick=e=>{ e.stopPropagation();
+    const d=DEALS[+btn.dataset.brv], y=brTarget(d); if(!y) return;
+    const td=btn.parentNode;
+    td.innerHTML=`<span class="naedit"><textarea rows="2" aria-label="${esc(d.n)} の障壁" placeholder="受注までに越える必要があること（例：追加予算の承認が必要）">${esc(y.br||'')}</textarea></span>`;
+    const ta=td.querySelector('textarea');
+    ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+    let done=false;
+    const revert=()=>{ td.innerHTML=brCell(d); wireBr(td); };
+    const finish=save=>{ if(done) return;
+      const t=ta.value.trim();
+      /* 空にすると Salesforce 側の「導入障壁」からも消えるので、入っていたときは必ず確認する */
+      if(save && t==='' && (y.br||'')!==''){
+        if(!confirm('障壁を消しますか？\n\n「' + y.br + '」\n\nSalesforce 側からも消えます。')){ done=true; revert(); return; }
+      }
+      done=true;
+      if(save && t!==(y.br||'')) saveBr(d, y.key, t); else revert(); };
+    ta.onclick=ev=>ev.stopPropagation();
+    ta.onkeydown=ev=>{ ev.stopPropagation();
+      if(ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); finish(true); }
+      if(ev.key==='Escape') finish(false); };
+    ta.onblur=()=>setTimeout(()=>{ if(!td.contains(document.activeElement)) finish(true); }, 0);
+  }; });
 }
 
 function wireAim(root){
