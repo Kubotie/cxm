@@ -2043,12 +2043,25 @@ function logRow(y){
    空のまま放置されやすかった。**次の一手を入れないと完了にできない**ようにする。
    1 回の保存で「完了の記録」と「次の一手」を一緒に書くので、
    途中で離脱して抜け殻になることもない。 */
+/* ⚠ 二重登録を防ぐ（2026-10-08）。保存は 1〜2 秒かかるのに画面が変わらないため、
+     反応が無いと思って続けて押され、同じ完了が 4 件入った実例がある。
+     押せなくするのはボタン側（下の ok）でやるが、ここでも
+     **いまの DEALS から引き直して** 既に完了済みなら何もしない。
+     クリックのときに掴んだ d は、1 回目の保存と rebuildDeals で古くなっている。 */
+let NA_DONE_BUSY = false;
 async function completeNa(d,key,note,nextNa,nextDue){
-  const x=d.deals.find(y=>y.key===key); if(!x||!x.na) return;
-  const log=logAdd(x,{t:'na',text:x.na,due:x.naDate||null,note:note||null,ph:x.ph});
-  await saveEditDoc(d, phaseBody(d,key,{na:nextNa,naDate:nextDue||null,log}),
-    '完了を記録し、次の一手を登録しました');
-  DEAL_OPEN=d.cid+'|'+key; editDeal=key; renderDrawer();
+  if(NA_DONE_BUSY) return false;
+  const cur = DEALS[d.id] || d;                      // 古い参照を使わない
+  const x = (cur.deals||[]).find(y=>y.key===key);
+  if(!x || !x.na) return false;                      // もう完了している
+  NA_DONE_BUSY = true;
+  try{
+    const log=logAdd(x,{t:'na',text:x.na,due:x.naDate||null,note:note||null,ph:x.ph});
+    await saveEditDoc(cur, phaseBody(cur,key,{na:nextNa,naDate:nextDue||null,log}),
+      '完了を記録し、次の一手を登録しました');
+    DEAL_OPEN=cur.cid+'|'+key; editDeal=key; renderDrawer();
+    return true;
+  } finally { NA_DONE_BUSY = false; }
 }
 document.addEventListener('click', e=>{
   const m=e.target.closest('[data-logmore]'); if(m){ e.preventDefault(); const k=m.dataset.logmore; LOGOPEN.has(k)?LOGOPEN.delete(k):LOGOPEN.add(k); renderDrawer(); return; }
@@ -2070,10 +2083,20 @@ document.addEventListener('click', e=>{
   const note=f.querySelector('[data-note]'), nxt=f.querySelector('[data-next]'), due=f.querySelector('[data-nextdue]');
   const msg=f.querySelector('.nadf-m');
   nxt.focus();
-  const ok=()=>{ const n=nxt.value.trim();
+  const okBtn=f.querySelector('[data-ok]');
+  let sending=false;
+  const ok=async()=>{ if(sending) return;
+    const n=nxt.value.trim();
     if(!n){ msg.textContent='次の一手を入れてください'; nxt.focus(); return; }
-    completeNa(d,key,note.value.trim(),n,due.value||null); };
-  f.querySelector('[data-ok]').onclick=ok;
+    /* 押した瞬間に閉じる。保存は 1〜2 秒かかるので、待っている間に
+       もう一度押せると同じ完了が重なる（2026-10-08 に 4 件重なった） */
+    sending=true; okBtn.disabled=true; okBtn.textContent='保存中…';
+    msg.textContent=''; msg.style.color='var(--muted)';
+    try{ await completeNa(d,key,note.value.trim(),n,due.value||null); }
+    catch(_){ sending=false; okBtn.disabled=false; okBtn.textContent='完了して次の一手を登録';
+      msg.style.color=''; msg.textContent='保存できませんでした。もう一度お試しください'; }
+  };
+  okBtn.onclick=ok;
   [note,nxt,due].forEach(el=>{ el.onkeydown=ev=>{ ev.stopPropagation();
     if(ev.key==='Enter' && !(el===nxt && ev.shiftKey)){ ev.preventDefault(); ok(); }
     if(ev.key==='Escape'){ f.remove(); b.hidden=false; } }; });
