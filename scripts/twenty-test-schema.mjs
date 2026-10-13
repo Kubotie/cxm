@@ -287,6 +287,43 @@ const SCHEMA = [
       ['externalId',  'TEXT',      '移行元のID'],
     ],
   },
+  {
+    // 毎朝 1 行ずつ積む。**上書きしない**（上書きすると変化が追えない）。
+    // 鍵は externalId = `kpi:<YYYY-MM-DD>:<scope>`。scope は team か担当者名。
+    // 数値は円。NUMBER の桁あふれを避けるため MRR も円のまま整数で入れる。
+    nameSingular: 'testKpiSnapshot', namePlural: 'testKpiSnapshots',
+    labelSingular: 'PtAI KPI スナップショット（test）', labelPlural: 'PtAI KPI スナップショット（test）',
+    description: 'ダッシュボード上部の数値を毎朝 1 行ずつ記録したもの。変化を追うため上書きしない',
+    icon: 'IconChartLine',
+    fields: [
+      ['snapshotDate', 'DATE',   '対象日'],
+      ['scope',        'TEXT',   '対象（team か担当者名）'],
+      ['targetMrr',    'NUMBER', '目標 合算MRR'],
+      ['targetDue',    'TEXT',   '達成期限'],
+      // `plan` は Twenty の予約語で 400 になる（2026-10-13 実測）
+      ['plan',         'NUMBER', '計画', { fallback: 'planMrr' }],
+      ['planCompanies','NUMBER', '計画に入っている社数'],
+      ['planBase',     'NUMBER', '計画の内訳：既契約'],
+      ['planWon',      'NUMBER', '計画の内訳：受注'],
+      ['planDeal',     'NUMBER', '計画の内訳：商談中'],
+      ['planAim',      'NUMBER', '計画の内訳：まだ商談なし'],
+      ['expected',     'NUMBER', '期待値'],
+      ['won',          'NUMBER', '確定'],
+      ['wonCompanies', 'NUMBER', '確定の社数'],
+      ['commitMrr',    'NUMBER', 'コミット'],
+      ['commitCompanies',    'NUMBER', 'コミットの社数'],
+      ['challenge',    'NUMBER', 'チャレンジ'],
+      ['challengeCompanies', 'NUMBER', 'チャレンジの社数'],
+      ['pipelineMrr',  'NUMBER', 'パイプライン'],
+      ['pipelineCompanies',  'NUMBER', 'パイプラインの社数'],
+      ['overdue',      'NUMBER', 'ネクストアクション期限超過（件）'],
+      ['currentMrr',   'NUMBER', '現在MRR 合計'],
+      ['baseMrr',      'NUMBER', '期初MRR 合計'],
+      ['companies',    'NUMBER', '対象の社数'],
+      ['deals',        'NUMBER', '対象の商談数'],
+      ['externalId',   'TEXT',   '移行元のID'],
+    ],
+  },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════

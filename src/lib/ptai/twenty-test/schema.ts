@@ -31,11 +31,12 @@ export const TEST_OBJECTS = {
   comment:      { singular: 'testComment',      plural: 'testComments' },
   operationLog: { singular: 'testOperationLog', plural: 'testOperationLogs' },
   feedback:     { singular: 'testFeedback',     plural: 'testFeedbacks' },
+  kpiSnapshot:  { singular: 'testKpiSnapshot',  plural: 'testKpiSnapshots' },
 } as const;
 
 export type TestObjectKey = keyof typeof TEST_OBJECTS;
 
-/** 書き込みを許すのはこの 6 つだけ。client.ts がここで弾く */
+/** 書き込みを許すのは TEST_OBJECTS の分だけ。client.ts がここで弾く */
 export const WRITABLE_PLURALS: ReadonlySet<string> =
   new Set(Object.values(TEST_OBJECTS).map(o => o.plural));
 
@@ -50,6 +51,8 @@ export const WRITABLE_PLURALS: ReadonlySet<string> =
 export const FIELD_ALIAS: Record<string, Record<string, string>> = {
   testActivity:     { type: 'activityType' },
   testOperationLog: { object: 'objectName', field: 'fieldName' },
+  // `plan` は Twenty の予約語（2026-10-13 実測。`type` と同じ扱い）
+  testKpiSnapshot:  { plan: 'planMrr' },
 };
 
 /** 仕様書の名前を Twenty の実名に変換する */

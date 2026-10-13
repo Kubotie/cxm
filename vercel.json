@@ -39,6 +39,10 @@
     {
       "path": "/api/batch/ptai-mrr-sync",
       "schedule": "0 23 * * *"
+    },
+    {
+      "path": "/api/batch/ptai-kpi-snapshot",
+      "schedule": "15 23 * * *"
     }
   ]
 }
