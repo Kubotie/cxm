@@ -228,7 +228,7 @@ async function runSync(
 
   // ── 取引先 → Notion の会社 ──────────────────────────────────────────────
   // 鍵は 3 段。上の段で付いた取引先には下の段を使わない。
-  //   1. 「Salesforce Account ID」（人が入れた列）
+  //   1. 「Salesforce Account ID」（人が入れた列。カンマ区切りで複数書ける）
   //   2. ` sf_company_id`（Company Database リレーション越しのロールアップ）
   //   3. 社名の完全一致（法人格・空白を無視。1 社に絞れたときだけ）
   // 2・3 で付いた会社は 1 の列に書き戻す。次回からは 1 で付く。
@@ -239,7 +239,7 @@ async function runSync(
     if (!list.some(x => x.cid === c.pageId)) list.push({ cid: c.pageId, owners: c.owners3 });
     cidByAccount.set(acc, list);
   };
-  for (const c of customers) if (c.sfAccountId) addCand(c.sfAccountId, c);
+  for (const c of customers) for (const acc of c.sfAccountIds) addCand(acc, c);
 
   const toLink = new Map<string, string>();   // cid → 書き戻す Account ID
   const viaRollup = new Map<string, Array<(typeof customers)[number]>>();

@@ -202,8 +202,14 @@ export interface NotionCustomer {
   nextActionDate: string | null;
   solutionStatus: string | null;
   companyRelation: string[];
-  /** Salesforce の Account ID。未設定なら null */
+  /** Salesforce の Account ID（列の先頭の 1 つ）。現在MRR など会社 1 つに決める用途はこれ。未設定なら null */
   sfAccountId:    string | null;
+  /**
+   * 列に書かれた Account ID 全部。商談の紐付けだけに使う。
+   * 別の取引先名義で契約している商談を同じ会社に寄せるときに、カンマ区切りで足す
+   * （例: 契約はマガシーク経由だが、Salesforce の商談の取引先はブランド側。2026-10-13）
+   */
+  sfAccountIds:   string[];
   /** Company Database 越しの Salesforce Account ID（ロールアップ）。手入力の sfAccountId が空でも入っていることが多い */
   sfCompanyIds:   string[];
   /** 代理店経由の商談のときの代理店名。直販なら null */
@@ -227,6 +233,7 @@ function rollupTexts(props: Props | undefined, name: string): string[] {
 function toCustomer(page: Record<string, unknown>): NotionCustomer {
   const props = page.properties as Props | undefined;
   const r = (n: string) => readProp(props, n);
+  const sfIds = String(r(CUSTOMER_PROP.sfAccountId) ?? '').split(/[,、\s]+/).map(x => x.trim()).filter(Boolean);
   return {
     pageId:          String(page.id ?? ''),
     url:             typeof page.url === 'string' ? page.url : null,
@@ -247,7 +254,8 @@ function toCustomer(page: Record<string, unknown>): NotionCustomer {
     nextActionDate:  (r(CUSTOMER_PROP.nextActionDate) as string | null) ?? null,
     solutionStatus:  (r(CUSTOMER_PROP.solutionStatus) as string | null) ?? null,
     companyRelation: (r(CUSTOMER_PROP.companyDatabase) as string[] | null) ?? [],
-    sfAccountId:     ((r(CUSTOMER_PROP.sfAccountId) as string | null) ?? '').trim() || null,
+    sfAccountId:     sfIds[0] ?? null,
+    sfAccountIds:    sfIds,
     sfCompanyIds:    rollupTexts(props, CUSTOMER_PROP.sfCompanyIds),
     agency:          (r(CUSTOMER_PROP.agency) as string | null) || null,
     keyDates: {
