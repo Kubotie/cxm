@@ -32,6 +32,8 @@ export function todayJst(now: Date = new Date()): string {
 
 export interface SnapshotResult {
   ok: boolean;
+  /** その日のぶんが既にあったので何もしなかった */
+  skipped?: boolean;
   date: string;
   rows: KpiRow[];
   created: number;
@@ -41,9 +43,22 @@ export interface SnapshotResult {
 }
 
 export async function runKpiSnapshot(
-  opts: { date?: string; dryRun?: boolean } = {},
+  opts: { date?: string; dryRun?: boolean; onlyIfMissing?: boolean } = {},
 ): Promise<SnapshotResult> {
   const date = opts.date ?? todayJst();
+
+  // 画面から呼ぶとき用。Vercel の Hobby プランは Cron が 1 日 1 回までで、
+  // すでに 10 本ある。11 本目が確実に走る保証が無いので、
+  // **その日のぶんがまだ無ければ、最初に画面を開いた人が記録する**。
+  // 先に見るので、2 人目以降は Twenty を読むだけで終わる。
+  if (opts.onlyIfMissing) {
+    const already = await listSnapshots({ scope: 'team', from: date, to: date });
+    if (already.length) {
+      return { ok: true, skipped: true, date, rows: [], created: 0, updated: 0, failed: 0,
+        diagnostics: { companies: 0, deals: 0, partialFailures: [], targetsFromNotion: false } };
+    }
+  }
+
   const src = await loadKpiSource();
 
   const rows: KpiRow[] = [

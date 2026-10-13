@@ -52,6 +52,13 @@ export function BoardScripts() {
       void fetch("/api/ptai/sf-sync?ifStale=1", { method: "POST", credentials: "same-origin" })
         .catch(() => { /* 同期できなくても表示は続ける */ });
 
+      // その日の KPI をまだ誰も記録していなければ、ここで記録する。
+      // 本筋は毎朝 8:15 の Cron（/api/batch/ptai-kpi-snapshot）で、これは保険。
+      // Vercel の Hobby プランは Cron が 1 日 1 回までで、すでに 10 本ある。
+      // すでに記録済みの日は、サーバー側が 1 回読んで何もせずに返す。
+      void fetch("/api/ptai/kpi", { method: "POST", credentials: "same-origin" })
+        .catch(() => { /* 記録できなくても表示は続ける */ });
+
       try {
         const res = await fetch("/api/ptai/raw", { credentials: "same-origin" });
         if (!res.ok) throw new Error(`/api/ptai/raw ${res.status}`);

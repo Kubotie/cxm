@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserUidFromCookie } from '@/lib/auth/session';
-import { listSnapshots, withDeltas, todayJst } from '@/lib/ptai/kpi-snapshot';
+import { listSnapshots, withDeltas, todayJst, runKpiSnapshot } from '@/lib/ptai/kpi-snapshot';
 import { computeKpis } from '@/lib/ptai/kpi';
 import { loadKpiSource, MEMBERS } from '@/lib/ptai/kpi-source';
 
@@ -23,6 +23,33 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 const SCOPES = ['team', ...MEMBERS];
+
+/**
+ * POST — その日のぶんがまだ無ければ記録する。画面を開いたときに呼ぶ。
+ *
+ * Cron（毎朝 8:15）が本筋で、こちらは保険。Vercel の Hobby プランは
+ * Cron が 1 日 1 回までで、すでに 10 本ある。11 本目が落ちても
+ * 記録が飛ばないように、最初に画面を開いた人が代わりに書く。
+ * すでにある日は Twenty を 1 回読むだけで何もしない。
+ */
+export async function POST() {
+  if (!(await getUserUidFromCookie())) {
+    return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });
+  }
+  try {
+    const r = await runKpiSnapshot({ onlyIfMissing: true });
+    if (!r.skipped) {
+      console.info('[ptai/kpi] 画面から記録', JSON.stringify(
+        { date: r.date, created: r.created, updated: r.updated, failed: r.failed }));
+    }
+    return NextResponse.json({ ok: r.ok, skipped: !!r.skipped, date: r.date },
+      { headers: { 'Cache-Control': 'no-store' } });
+  } catch (e) {
+    console.error('[ptai/kpi] 記録できませんでした', (e as Error).name);
+    return NextResponse.json({ ok: false, error: 'upstream_unavailable' },
+      { status: 502, headers: { 'Cache-Control': 'no-store' } });
+  }
+}
 
 export async function GET(req: NextRequest) {
   if (!(await getUserUidFromCookie())) {
