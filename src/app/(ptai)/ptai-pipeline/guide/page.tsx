@@ -20,6 +20,7 @@ export default async function GuidePage() {
         <Link href="/apps">アプリ一覧</Link>
         <Link href="/ptai-pipeline">パイプライン</Link>
         <span className="pshell-here">使い方</span>
+        <Link href="/ptai-pipeline/api">データの取り出し方</Link>
         <Link href="/ptai-pipeline/updates">更新履歴</Link>
         <span className="pshell-sp" />
         {profile && <span className="pshell-user">{profile.name || profile.name2}</span>}
