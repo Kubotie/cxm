@@ -43,8 +43,8 @@ export async function GET(req: NextRequest) {
     const r = await syncSalesforceOpportunities(BATCH_ACTOR);
     const log = {
       fetched: r.fetched, matched: r.matched,
-      created: r.created, updated: r.updated, deleted: r.deleted,
-      skippedNoCompany: r.skippedNoCompany, ms: Date.now() - startedAt,
+      created: r.created, updated: r.updated, unchanged: r.unchanged, deleted: r.deleted,
+      linked: r.linked, skippedNoCompany: r.skippedNoCompany, ms: Date.now() - startedAt,
     };
     console.info('[batch/ptai-sf-sync]', JSON.stringify(log));
     return NextResponse.json({ ok: true, ...log, message: r.message },

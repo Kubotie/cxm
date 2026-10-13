@@ -22,6 +22,7 @@
 import { listRecords, TestWriteError } from './twenty-test/client';
 import { TEST_OBJECTS, normalizeStage } from './twenty-test/schema';
 import { readTeamTargets, listCustomers, NotionError } from './notion/client';
+import { parseSyncStatus, SYNC_STATUS_EXT } from './salesforce/sync';
 
 export type DbCollections = Record<string, Array<{ id: string; data: unknown }>>;
 
@@ -481,6 +482,10 @@ export async function buildDbView(): Promise<DbViewResult> {
   } catch (e) {
     partialFailures.push(`notion_targets:${kindOf(e)}`);
   }
+
+  // Salesforce 同期の最後の結果（画面上部の「未紐づけ N 件」「自動同期が止まっています」）
+  const sfSync = parseSyncStatus(oplogs.find(r => str(r.externalId) === SYNC_STATUS_EXT));
+  if (sfSync) settings.push({ id: 'sfSync', data: sfSync });
 
   const collections: DbCollections = { edits, aplans, orgs, recent, feed, settings, minutes };
   const counts = Object.fromEntries(Object.entries(collections).map(([k, v]) => [k, v.length]));

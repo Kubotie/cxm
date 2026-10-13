@@ -204,8 +204,22 @@ export interface NotionCustomer {
   companyRelation: string[];
   /** Salesforce の Account ID。未設定なら null */
   sfAccountId:    string | null;
+  /** Company Database 越しの Salesforce Account ID（ロールアップ）。手入力の sfAccountId が空でも入っていることが多い */
+  sfCompanyIds:   string[];
   /** キー日程（§9-4 で Notion に置くと決定）。月で持つ。日付ではない */
   keyDates:       KeyDates;
+}
+
+/** 「元の値を表示」のロールアップ（配列）から文字列を取り出す。readProp は配列を返さないので別にする */
+function rollupTexts(props: Props | undefined, name: string): string[] {
+  const roll = props?.[name]?.rollup as { array?: Array<Record<string, unknown>> } | undefined;
+  const out = new Set<string>();
+  for (const item of roll?.array ?? []) {
+    const parts = (item.rich_text ?? item.title) as Array<{ plain_text?: string }> | undefined;
+    const v = (parts ?? []).map(t => t.plain_text ?? '').join('').trim();
+    if (v) out.add(v);
+  }
+  return [...out];
 }
 
 function toCustomer(page: Record<string, unknown>): NotionCustomer {
@@ -232,6 +246,7 @@ function toCustomer(page: Record<string, unknown>): NotionCustomer {
     solutionStatus:  (r(CUSTOMER_PROP.solutionStatus) as string | null) ?? null,
     companyRelation: (r(CUSTOMER_PROP.companyDatabase) as string[] | null) ?? [],
     sfAccountId:     ((r(CUSTOMER_PROP.sfAccountId) as string | null) ?? '').trim() || null,
+    sfCompanyIds:    rollupTexts(props, CUSTOMER_PROP.sfCompanyIds),
     keyDates: {
       fiscalMonth:  parseMonth(r(CUSTOMER_PROP.fiscalMonth) as string | null),
       budgetMonths: parseMonthRange(r(CUSTOMER_PROP.budgetMonths) as string | null),

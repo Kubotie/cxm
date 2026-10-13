@@ -51,7 +51,8 @@ export async function POST(req: NextRequest) {
     }
     console.info('[ptai/sf-sync]', JSON.stringify({
       fetched: r.fetched, matched: r.matched,
-      created: r.created, updated: r.updated, deleted: r.deleted,
+      created: r.created, updated: r.updated, unchanged: r.unchanged, deleted: r.deleted,
+      linked: r.linked, skippedNoCompany: r.skippedNoCompany,
     }));
     return NextResponse.json(r, { headers: { 'Cache-Control': 'no-store' } });
   } catch (e) {

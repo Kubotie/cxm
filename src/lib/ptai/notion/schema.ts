@@ -57,7 +57,14 @@ export const CUSTOMER_PROP = {
    * 残り（同名 11 社・不一致 3 社）は人が入れる。
    */
   sfAccountId:  'Salesforce Account ID',
-  name:            '企業名',                            // title
+  /**
+   * `Company Database` リレーション越しの `company_id`（＝Salesforce Account ID）のロールアップ。
+   * 先頭に半角スペースが付いた名前のまま。読むだけ。
+   * 「Salesforce Account ID」が空のまま放置され、商談が取り込まれない事故があったので
+   * （2026-10-13 Baba 指摘、14 件）、Salesforce 同期はこちらも鍵として使う。
+   */
+  sfCompanyIds: ' sf_company_id',
+  name:           '企業名',                            // title
   tier:            'Tier',                              // select
   industry:        '業種',                              // select
   owner3:          '担当3',                             // multi_select（主担当）

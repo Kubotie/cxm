@@ -218,6 +218,34 @@ async function sfSync(btn){
   setTimeout(()=>{ if(btn){ btn.disabled=false; btn.textContent=label; } SF_SYNC_BUSY=false; }, 2500);
 }
 
+/* 【移植による変更】Salesforce 同期の状態を画面上部に出す（2026-10-13 Baba 指摘）
+   紐付かない商談は「更新」ボタンを押した人にしか見えず、Cron や画面を開いたときの
+   自動同期では誰にも知らされないまま飛ばされていた。同期が止まっても気づけなかった。
+   サーバーが毎回の結果を settings/sfSync に置くので、それを出す。 */
+let SFSTAT = null;
+const SF_STALE_H = 26;   /* Cron は 1 日 1 回。これを過ぎたら止まっているとみなす */
+function renderSfStat(){
+  const el = document.getElementById('sfStat'); if(!el) return;
+  const s = SFSTAT; if(!s || !s.at){ el.innerHTML=''; return; }
+  const at = new Date(s.at);
+  const ageH = (Date.now() - at.getTime()) / 3600e3;
+  const when = at.toLocaleString('ja-JP',{timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  const warns = [];
+  if(!s.ok) warns.push(`<button type="button" class="warn" data-sfstat="fail" title="もう一度「Salesforce から更新」を押してください">⚠ 前回の同期が失敗</button>`);
+  else if(ageH > SF_STALE_H) warns.push(`<button type="button" class="warn" data-sfstat="stale" title="自動同期が ${Math.floor(ageH)} 時間動いていません">⚠ 自動同期が止まっています</button>`);
+  const n = (s.skipped||[]).length;
+  if(n) warns.push(`<button type="button" class="warn" data-sfstat="skip" title="Notion 顧客管理DB の会社と結び付かず、取り込めていない商談">⚠ 未紐づけ ${n}件</button>`);
+  el.innerHTML = `最終同期 ${when}${warns.join('')}`;
+}
+document.addEventListener('click', function(e){
+  const b = e.target.closest && e.target.closest('[data-sfstat]'); if(!b || !SFSTAT) return;
+  e.stopPropagation(); e.preventDefault();
+  const k = b.getAttribute('data-sfstat');
+  if(k==='skip') alert(`次の商談は、取引先が Notion 顧客管理DB の会社と結び付かず取り込めていません。\n\n${(SFSTAT.skipped||[]).map(x=>'・'+x.opp+(x.account?`（取引先: ${x.account}）`:'')).join('\n')}\n\nNotion 顧客管理DB に会社の行が無ければ作り、「Company Database」を結ぶか「Salesforce Account ID」に取引先 ID（001 で始まる 18 桁）を入れてください。次の同期で自動的に取り込まれます。`);
+  else if(k==='stale') alert(`Salesforce の自動同期が ${Math.floor((Date.now()-new Date(SFSTAT.at).getTime())/3600e3)} 時間動いていません。\n「Salesforce から更新」を押すと今すぐ取り込めます。続くようなら管理者に知らせてください。`);
+  else alert('前回の Salesforce 同期が途中で失敗しました。「Salesforce から更新」を押してやり直してください。');
+}, true);
+
 /* 【移植による変更 9/9】Salesforce 取り込みボタンの受け口（2026-10-04）
    以前は企業詳細パネル（#dBody）の中にしか受け口が無く、**画面上部に置いた
    同じボタンが何も起きなかった**（Kubotie 指摘）。document で受ければ
@@ -3453,6 +3481,7 @@ document.getElementById('edForm').addEventListener('submit',async e=>{
   try{ db = window.claude&&window.claude.use ? await window.claude.use('db') : null; }catch(_){ db=null; }
   if(!db){dbState='off';renderSaveInfo();return;}
   dbState='on'; tgtRef=db.doc('settings/targets'); renderSaveInfo();
+  db.doc('settings/sfSync').onSnapshot(snap=>{ SFSTAT = snap.exists ? snap.data() : null; renderSfStat(); }, ()=>{});
   tgtRef.onSnapshot(snap=>{ if(snap.exists){applySettings(snap.data());renderAll();} renderSaveInfo(); },
     err=>{ if(err&&err.code==='revoked'){dbState='off';tgtRef=null;renderSaveInfo();} });
   db.collection('plans').onSnapshot(qs=>{

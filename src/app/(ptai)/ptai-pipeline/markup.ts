@@ -15,6 +15,8 @@ export const BOARD_HTML = `
              以前はサクセス面の「商談」見出しの中だけで、見つけられなかった。 -->
         <button type="button" class="adddeal" data-sfsync
           title="Salesforce の PtAI 商談をいますぐ取り込みます（通常は1時間おきに自動で入ります）">⟳ Salesforce から更新</button>
+        <!-- 【移植による変更】最後の同期の結果。未紐づけの商談・同期の失敗・停止を出す（2026-10-13） -->
+        <span class="sfstat" id="sfStat"></span>
       </div>
     </div>
     <nav class="views" id="views" aria-label="表示切替"></nav>

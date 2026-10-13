@@ -108,6 +108,18 @@ export async function getPtaiOpportunity(id: string): Promise<SfOpportunity | nu
   return rows.length ? toOpportunity(rows[0]) : null;
 }
 
+/** 取引先の名前。Notion 側に ID が無い会社を社名で拾うときだけ使う */
+export async function listAccountNames(ids: string[]): Promise<Array<{ id: string; name: string }>> {
+  const out: Array<{ id: string; name: string }> = [];
+  const valid = ids.filter(x => /^001[A-Za-z0-9]{12,15}$/.test(x));
+  for (let i = 0; i < valid.length; i += 150) {
+    const rows = await queryAll<{ Id: string; Name: string }>(
+      `SELECT Id, Name FROM Account WHERE Id IN (${valid.slice(i, i + 150).map(x => `'${x}'`).join(',')})`);
+    out.push(...rows.map(a => ({ id: a.Id, name: a.Name ?? '' })));
+  }
+  return out;
+}
+
 // ── 書き込み（双方向にした 3 項目だけ）──────────────────────────────────────
 //
 // ═══════════════════════════════════════════════════════════════════════════

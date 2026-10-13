@@ -12,11 +12,11 @@
 //
 // ログ: 件数だけ。顧客名・商談名は出さない。
 
-import { upsertByExternalId, listRecords, deleteRecord } from '../twenty-test/client';
+import { upsertByExternalId, listRecords, listByExternalPrefix, deleteRecord } from '../twenty-test/client';
 import { TEST_OBJECTS } from '../twenty-test/schema';
-import { listCustomers } from '../notion/client';
-import { OWNER_FROM_NOTION } from '../notion/schema';
-import { listPtaiOpportunities, isSalesforceConfigured } from './client';
+import { listCustomers, updateCustomerWithExtras } from '../notion/client';
+import { OWNER_FROM_NOTION, CUSTOMER_PROP } from '../notion/schema';
+import { listPtaiOpportunities, listAccountNames, isSalesforceConfigured } from './client';
 import { SF_TO_DASHBOARD_STAGE, SF_EDITABLE_KEYS, type SfEditableKey } from './schema';
 import type { ActorStamp } from '../staff';
 
@@ -81,10 +81,14 @@ export interface SyncResult {
   matched: number;
   created: number;
   updated: number;
+  /** 前回の写しと同じで、書き込まなかったもの */
+  unchanged: number;
   deleted: number;
+  /** 「Salesforce Account ID」が空だった会社に、ロールアップ／社名から ID を書き戻した数 */
+  linked: number;
   /** 取引先が無い／Notion に無い会社ぶん */
   skippedNoCompany: number;
-  /** 取り込めなかった商談の名前（最大 10。画面に出す用。ログには出さない） */
+  /** 取り込めなかった商談の名前（画面に出す用。ログには出さない） */
   skippedNames?: string[];
   /** 同じ取引先 ID の会社が複数あり、振り分けで 1 つ選んだ件数 */
   ambiguous?: number;
@@ -94,28 +98,76 @@ export interface SyncResult {
 }
 
 const EMPTY: SyncResult = {
-  ok: false, fetched: 0, matched: 0, created: 0, updated: 0,
-  deleted: 0, skippedNoCompany: 0, message: null,
+  ok: false, fetched: 0, matched: 0, created: 0, updated: 0, unchanged: 0,
+  deleted: 0, linked: 0, skippedNoCompany: 0, message: null,
 };
 
-/**
- * 最後に同期した時刻。`sf:` のレコードの updatedAt の最大値で測る。
- * 同期は毎回 update を打つので、これがそのまま「最後に走った時刻」になる。
- * 専用の保存先を作らずに済ませるための割り切り。
- */
+// ═══════════════════════════════════════════════════════════════════════════
+//  同期の結果を 1 行だけ残す（2026-10-13）
+//
+//  紐付かない商談が 14 件あっても、それを知らせるのは「更新」ボタンの alert
+//  だけで、Cron や画面を開いたときの自動同期では**誰にも見えないまま**毎日
+//  飛ばしていた（Baba 指摘）。Vercel Hobby はログが 1 時間で消えるので、
+//  自動同期が動いたかどうかも後から分からなかった。
+//  → 毎回の結果を testOperationLog の固定 externalId に上書きし、画面上部に出す。
+//    「最後に同期した時刻」もここで測る（以前は sf: 商談の updatedAt の最大値で、
+//    画面で商談を直しただけでも「同期済み」に見えていた）。
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const SYNC_STATUS_EXT = 'sys:sf-sync:status';
+
+export interface SyncStatus {
+  at: string;
+  ok: boolean;
+  /** 誰の操作で走ったか（batch＝Cron） */
+  by: string;
+  fetched: number; matched: number; created: number; updated: number;
+  unchanged: number; deleted: number; linked: number;
+  /** 取り込めなかった商談（全件） */
+  skipped: Array<{ opp: string; account: string | null }>;
+  ms: number;
+  error?: string;
+}
+
+async function writeSyncStatus(s: SyncStatus, actor: ActorStamp): Promise<void> {
+  try {
+    await upsertByExternalId(LOG.plural, LOG.singular, SYNC_STATUS_EXT, {
+      name: 'Salesforce 同期の結果', at: s.at, actor: actor.displayName || actor.name2,
+      action: 'sync', object: 'sfSync', recordId: 'status', field: 'status',
+      source: 'sync', message: JSON.stringify(s),
+    }, actor);
+  } catch { /* 残せなくても同期そのものは成立している */ }
+}
+
+export function parseSyncStatus(row: Record<string, unknown> | undefined): SyncStatus | null {
+  if (!row) return null;
+  try { return JSON.parse(String(row.message ?? '')) as SyncStatus; } catch { return null; }
+}
+
+/** 最後に同期を**やり終えた**時刻。失敗した回は数えない */
 export async function lastSyncedAt(): Promise<Date | null> {
   try {
-    const rows = await listRecords(OPP.plural, OPP.singular, { pageSize: 200, maxRecords: 2000 });
-    let max = 0;
-    for (const r of rows) {
-      if (!String(r.externalId ?? '').startsWith(SF_EXTERNAL_PREFIX)) continue;
-      const t = new Date(String(r.updatedAt ?? '')).getTime();
-      if (Number.isFinite(t) && t > max) max = t;
-    }
-    return max ? new Date(max) : null;
+    const rows = await listRecords(LOG.plural, LOG.singular,
+      { filter: `externalId[eq]:${SYNC_STATUS_EXT}`, pageSize: 2, maxRecords: 2 });
+    const s = parseSyncStatus(rows[0]);
+    return s?.ok && s.at ? new Date(s.at) : null;
   } catch {
     return null;
   }
+}
+
+/** 社名の突き合わせ用。法人格・空白・全半角の違いを無視する */
+const companyKey = (s: string): string =>
+  s.normalize('NFKC').replace(/株式会社|有限会社|合同会社|\(株\)|[\s・\-ー]/g, '').toLowerCase();
+
+/** 同時に投げる書き込みの数。Twenty は 1 件 0.5〜1 秒かかり、直列だと 71 件で 300 秒の上限に迫った */
+const CONCURRENCY = 5;
+
+async function eachLimited<T>(items: T[], n: number, fn: (x: T) => Promise<void>): Promise<void> {
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (i < items.length) await fn(items[i++]);
+  }));
 }
 
 /**
@@ -139,36 +191,112 @@ export async function syncSalesforceOpportunities(
     }
   }
 
-  const [opps, customers] = await Promise.all([
+  const startedAt = Date.now();
+  try {
+    const r = await runSync(actor, dryRun);
+    if (!dryRun) {
+      await writeSyncStatus({
+        at: new Date().toISOString(), ok: true, by: actor.name2,
+        fetched: r.fetched, matched: r.matched, created: r.created, updated: r.updated,
+        unchanged: r.unchanged, deleted: r.deleted, linked: r.linked,
+        skipped: r.skippedList, ms: Date.now() - startedAt,
+      }, actor);
+    }
+    const { skippedList: _, ...out } = r;
+    return out;
+  } catch (e) {
+    if (!dryRun) {
+      await writeSyncStatus({
+        at: new Date().toISOString(), ok: false, by: actor.name2,
+        fetched: 0, matched: 0, created: 0, updated: 0, unchanged: 0, deleted: 0, linked: 0,
+        skipped: [], ms: Date.now() - startedAt, error: (e as Error).name || 'Error',
+      }, actor);
+    }
+    throw e;
+  }
+}
+
+async function runSync(
+  actor: ActorStamp, dryRun: boolean,
+): Promise<SyncResult & { skippedList: SyncStatus['skipped'] }> {
+  const [opps, customers, oppRows, naRows] = await Promise.all([
     listPtaiOpportunities(),
     listCustomers({ maxPages: 20 }),
+    listRecords(OPP.plural, OPP.singular, { pageSize: 200, maxRecords: 2000 }),
+    listByExternalPrefix(ACT.plural, ACT.singular, SF_EXTERNAL_PREFIX),
   ]);
 
-  // Salesforce の Account ID → Notion のページ ID（同じ ID の行が複数ありうる）
-  const cidByAccount = new Map<string, Array<{ cid: string; owners: string[] }>>();
+  // ── 取引先 → Notion の会社 ──────────────────────────────────────────────
+  // 鍵は 3 段。上の段で付いた取引先には下の段を使わない。
+  //   1. 「Salesforce Account ID」（人が入れた列）
+  //   2. ` sf_company_id`（Company Database リレーション越しのロールアップ）
+  //   3. 社名の完全一致（法人格・空白を無視。1 社に絞れたときだけ）
+  // 2・3 で付いた会社は 1 の列に書き戻す。次回からは 1 で付く。
+  type Cand = { cid: string; owners: string[] };
+  const cidByAccount = new Map<string, Cand[]>();
+  const addCand = (acc: string, c: (typeof customers)[number]) => {
+    const list = cidByAccount.get(acc) ?? [];
+    if (!list.some(x => x.cid === c.pageId)) list.push({ cid: c.pageId, owners: c.owners3 });
+    cidByAccount.set(acc, list);
+  };
+  for (const c of customers) if (c.sfAccountId) addCand(c.sfAccountId, c);
+
+  const toLink = new Map<string, string>();   // cid → 書き戻す Account ID
+  const viaRollup = new Map<string, Array<(typeof customers)[number]>>();
   for (const c of customers) {
-    if (!c.sfAccountId) continue;
-    const list = cidByAccount.get(c.sfAccountId) ?? [];
-    list.push({ cid: c.pageId, owners: c.owners3 });
-    cidByAccount.set(c.sfAccountId, list);
+    if (c.sfAccountId) continue;
+    for (const acc of c.sfCompanyIds) {
+      if (cidByAccount.has(acc)) continue;
+      (viaRollup.get(acc) ?? viaRollup.set(acc, []).get(acc)!).push(c);
+    }
+  }
+  for (const [acc, cs] of viaRollup) {
+    for (const c of cs) addCand(acc, c);
+    if (cs.length === 1 && cs[0].sfCompanyIds.length === 1) toLink.set(cs[0].pageId, acc);
   }
 
-  // 送信できていない項目がある商談は、その項目だけ上書きしない。
-  // 先に 1 回だけ全件引いて控えておく（商談ごとに引くと件数ぶん往復する）
+  const unknownAccounts = [...new Set(opps.map(o => o.accountId).filter((a): a is string => !!a && !cidByAccount.has(a)))];
+  const accountName = new Map<string, string>();
+  if (unknownAccounts.length) {
+    try {
+      for (const a of await listAccountNames(unknownAccounts)) accountName.set(a.id, a.name);
+    } catch { /* 社名が引けなくても、付いたぶんは取り込む */ }
+    const byName = new Map<string, Array<(typeof customers)[number]>>();
+    for (const c of customers) {
+      if (c.sfAccountId) continue;
+      const k = companyKey(c.name);
+      if (k) (byName.get(k) ?? byName.set(k, []).get(k)!).push(c);
+    }
+    for (const acc of unknownAccounts) {
+      const hits = byName.get(companyKey(accountName.get(acc) ?? ''));
+      if (hits?.length !== 1) continue;
+      addCand(acc, hits[0]);
+      if (!toLink.has(hits[0].pageId)) toLink.set(hits[0].pageId, acc);
+    }
+  }
+
+  // ── いまの写し。1 回だけ全件引いて控える（商談ごとに引くと件数ぶん往復する）
   const pendingByExt = new Map<string, Set<SfEditableKey>>();
-  const idByExt      = new Map<string, string>();
   const rowByExt     = new Map<string, Record<string, unknown>>();
-  for (const row of await listRecords(OPP.plural, OPP.singular, { pageSize: 200, maxRecords: 2000 })) {
+  for (const row of oppRows) {
     const ext = String(row.externalId ?? '');
     if (!ext.startsWith(SF_EXTERNAL_PREFIX)) continue;
-    idByExt.set(ext, String(row.id));
     rowByExt.set(ext, row);
+    // 送信できていない項目がある商談は、その項目だけ上書きしない
     const p = parsePending(row.sfPending);
     if (p.size) pendingByExt.set(ext, p);
   }
+  const naByExt = new Map<string, Record<string, unknown>[]>();
+  for (const a of naRows) {
+    const ext = String(a.externalId ?? '');
+    if (ext.endsWith(':na')) (naByExt.get(ext) ?? naByExt.set(ext, []).get(ext)!).push(a);
+  }
 
-  const r: SyncResult = { ...EMPTY, ok: true, fetched: opps.length };
+  const r: SyncResult & { skippedList: SyncStatus['skipped'] } =
+    { ...EMPTY, ok: true, fetched: opps.length, skippedList: [] };
   const seen = new Set<string>();
+  const usedLinks = new Set<string>();
+  const work: Array<() => Promise<void>> = [];
 
   for (const o of opps) {
     const ext = `${SF_EXTERNAL_PREFIX}${o.id}`;
@@ -176,25 +304,19 @@ export async function syncSalesforceOpportunities(
     const hit = pickCompany(cands, String(rowByExt.get(ext)?.notionCompanyId ?? '') || null);
     if (!hit) {
       r.skippedNoCompany++;
-      // 画面に出すための名前（ログには出さない）
-      if ((r.skippedNames ??= []).length < 10) r.skippedNames.push(o.name);
+      r.skippedList.push({ opp: o.name, account: (o.accountId && accountName.get(o.accountId)) || null });
       continue;
     }
     if (cands.length > 1) r.ambiguous = (r.ambiguous ?? 0) + 1;
+    if (toLink.has(hit.cid)) usedLinks.add(hit.cid);
     r.matched++;
 
     seen.add(ext);
     if (dryRun) continue;
     const pend = pendingByExt.get(ext) ?? new Set<SfEditableKey>();
+    const before = rowByExt.get(ext);
 
-    const fields = {
-      stage:       SF_TO_DASHBOARD_STAGE[o.stage] ?? 'INACTIVE',
-      addMrr:      o.netMrr,
-      applyDate:   o.closeDate,
-      billingDate: o.billingDate,
-    };
-    const diff = syncChanges(rowByExt.get(ext), fields);
-    const res = await upsertByExternalId(OPP.plural, OPP.singular, ext, {
+    const rec: Record<string, unknown> = {
       name:            o.name,
       notionCompanyId: hit.cid,
       stage:           SF_TO_DASHBOARD_STAGE[o.stage] ?? 'INACTIVE',
@@ -215,33 +337,61 @@ export async function syncSalesforceOpportunities(
       owner:           ownerOf(hit.owners),
       // 画面で作った商談（main）とは別物として並べる
       isMain:          false,
-    }, actor);
-    res.created ? r.created++ : r.updated++;
-    for (const c of diff.slice(0, 4)) await logSyncChange(ext, hit.cid, c, actor);
+    };
 
-    // ネクストアクションは別レコード（testAction）。Salesforce の Next Action を写す
-    if (!pend.has('nextAction')) {
-      await syncNextAction(String(res.record.id), ext, hit.cid, o.nextAction, actor);
-    }
+    work.push(async () => {
+      // 前回の写しと同じなら書かない。以前は毎回全件を書き直していて、
+      // 71 件で 240〜290 秒かかり、関数の上限（300 秒）すれすれだった（2026-10-13）
+      let oppId = String(before?.id ?? '');
+      if (before && sameAs(before, rec)) {
+        r.unchanged++;
+      } else {
+        const res = await upsertByExternalId(OPP.plural, OPP.singular, ext, rec, actor);
+        oppId = String(res.record.id);
+        res.created ? r.created++ : r.updated++;
+        for (const c of syncChanges(before, rec).slice(0, 4)) await logSyncChange(ext, hit.cid, c, actor);
+      }
+      // ネクストアクションは別レコード（testAction）。Salesforce の Next Action を写す
+      if (!pend.has('nextAction')) {
+        await syncNextAction(oppId, ext, hit.cid, o.nextAction, naByExt.get(`${ext}:na`) ?? [], actor);
+      }
+    });
   }
 
-  // Salesforce から消えた（または PtAI でなくなった）ぶんを片付ける。
-  // **画面で作った商談（edits: 接頭辞）には触らない。**
   if (!dryRun) {
-    const all = await listRecords(OPP.plural, OPP.singular, { pageSize: 200, maxRecords: 2000 });
-    for (const row of all) {
-      const ext = String(row.externalId ?? '');
-      if (!ext.startsWith(SF_EXTERNAL_PREFIX) || seen.has(ext)) continue;
+    await eachLimited(work, CONCURRENCY, fn => fn());
+
+    // 2・3 段目で付いた会社は「Salesforce Account ID」に書き戻す。
+    // 商談が実際に付いた会社だけ（関係ない行まで触らない）
+    await eachLimited([...usedLinks], CONCURRENCY, async cid => {
+      try {
+        const u = await updateCustomerWithExtras(cid, {}, { [CUSTOMER_PROP.sfAccountId]: toLink.get(cid)! });
+        if (u.ok) r.linked++;
+      } catch { /* 書き戻せなくても、今回の取り込みは鍵 2・3 で済んでいる */ }
+    });
+
+    // Salesforce から消えた（または PtAI でなくなった）ぶんを片付ける。
+    // **画面で作った商談（edits: 接頭辞）には触らない。**
+    // 紐付かなかった商談も消さない（Notion 側の不備で写しが消えると戻すのが手間）
+    const skippedExt = new Set(opps.map(o => `${SF_EXTERNAL_PREFIX}${o.id}`));
+    for (const [ext, row] of rowByExt) {
+      if (seen.has(ext) || skippedExt.has(ext)) continue;
       await deleteRecord(OPP.plural, String(row.id));
       r.deleted++;
     }
   }
 
   if (r.skippedNoCompany) {
+    r.skippedNames = r.skippedList.map(s => s.opp);
     r.message = `${r.skippedNoCompany} 件は取引先が Notion 顧客管理DB に見つからず取り込めませんでした`
       + '（Notion の「Salesforce Account ID」に取引先 ID を入れると取り込まれます）';
   }
   return r;
+}
+
+/** 写しが今回の値と同じか。Twenty の返す形（日付は ISO、空は null/''）の揺れは norm で吸収する */
+function sameAs(before: Record<string, unknown>, rec: Record<string, unknown>): boolean {
+  return Object.entries(rec).every(([k, v]) => norm(before[k]) === norm(v));
 }
 
 /**
@@ -266,12 +416,14 @@ async function logSyncChange(
  * 空になったら消す。期日は Salesforce 側に項目が無いので触らない。
  */
 async function syncNextAction(
-  oppId: string, ext: string, cid: string, text: string | null, actor: ActorStamp,
+  oppId: string, ext: string, cid: string, text: string | null,
+  found: Record<string, unknown>[], actor: ActorStamp,
 ): Promise<void> {
   const naExt = `${ext}:na`;
-  const found = await listRecords(ACT.plural, ACT.singular,
-    { filter: `externalId[eq]:${naExt}`, pageSize: 2, maxRecords: 2 });
   if (text) {
+    // 同じ文面・同じ商談に付いていれば書かない
+    if (found.length === 1 && String(found[0].title ?? '') === text
+        && String(found[0].opportunityId ?? '') === oppId) return;
     await upsertByExternalId(ACT.plural, ACT.singular, naExt, {
       name: text, notionCompanyId: cid, opportunityId: oppId,
       kind: 'NEXT_ACTION', title: text, status: 'OPEN', source: 'ui',

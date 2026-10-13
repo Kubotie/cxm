@@ -705,6 +705,9 @@ button.chip.apr:focus-visible{outline:2px solid var(--accent)}
 .adddeal{font:inherit;font-size:11px;font-weight:500;padding:1px 8px;border-radius:999px;border:1px dashed var(--accent);background:transparent;color:var(--accent-ink);cursor:pointer;white-space:nowrap}
 .adddeal:hover{background:var(--accent-soft)}.adddeal:focus-visible{outline:2px solid var(--accent)}
 .deals td .adddeal{display:inline-flex;margin-top:4px}
+/* Salesforce 同期の状態（2026-10-13）。未紐づけ・失敗・停止のときだけ目立たせる */
+.sfstat{font-size:11px;color:var(--muted);white-space:nowrap}
+.sfstat .warn{font:inherit;font-size:11px;font-weight:600;margin-left:6px;padding:1px 8px;border-radius:999px;border:1px solid var(--warn);background:var(--warn-soft);color:var(--warn);cursor:pointer}
 .chip.dcnt{font-size:10.5px;padding:1px 7px}
 .deals .co .cmeta{display:flex;align-items:center;gap:6px;margin-top:4px;font-weight:400;white-space:nowrap}
 .deals .co .cmeta .cm{font-size:11px;color:var(--muted)}
