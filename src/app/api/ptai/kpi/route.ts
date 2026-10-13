@@ -98,6 +98,14 @@ export async function GET(req: NextRequest) {
       const rows = scopes.map(s => computeKpis(src.companies, {
         scope: s, targetMrr: s === 'team' ? src.targetMrr : (src.targets[s] ?? 0), today,
       }));
+      // 取りこぼしたまま返さない（export と同じ理由。数字が実態より小さく出る）
+      if (src.diagnostics.partialFailures.length) {
+        return NextResponse.json(
+          { ok: false, incomplete: true, date: today, rows, diagnostics: src.diagnostics,
+            message: '取得に失敗した部分があります。少し待って取り直してください' },
+          { status: 503, headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
       return NextResponse.json(
         { ok: true, live: true, date: today, targetDue: src.targetDue, rows, diagnostics: src.diagnostics },
         { headers: { 'Cache-Control': 'private, max-age=60' } },

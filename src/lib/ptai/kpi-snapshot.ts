@@ -21,7 +21,7 @@
 import { upsertByExternalId, listRecords } from './twenty-test/client';
 import { TEST_OBJECTS } from './twenty-test/schema';
 import { computeKpis, type KpiRow } from './kpi';
-import { loadKpiSource, MEMBERS } from './kpi-source';
+import { loadKpiSource, MEMBERS, type KpiSource } from './kpi-source';
 
 const OBJ = TEST_OBJECTS.kpiSnapshot;
 
@@ -34,6 +34,8 @@ export interface SnapshotResult {
   ok: boolean;
   /** その日のぶんが既にあったので何もしなかった */
   skipped?: boolean;
+  /** 取得に失敗した部分があるので書かなかった */
+  incomplete?: boolean;
   date: string;
   rows: KpiRow[];
   created: number;
@@ -43,7 +45,11 @@ export interface SnapshotResult {
 }
 
 export async function runKpiSnapshot(
-  opts: { date?: string; dryRun?: boolean; onlyIfMissing?: boolean } = {},
+  opts: {
+    date?: string; dryRun?: boolean; onlyIfMissing?: boolean;
+    /** 材料の取得元。テストで差し替えるためだけにある */
+    load?: () => Promise<KpiSource>;
+  } = {},
 ): Promise<SnapshotResult> {
   const date = opts.date ?? todayJst();
 
@@ -59,7 +65,19 @@ export async function runKpiSnapshot(
     }
   }
 
-  const src = await loadKpiSource();
+  const src = await (opts.load ?? loadKpiSource)();
+
+  // ⚠ 取りこぼしたまま書かない。Twenty のレート制限（429）に当たると
+  //   db-view は空のコレクションを返すので、そのまま計算すると
+  //   「商談ゼロ・パイプライン 0 円」が**その日の記録として永久に残る**。
+  //   過去の行は書き換えない方針なので、あとから直せない。
+  //   2026-10-13 に export で実際に起きた（testOpportunities:rate_limited）。
+  if (src.diagnostics.partialFailures.length) {
+    console.warn('[kpi-snapshot] 取得に失敗した部分があるので書きません',
+      JSON.stringify(src.diagnostics.partialFailures));
+    return { ok: false, incomplete: true, date, rows: [], created: 0, updated: 0, failed: 0,
+             diagnostics: src.diagnostics };
+  }
 
   const rows: KpiRow[] = [
     computeKpis(src.companies, { scope: 'team', targetMrr: src.targetMrr, today: date }),

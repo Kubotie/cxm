@@ -16,6 +16,7 @@
 //   cid       会社の Notion ページ ID
 //   q         社名の部分一致
 //   withDeals 1 を指定すると商談のある会社だけ
+//   allowPartial 1 で、取りこぼしがあっても 200 で返す（調査用）
 //
 // 返す中身には**顧客名・商談名・議事録の本文が入る**。ログには件数しか出さない。
 
@@ -56,7 +57,21 @@ export async function GET(req: NextRequest) {
       withDeals: q.get('withDeals') === '1',
     });
     // 件数だけ。顧客名は出さない
-    console.info('[ptai/export]', JSON.stringify({ include, ...(data.counts as object) }));
+    const partial = data.partialFailures as string[];
+    console.info('[ptai/export]', JSON.stringify(
+      { include, ...(data.counts as object), partialFailures: partial }));
+
+    // ⚠ 取りこぼしたまま 200 で返さない。Twenty のレート制限（429）に当たると
+    //   db-view は空のコレクションを返すので、「商談ゼロ」という**嘘の正常値**に
+    //   見えてしまう。2026-10-13 に実際に起きた（商談 71 件が 0 件になった）。
+    //   分析に使う API なので、間違った数字を返すより落ちたほうがよい。
+    if (partial.length && q.get('allowPartial') !== '1') {
+      return NextResponse.json(
+        { ...data, ok: false, incomplete: true,
+          message: '取得に失敗した部分があります。数字が実態より小さく出るので使わないでください。'
+                 + '少し待って取り直すか、allowPartial=1 で中身を確認してください' },
+        { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
     return NextResponse.json(data, {
       headers: { 'Cache-Control': 'private, max-age=60' },
     });

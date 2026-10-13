@@ -36,6 +36,13 @@ export async function GET(req: NextRequest) {
       ms: Date.now() - startedAt,
     };
     console.info('[batch/ptai-kpi-snapshot]', JSON.stringify(log));
+    // 取りこぼしたまま書いていない。Cron が失敗として見えるように 503 を返す
+    if (r.incomplete) {
+      return NextResponse.json(
+        { ok: false, incomplete: true, ...log,
+          message: '取得に失敗した部分があるので記録しませんでした。時間を置いて再実行してください' },
+        { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
     return NextResponse.json({ ok: r.ok, ...log, rows: r.rows },
       { headers: { 'Cache-Control': 'no-store' } });
   } catch (e) {

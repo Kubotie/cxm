@@ -130,3 +130,19 @@ test('フェーズは全部に表示名と社内の言い方の枠がある', as
   for (const i of DEFAULT_INCLUDES) assert.ok(INCLUDES.includes(i));
   assert.deepEqual(DEFAULT_INCLUDES, ['deals', 'kpi']);
 });
+
+test('取得に失敗した部分があるときはスナップショットを書かない', async () => {
+  const { runKpiSnapshot } = await import('../src/lib/ptai/kpi-snapshot.ts');
+  const src = {
+    companies: [co({ baseMrr: 1_000_000, aim: 500_000 })],
+    targetMrr: 40_000_000, targetDue: '2026-12', targets: { Paul: 0 },
+    diagnostics: { companies: 1, deals: 0, targetsFromNotion: true,
+                   partialFailures: ['testOpportunities:rate_limited'] },
+  };
+  // Twenty へは一切書かない（書きに行くとここで落ちる）
+  const r = await runKpiSnapshot({ date: '2026-10-13', load: async () => src });
+  assert.equal(r.ok, false);
+  assert.equal(r.incomplete, true);
+  assert.equal(r.created + r.updated, 0);
+  assert.deepEqual(r.rows, []);
+});
