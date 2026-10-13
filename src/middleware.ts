@@ -33,6 +33,11 @@ import { verifySession } from '@/lib/auth/session-token';
 const API_ALLOWLIST: readonly string[] = [
   '/api/auth/',
   '/api/batch/',
+  // PtAI の KPI。**ルート側で自分で認証する。**
+  //   GET  … セッション Cookie、または Bearer SUPPORT_BATCH_SECRET
+  //          （BI・スクリプトから定期的に引けるようにするため）
+  //   POST … セッション Cookie のみ
+  '/api/ptai/kpi',
 ];
 
 /** 未ログインでも開けるページ */

@@ -11,10 +11,15 @@
 //   days    from の代わりに日数で指定
 //
 // 返す中身は集計値（金額・件数）だけ。会社名・商談名は含めない。
-// 認証は画面と同じセッション Cookie。
+//
+// 認証（GET）
+//   画面から      … セッション Cookie
+//   BI・スクリプト… `Authorization: Bearer $SUPPORT_BATCH_SECRET`
+//                   （他のバッチ API と同じ鍵。middleware の allowlist 入り）
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserUidFromCookie } from '@/lib/auth/session';
+import { checkBatchAuth } from '@/lib/batch/auth';
 import { listSnapshots, withDeltas, todayJst, runKpiSnapshot } from '@/lib/ptai/kpi-snapshot';
 import { computeKpis } from '@/lib/ptai/kpi';
 import { loadKpiSource, MEMBERS } from '@/lib/ptai/kpi-source';
@@ -23,6 +28,21 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 const SCOPES = ['team', ...MEMBERS];
+
+/**
+ * GET の認証。middleware の allowlist に入れてあるので、ここで自分で見る。
+ *
+ *   Authorization ヘッダーがある … SUPPORT_BATCH_SECRET と照合（BI・スクリプト用）
+ *   無い                         … セッション Cookie（画面・ブラウザから）
+ *
+ * 書き込みはしないので、Cron 用の CRON_SECRET は受け付けない
+ * （用途ごとに鍵を分けておく）。
+ */
+async function allowRead(req: NextRequest): Promise<NextResponse | null> {
+  if (req.headers.get('Authorization')) return checkBatchAuth(req);
+  if (await getUserUidFromCookie()) return null;
+  return NextResponse.json({ error: 'unauthenticated', message: 'ログインが必要です' }, { status: 401 });
+}
 
 /**
  * POST — その日のぶんがまだ無ければ記録する。画面を開いたときに呼ぶ。
@@ -52,9 +72,8 @@ export async function POST() {
 }
 
 export async function GET(req: NextRequest) {
-  if (!(await getUserUidFromCookie())) {
-    return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });
-  }
+  const denied = await allowRead(req);
+  if (denied) return denied;
 
   const q = new URL(req.url).searchParams;
   const scope = q.get('scope') ?? 'team';
