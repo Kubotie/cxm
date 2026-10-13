@@ -64,6 +64,11 @@ export const CUSTOMER_PROP = {
    * （2026-10-13 Baba 指摘、14 件）、Salesforce 同期はこちらも鍵として使う。
    */
   sfCompanyIds: ' sf_company_id',
+  /**
+   * 代理店経由の商談のときの代理店（select）。Salesforce では取引先が代理店になり、
+   * 実際の顧客は商談名にしか出てこない。同期はこれと商談名で顧客を決める（2026-10-13）
+   */
+  agency:       '代理店(代理店経由の場合)',
   name:           '企業名',                            // title
   tier:            'Tier',                              // select
   industry:        '業種',                              // select

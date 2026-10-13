@@ -241,7 +241,7 @@ document.addEventListener('click', function(e){
   const b = e.target.closest && e.target.closest('[data-sfstat]'); if(!b || !SFSTAT) return;
   e.stopPropagation(); e.preventDefault();
   const k = b.getAttribute('data-sfstat');
-  if(k==='skip') alert(`次の商談は、取引先が Notion 顧客管理DB の会社と結び付かず取り込めていません。\n\n${(SFSTAT.skipped||[]).map(x=>'・'+x.opp+(x.account?`（取引先: ${x.account}）`:'')).join('\n')}\n\nNotion 顧客管理DB に会社の行が無ければ作り、「Company Database」を結ぶか「Salesforce Account ID」に取引先 ID（001 で始まる 18 桁）を入れてください。次の同期で自動的に取り込まれます。`);
+  if(k==='skip') alert(`次の商談は、取引先が Notion 顧客管理DB の会社と結び付かず取り込めていません。\n\n${(SFSTAT.skipped||[]).map(x=>'・'+x.opp+(x.account?`（取引先: ${x.account}）`:'')).join('\n')}\n\nNotion 顧客管理DB に会社の行が無ければ作り、「Company Database」を結ぶか「Salesforce Account ID」に取引先 ID（001 で始まる 18 桁）を入れてください。取引先が代理店の商談は、顧客の行の「代理店(代理店経由の場合)」にその代理店を設定してください（商談名に入っている企業名で顧客を探します）。次の同期で自動的に取り込まれます。`);
   else if(k==='stale') alert(`Salesforce の自動同期が ${Math.floor((Date.now()-new Date(SFSTAT.at).getTime())/3600e3)} 時間動いていません。\n「Salesforce から更新」を押すと今すぐ取り込めます。続くようなら管理者に知らせてください。`);
   else alert('前回の Salesforce 同期が途中で失敗しました。「Salesforce から更新」を押してやり直してください。');
 }, true);

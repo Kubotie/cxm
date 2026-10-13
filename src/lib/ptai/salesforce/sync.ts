@@ -255,24 +255,39 @@ async function runSync(
     if (cs.length === 1 && cs[0].sfCompanyIds.length === 1) toLink.set(cs[0].pageId, acc);
   }
 
-  const unknownAccounts = [...new Set(opps.map(o => o.accountId).filter((a): a is string => !!a && !cidByAccount.has(a)))];
+  // 取引先の名前。代理店かどうかの判定と、3 段目（社名）に使う
   const accountName = new Map<string, string>();
-  if (unknownAccounts.length) {
-    try {
-      for (const a of await listAccountNames(unknownAccounts)) accountName.set(a.id, a.name);
-    } catch { /* 社名が引けなくても、付いたぶんは取り込む */ }
-    const byName = new Map<string, Array<(typeof customers)[number]>>();
-    for (const c of customers) {
-      if (c.sfAccountId) continue;
-      const k = companyKey(c.name);
-      if (k) (byName.get(k) ?? byName.set(k, []).get(k)!).push(c);
-    }
-    for (const acc of unknownAccounts) {
-      const hits = byName.get(companyKey(accountName.get(acc) ?? ''));
-      if (hits?.length !== 1) continue;
-      addCand(acc, hits[0]);
-      if (!toLink.has(hits[0].pageId)) toLink.set(hits[0].pageId, acc);
-    }
+  const accountIds = [...new Set(opps.map(o => o.accountId).filter((a): a is string => !!a))];
+  try {
+    for (const a of await listAccountNames(accountIds)) accountName.set(a.id, a.name);
+  } catch { /* 社名が引けなくても、ID で付いたぶんは取り込む */ }
+
+  // ── 代理店経由の商談（2026-10-13）
+  // Salesforce では取引先が代理店になり、実際の顧客は商談名にしか出てこない
+  // （例: 「【Upsell｜PTAI】<代理店>_<顧客>_<日付>」）。取引先 ID で付けると
+  // 代理店の商談が全部 1 社に寄るので、取引先が顧客管理DB の「代理店」に出てくる
+  // 会社なら、その代理店が付いた行のうち**企業名が商談名に含まれる 1 行**に付ける。
+  const agencyKey = (s: string) => companyKey(s.replace(/[（(][^）)]*[）)]/g, ''));
+  const rowsByAgency = new Map<string, Array<(typeof customers)[number]>>();
+  for (const c of customers) {
+    const k = c.agency ? agencyKey(c.agency) : '';
+    if (k) (rowsByAgency.get(k) ?? rowsByAgency.set(k, []).get(k)!).push(c);
+  }
+  const agencyRowsOf = (acc: string | null) =>
+    acc ? rowsByAgency.get(agencyKey(accountName.get(acc) ?? '')) : undefined;
+
+  const unknownAccounts = accountIds.filter(a => !cidByAccount.has(a) && !agencyRowsOf(a));
+  const byName = new Map<string, Array<(typeof customers)[number]>>();
+  for (const c of customers) {
+    if (c.sfAccountId) continue;
+    const k = companyKey(c.name);
+    if (k) (byName.get(k) ?? byName.set(k, []).get(k)!).push(c);
+  }
+  for (const acc of unknownAccounts) {
+    const hits = byName.get(companyKey(accountName.get(acc) ?? ''));
+    if (hits?.length !== 1) continue;
+    addCand(acc, hits[0]);
+    if (!toLink.has(hits[0].pageId)) toLink.set(hits[0].pageId, acc);
   }
 
   // ── いまの写し。1 回だけ全件引いて控える（商談ごとに引くと件数ぶん往復する）
@@ -300,7 +315,15 @@ async function runSync(
 
   for (const o of opps) {
     const ext = `${SF_EXTERNAL_PREFIX}${o.id}`;
-    const cands = o.accountId ? cidByAccount.get(o.accountId) ?? [] : [];
+    // 代理店経由なら商談名で顧客を決める。1 行に絞れなければ取引先 ID の付け方に戻す
+    // （代理店そのものが顧客として行を持っている場合）
+    const dealKey = companyKey(o.name);
+    const viaAgency = (agencyRowsOf(o.accountId) ?? [])
+      .filter(c => { const k = companyKey(c.name); return !!k && dealKey.includes(k); });
+    const byAgency = viaAgency.length === 1;
+    const cands = byAgency
+      ? [{ cid: viaAgency[0].pageId, owners: viaAgency[0].owners3 }]
+      : o.accountId ? cidByAccount.get(o.accountId) ?? [] : [];
     const hit = pickCompany(cands, String(rowByExt.get(ext)?.notionCompanyId ?? '') || null);
     if (!hit) {
       r.skippedNoCompany++;
@@ -308,7 +331,7 @@ async function runSync(
       continue;
     }
     if (cands.length > 1) r.ambiguous = (r.ambiguous ?? 0) + 1;
-    if (toLink.has(hit.cid)) usedLinks.add(hit.cid);
+    if (!byAgency && toLink.has(hit.cid)) usedLinks.add(hit.cid);
     r.matched++;
 
     seen.add(ext);

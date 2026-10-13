@@ -206,6 +206,8 @@ export interface NotionCustomer {
   sfAccountId:    string | null;
   /** Company Database 越しの Salesforce Account ID（ロールアップ）。手入力の sfAccountId が空でも入っていることが多い */
   sfCompanyIds:   string[];
+  /** 代理店経由の商談のときの代理店名。直販なら null */
+  agency:         string | null;
   /** キー日程（§9-4 で Notion に置くと決定）。月で持つ。日付ではない */
   keyDates:       KeyDates;
 }
@@ -247,6 +249,7 @@ function toCustomer(page: Record<string, unknown>): NotionCustomer {
     companyRelation: (r(CUSTOMER_PROP.companyDatabase) as string[] | null) ?? [],
     sfAccountId:     ((r(CUSTOMER_PROP.sfAccountId) as string | null) ?? '').trim() || null,
     sfCompanyIds:    rollupTexts(props, CUSTOMER_PROP.sfCompanyIds),
+    agency:          (r(CUSTOMER_PROP.agency) as string | null) || null,
     keyDates: {
       fiscalMonth:  parseMonth(r(CUSTOMER_PROP.fiscalMonth) as string | null),
       budgetMonths: parseMonthRange(r(CUSTOMER_PROP.budgetMonths) as string | null),
