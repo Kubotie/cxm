@@ -146,3 +146,19 @@ test('取得に失敗した部分があるときはスナップショットを�
   assert.equal(r.created + r.updated, 0);
   assert.deepEqual(r.rows, []);
 });
+
+test('ログインの表記ゆれを画面の担当者名に揃える', async () => {
+  const { toPtaiName2 } = await import('../src/lib/ptai/staff.ts');
+  // 操作ログの `by` はログインの表記で入る。揃えないと本人の操作が
+  // 担当者に紐づかず「前進 0 件」に見える（2026-10-13 に実データで気づいた）
+  assert.equal(toPtaiName2('Eri Kitada'), 'Eri');
+  assert.equal(toPtaiName2('Omori Aoi'),  'Ava');
+  assert.equal(toPtaiName2('BB'),         'Baba');
+  assert.equal(toPtaiName2('Paul'),       'Paul');
+});
+
+test('Salesforce は人ではないので、会社の担当者に読み替える', async () => {
+  const { SYSTEM_ACTORS } = await import('../src/lib/ptai/export.ts');
+  assert.ok(SYSTEM_ACTORS.has('Salesforce'));
+  assert.ok(!SYSTEM_ACTORS.has('Paul'));
+});

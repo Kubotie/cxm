@@ -19,6 +19,12 @@
 //   allowPartial 1 で、取りこぼしがあっても 200 で返す（調査用）
 //
 // 返す中身には**顧客名・商談名・議事録の本文が入る**。ログには件数しか出さない。
+//
+// ── 進捗と失注について ──────────────────────────────────────────────────────
+//   progress … 誰がどれだけ動かしたか。self（画面での操作）と
+//              viaSalesforce（Salesforce 側の変更を会社の担当者に割り当てた**推定**）
+//              を分けてある。**面談・メール・電話は含まない**ので稼働量ではない
+//   lost     … 失注した商談。detail は Salesforce の失注理由詳細から入る
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePtaiRead } from '@/lib/ptai/read-auth';

@@ -21,6 +21,7 @@ import {
   FORECAST, m2, m3, wonAmt, atLeast, rung, planOf, computeKpis, type KpiCompany, type KpiDeal,
 } from './kpi';
 import { MEMBERS } from './kpi-source';
+import { toPtaiName2 } from './staff';
 import { todayJst } from './kpi-snapshot';
 
 /** 画面のフェーズ名（社内の言い方）。board.js の PH_JA と同じ */
@@ -51,6 +52,13 @@ export interface ExportFilter {
   /** 商談のある会社だけ */
   withDeals?: boolean;
 }
+
+/**
+ * 画面に出ない実行者。**人ではない**ので、この名前が出たら担当者に読み替える。
+ * Salesforce 側でフェーズを動かすと、誰が動かしたかはこちらに残らない
+ * （Salesforce の OwnerId は社内ユーザーの体系が別で、画面の担当者と対応しない）。
+ */
+export const SYSTEM_ACTORS = new Set(['Salesforce', 'batch', 'バッチ実行', 'system']);
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -98,6 +106,10 @@ export async function buildExport(f: ExportFilter = {}) {
           termMonths:  x.term ?? null,
           barrier:     str(x.barrier) || null,
           need:        str(x.need)    || null,
+          /** 失注理由（画面の選択肢）。2026-10-13 時点では誰も使っていない */
+          lostReason:  str(x.lostReason) || null,
+          /** 失注理由の詳細。**Salesforce の Dead_Detail_Reason__c から入る** */
+          lostDetail:  str(x.lostDetail) || null,
           nextAction:     str(x.na)   || null,
           nextActionDate: naDate,
           /** ネクストアクションの期日が過ぎている */
@@ -195,6 +207,145 @@ export async function buildExport(f: ExportFilter = {}) {
     ...MEMBERS.map(m => computeKpis(kpiCos, { scope: m, targetMrr: num(targets[m]), today })),
   ];
 
+  // ── 操作ログに担当者を紐づける ────────────────────────────────────────────
+  //   `by` が「Salesforce」の行は、Salesforce 側で動かされたもので実行者が残らない。
+  //   会社の担当者（Notion 顧客管理DB の担当3）で読み替える。
+  //   **推定なので取り違えない**ように、どちらなのかを actorKind に必ず入れる。
+  const ownersByCid = new Map<string, string[]>(
+    companies.map(c => [String(c.cid), (c.owners as string[]) ?? []]));
+  const attribute = (by: string | null, cid: string | null) => {
+    const owners = (cid && ownersByCid.get(cid)) || [];
+    const person = !!by && !SYSTEM_ACTORS.has(by);
+    // ログインの表記（Eri Kitada / Omori Aoi / BB）を画面の担当者名へ揃える。
+    // 揃えないと本人の操作が担当者に紐づかない
+    return {
+      actorKind: person ? 'person' : 'system',
+      /** 誰の動きとして数えるか。person ならその人、system なら会社の担当者 */
+      attributedTo: person ? [toPtaiName2(by!)] : owners,
+      owners,
+    };
+  };
+  const opLog: Array<Record<string, unknown>> = (db.collections.feed ?? [])
+    .map((r): Record<string, unknown> => {
+      const f = r.data as Record<string, unknown>;
+      return { ...f, ...attribute(str(f.by) || null, str(f.cid) || null) };
+    })
+    .sort((a, b) => str(a.at) < str(b.at) ? -1 : 1);
+
+  // ── 商談ごとのフェーズ履歴 ────────────────────────────────────────────────
+  //   フェーズ変更は商談の経過ログ（testActivity）ではなく操作ログに残る。
+  //   商談の鍵で突き合わせて、商談の下にぶら下げる。
+  if (inc.has('logs')) {
+    const phByKey = new Map<string, unknown[]>();
+    for (const f of opLog) {
+      if (f.kind !== 'ph' || !f.key) continue;
+      const k = `${f.cid}|${f.key}`;
+      (phByKey.get(k) ?? phByKey.set(k, []).get(k)!).push(
+        { at: f.at, from: f.from, to: f.to, by: f.by,
+          actorKind: f.actorKind, attributedTo: f.attributedTo });
+    }
+    for (const c of companies) {
+      for (const d of (arr(c.deals) as Array<Record<string, unknown>>)) {
+        d.stageHistory = phByKey.get(`${c.cid}|${d.key}`) ?? [];
+      }
+    }
+  }
+
+  // ── 進捗（誰がどれだけ動かしたか）─────────────────────────────────────────
+  //   ⚠ これは**ダッシュボードと Salesforce に残った記録の数**であって、
+  //     面談・メール・電話の量ではない。稼働量として読まないこと。
+  const since = opLog.length ? str(opLog[0].at).slice(0, 10) : null;
+  const tally = () => ({ stageUp: 0, stageDown: 0, lost: 0, won: 0, records: 0 });
+  const blank = () => ({ self: tally(), viaSalesforce: tally(), days: new Set<string>() });
+  const per = new Map<string, ReturnType<typeof blank>>();
+  /**
+   * 操作ログのフェーズ名は 2 通り混ざっている。
+   *   画面から … 表示名（'Active' / 'Qualified Champion'）
+   *   Salesforce から … そのままの値（'ACTIVE' / 'QUALIFIED_CHAMPION'）
+   * どちらでも並び順を引けるようにする。揃えないと画面の操作が
+   * 「前進 0 件」に見える（2026-10-13 に実データで気づいた）。
+   */
+  const BY_LABEL = new Map<string, Stage>(STAGES.map(s2 => [STAGE_JP[s2].toLowerCase(), s2]));
+  const rank = (v: unknown) => {
+    const k = str(v).trim();
+    if (!k) return -1;
+    const i = STAGES.indexOf(k as Stage);
+    if (i >= 0) return i;
+    const byLabel = BY_LABEL.get(k.toLowerCase());
+    return byLabel ? STAGES.indexOf(byLabel) : -1;
+  };
+  /** 'Close Lost' でも 'CLOSED_LOST' でも同じ鍵にする */
+  const stageKey = (v: unknown): string => {
+    const i = rank(v);
+    return i >= 0 ? STAGES[i] : str(v);
+  };
+  for (const f of opLog) {
+    const who = f.attributedTo as string[];
+    if (!who.length) continue;
+    const self = f.actorKind === 'person';
+    for (const m of who) {
+      const v = per.get(m) ?? per.set(m, blank()).get(m)!;
+      const t = self ? v.self : v.viaSalesforce;
+      t.records++;
+      // 稼働日は**本人の操作だけ**。Salesforce の取り込み日は本人が動いた日ではない
+      if (self && str(f.at)) v.days.add(str(f.at).slice(0, 10));
+      if (f.kind !== 'ph') continue;
+      const to = stageKey(f.to);
+      if (to === 'CLOSED_LOST' || to === 'ADMIN_CLOSE') t.lost++;
+      else if (to === 'WON' || to === 'CLOSED_WON') t.won++;
+      else if (rank(f.to) > rank(f.from)) t.stageUp++;
+      else if (rank(f.to) >= 0 && rank(f.from) >= 0) t.stageDown++;
+    }
+  }
+  const sum = (k: keyof ReturnType<typeof tally>, v: ReturnType<typeof blank>) =>
+    v.self[k] + v.viaSalesforce[k];
+  const progress = MEMBERS.map(m => {
+    const v = per.get(m) ?? blank();
+    return {
+      member: m,
+      stageUp: sum('stageUp', v), stageDown: sum('stageDown', v),
+      lost: sum('lost', v), won: sum('won', v), records: sum('records', v),
+      /** 本人が画面で操作した日数。Salesforce 由来は数えない */
+      activeDays: v.days.size,
+      /** 画面で本人が動かしたぶん */
+      self: v.self,
+      /** Salesforce 側で動いたぶん（**実行者は不明。会社の担当者に割り当てた推定**） */
+      viaSalesforce: v.viaSalesforce,
+    };
+  });
+
+  // Salesforce 由来の変更が固まって並んでいる＝1 回の取り込み。
+  // 「その日に起きたこと」ではなく「その取り込みで気づいたこと」なので、
+  // 日付をそのまま営業活動の日として読むと誤る。固まりの切れ目を出しておく。
+  const syncRuns: Array<{ at: string; changes: number }> = [];
+  for (const f of opLog) {
+    if (f.actorKind !== 'system') continue;
+    const at = str(f.at);
+    const last = syncRuns[syncRuns.length - 1];
+    // 10 分以内に続いたものは同じ取り込みとみなす
+    if (last && Date.parse(at) - Date.parse(last.at) < 10 * 60_000) { last.changes++; continue; }
+    syncRuns.push({ at, changes: 1 });
+  }
+
+  // ── 失注 ──────────────────────────────────────────────────────────────────
+  const lostDeals = rows.flatMap(c => dealsOf(c)
+    .filter(d => d.stage === 'CLOSED_LOST' || d.stage === 'ADMIN_CLOSE')
+    .map(d => ({
+      cid: c.cid, company: c.name, owners: c.owners,
+      key: d.key, name: d.name, stage: d.stage,
+      addMrr: d.addMrr, reason: d.lostReason, detail: d.lostDetail,
+      barrier: d.barrier, updatedAt: d.updatedAt,
+      /** 失注する直前に到達していたフェーズ。履歴が無ければ null */
+      reachedStage: null as string | null,
+    })));
+  for (const l of lostDeals) {
+    const hist = (opLog.filter(f => f.kind === 'ph' && f.cid === l.cid && f.key === l.key));
+    const last = [...hist].reverse().find(
+      f => stageKey(f.to) !== 'CLOSED_LOST' && stageKey(f.to) !== 'ADMIN_CLOSE');
+    l.reachedStage = last ? stageKey(last.to)
+      : (hist.length ? stageKey(hist[hist.length - 1].from) : null);
+  }
+
   const result: Record<string, unknown> = {
     ok: true,
     generatedAt: new Date().toISOString(),
@@ -206,6 +357,23 @@ export async function buildExport(f: ExportFilter = {}) {
     members: MEMBERS,
     stages: STAGES.map(s => ({ key: s, label: STAGE_JP[s], note: STAGE_NOTE[s] || null, forecast: FORECAST[s] ?? 0 })),
     totals,
+    /** 誰がどれだけ動かしたか。**記録の数であって稼働量ではない** */
+    progress: { since, until: today,
+      note:
+        'ダッシュボードと Salesforce に残った記録の数。面談・メール・電話は含まない。'
+        + 'self は本人が画面で操作したぶん。viaSalesforce は Salesforce 側で動いたぶんで、'
+        + '**実行者が記録に残らないため会社の担当者に割り当てた推定**。'
+        + 'viaSalesforce の日付は取り込みで気づいた日であって、Salesforce で変わった日ではない。'
+        + '同じ時刻に固まっているものは 1 回の取り込み（syncRuns を参照）。'
+        + 'とくに最初の取り込みは、それまでの推定値を Salesforce の実態に合わせ直しただけで、'
+        + 'その日に商談が動いたわけではない',
+      byMember: progress,
+      /** Salesforce からの取り込みの切れ目。まとまって動いているのはこのため */
+      syncRuns },
+    /** 失注した商談。reason は画面の選択肢、detail は Salesforce の失注理由詳細 */
+    lost: { count: lostDeals.length,
+            addMrr: lostDeals.reduce((t, l) => t + num(l.addMrr), 0),
+            deals: lostDeals },
     counts: {
       companies: rows.length,
       deals: rows.reduce((s, c) => s + dealsOf(c).length, 0),
@@ -214,7 +382,7 @@ export async function buildExport(f: ExportFilter = {}) {
     companies: rows,
     partialFailures: [...raw.diagnostics.partialFailures, ...db.diagnostics.partialFailures],
   };
-  if (inc.has('feed')) result.operationLog = (db.collections.feed ?? []).map(r => r.data);
+  if (inc.has('feed')) result.operationLog = opLog;
   return result;
 }
 
