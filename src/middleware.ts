@@ -48,6 +48,13 @@ const PUBLIC_PAGES: readonly string[] = [
   '/login',
 ];
 
+/** トークン（PTAI_READ_TOKEN）で読めるもの。道に迷った人への案内に使う */
+const TOKEN_READABLE = [
+  'GET /api/ptai/export?include=all — 会社・商談・障壁・ネクストアクション・進捗・失注',
+  'GET /api/ptai/kpi?scope=team&days=30 — 上部 8 指標の推移と前日差分',
+  'GET /api/ptai/kpi?live=1 — いまの値',
+];
+
 function isAllowlistedApi(pathname: string): boolean {
   return API_ALLOWLIST.some(prefix => pathname.startsWith(prefix));
 }
@@ -63,6 +70,18 @@ export async function middleware(req: NextRequest) {
     if (isAllowlistedApi(pathname)) return NextResponse.next();
     if (session.ok) return NextResponse.next();
 
+    // Bearer を付けて来たのに allowlist 外 → **パスを間違えている**。
+    // 「ログインが必要です」とだけ返すと、鍵が悪いのかパスが悪いのか分からず
+    // エンドポイントを当てずっぽうで探すことになる（2026-10-13 に実際に起きた）。
+    // パス自体は秘密ではない（正しい鍵が無ければ通らない）ので、案内を出す。
+    if (req.headers.get('Authorization')) {
+      return NextResponse.json(
+        { error: 'unknown_endpoint',
+          message: 'このパスはトークンでは読めません。読み取り用は下記のみです',
+          endpoints: TOKEN_READABLE },
+        { status: 401, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
     // リダイレクトしない。fetch() が HTML を受け取らないよう JSON で返す
     return NextResponse.json(
       { error: 'unauthenticated', message: 'ログインが必要です' },
