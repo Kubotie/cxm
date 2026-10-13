@@ -14,12 +14,14 @@
 //
 // 認証（GET）
 //   画面から      … セッション Cookie
-//   BI・スクリプト… `Authorization: Bearer $SUPPORT_BATCH_SECRET`
-//                   （他のバッチ API と同じ鍵。middleware の allowlist 入り）
+//   BI・スクリプト… `Authorization: Bearer $PTAI_READ_TOKEN`（読み取り専用の鍵）
+//                   運用用の SUPPORT_BATCH_SECRET でも通る
+//   middleware の allowlist に入れてあるので、ルート側で自分で見る
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getUserUidFromCookie } from '@/lib/auth/session';
 import { checkBatchAuth } from '@/lib/batch/auth';
+import { requirePtaiRead } from '@/lib/ptai/read-auth';
 import { listSnapshots, withDeltas, todayJst, runKpiSnapshot } from '@/lib/ptai/kpi-snapshot';
 import { computeKpis } from '@/lib/ptai/kpi';
 import { loadKpiSource, MEMBERS } from '@/lib/ptai/kpi-source';
@@ -32,16 +34,20 @@ const SCOPES = ['team', ...MEMBERS];
 /**
  * GET の認証。middleware の allowlist に入れてあるので、ここで自分で見る。
  *
- *   Authorization ヘッダーがある … SUPPORT_BATCH_SECRET と照合（BI・スクリプト用）
+ *   Authorization ヘッダーがある … PTAI_READ_TOKEN（読み取り専用）、
+ *                                  駄目なら SUPPORT_BATCH_SECRET（運用用）
  *   無い                         … セッション Cookie（画面・ブラウザから）
  *
  * 書き込みはしないので、Cron 用の CRON_SECRET は受け付けない
  * （用途ごとに鍵を分けておく）。
  */
 async function allowRead(req: NextRequest): Promise<NextResponse | null> {
+  // 読み取り専用の鍵（PTAI_READ_TOKEN）か、セッション Cookie。
+  // それで駄目なら、運用用の SUPPORT_BATCH_SECRET でも通す（上位互換）
+  const first = await requirePtaiRead(req);
+  if (!first) return null;
   if (req.headers.get('Authorization')) return checkBatchAuth(req);
-  if (await getUserUidFromCookie()) return null;
-  return NextResponse.json({ error: 'unauthenticated', message: 'ログインが必要です' }, { status: 401 });
+  return first;
 }
 
 /**

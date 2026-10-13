@@ -38,6 +38,9 @@ const API_ALLOWLIST: readonly string[] = [
   //          （BI・スクリプトから定期的に引けるようにするため）
   //   POST … セッション Cookie のみ
   '/api/ptai/kpi',
+  // PtAI の全データ（読み取り専用）。ルート側で PTAI_READ_TOKEN か
+  // セッション Cookie を見る。GET しか生やさない
+  '/api/ptai/export',
 ];
 
 /** 未ログインでも開けるページ */

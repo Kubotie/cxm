@@ -115,3 +115,18 @@ test('スナップショットの日付は JST', () => {
   assert.equal(todayJst(new Date('2026-10-12T23:00:00Z')), '2026-10-13');
   assert.equal(todayJst(new Date('2026-10-13T14:59:00Z')), '2026-10-13');
 });
+
+// ── 全データ書き出し（/api/ptai/export）────────────────────────────────────
+
+test('フェーズは全部に表示名と社内の言い方の枠がある', async () => {
+  const { STAGE_NOTE, INCLUDES, DEFAULT_INCLUDES } = await import('../src/lib/ptai/export.ts');
+  const { STAGES, STAGE_JP } = await import('../src/lib/ptai/twenty-test/schema.ts');
+  for (const s of STAGES) {
+    assert.ok(STAGE_JP[s], `${s} の表示名が無い`);
+    assert.ok(s in STAGE_NOTE, `${s} が STAGE_NOTE に無い`);
+    assert.ok(s in FORECAST, `${s} が FORECAST に無い`);
+  }
+  // 既定は INCLUDES の部分集合。重いものを既定に入れない
+  for (const i of DEFAULT_INCLUDES) assert.ok(INCLUDES.includes(i));
+  assert.deepEqual(DEFAULT_INCLUDES, ['deals', 'kpi']);
+});
