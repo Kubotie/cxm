@@ -21,20 +21,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { checkCronOrBatchAuth } from '@/lib/batch/auth';
-import { nocoFetch, TABLE_IDS } from '@/lib/nocodb/client';
+import { TABLE_IDS } from '@/lib/nocodb/client';
 import { runChurnVoice } from '@/lib/churn/voice-run';
+// 走査と同じ母集団を見る。片方だけ広げると、言質の立たない企業が混ざって判定が歪む
+import { fetchRadarTargetUids } from '@/lib/churn/radar-input';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
-
-async function tierTargets(): Promise<string[]> {
-  const rows = await nocoFetch<{ company_uid?: string | null }>(TABLE_IDS.companies, {
-    where:  '(status,eq,active)~and(tier,in,1,2)',
-    fields: 'company_uid',
-    limit:  '500',
-  }, false).catch(() => []);
-  return rows.map(r => r.company_uid?.trim()).filter((u): u is string => !!u);
-}
 
 async function handle(req: NextRequest): Promise<NextResponse> {
   const authError = checkCronOrBatchAuth(req);
@@ -52,7 +45,7 @@ async function handle(req: NextRequest): Promise<NextResponse> {
   const only   = sp.get('uid')?.split(',').map(s => s.trim()).filter(Boolean);
   const windowDays = parseInt(sp.get('window_days') ?? '30', 10);
 
-  const uids = only?.length ? only : await tierTargets();
+  const uids = only?.length ? only : await fetchRadarTargetUids();
 
   if (dryRun || only?.length) {
     try {

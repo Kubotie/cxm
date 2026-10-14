@@ -6,7 +6,9 @@
 
 import { nocoFetch, TABLE_IDS } from '@/lib/nocodb/client';
 import { writeBatchRunLog } from '@/lib/batch/logger';
-import { collectRadarFacts, factsToInput } from '@/lib/churn/radar-input';
+import {
+  collectRadarFacts, factsToInput, fetchRadarTargetUids, RADAR_TARGET_TIERS,
+} from '@/lib/churn/radar-input';
 import { evaluateRadar } from '@/lib/churn/radar-rules';
 import {
   fetchAllRadarStates, upsertRadarState, appendRadarEvent, stageRank,
@@ -53,21 +55,11 @@ function backfillFirstDetected(
   return earliest;
 }
 
-/** 対象は Tier1/2 の active。Tier3 は件数が多く担当もいないため /v2/tier3 側に任せる */
-async function fetchTargetUids(): Promise<string[]> {
-  const rows = await nocoFetch<{ company_uid?: string | null }>(TABLE_IDS.companies, {
-    where:  '(status,eq,active)~and(tier,in,1,2)',
-    fields: 'company_uid',
-    limit:  '500',
-  }, false).catch(() => []);
-  return rows.map(r => r.company_uid?.trim()).filter((u): u is string => !!u);
-}
-
 export async function runChurnRadar(dryRun: boolean, onlyUids?: string[]): Promise<RunResult> {
   const startedAt = Date.now();
   const asOf = new Date().toISOString().slice(0, 10);
 
-  const uids = onlyUids?.length ? onlyUids : await fetchTargetUids();
+  const uids = onlyUids?.length ? onlyUids : await fetchRadarTargetUids();
   const factsMap = await collectRadarFacts(uids);
 
   // 前日までの state を一括で読む。1社ずつ引くと 69 往復になる
@@ -179,7 +171,7 @@ export async function runChurnRadar(dryRun: boolean, onlyUids?: string[]): Promi
       dry_run:         false,
       source_queue:    'companies',
       request_params:  JSON.stringify({ as_of: asOf, only_uids: onlyUids?.length ?? 0 }),
-      filters:         JSON.stringify({ tier: [1, 2], status: 'active' }),
+      filters:         JSON.stringify({ tier: RADAR_TARGET_TIERS, status: 'active' }),
       total_targeted:  uids.length,
       ok_count:        written,
       success_count:   written,

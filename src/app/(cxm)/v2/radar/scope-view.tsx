@@ -26,7 +26,9 @@ import {
   radiusRatio, angleFor, dotRadius, polar, inDangerZone,
 } from "@/lib/churn/radar-scope";
 import { daysToCancelDeadline, CANCEL_NOTICE_DAYS } from "@/lib/churn/radar-rules";
-import { readOwnerFilter, writeOwnerFilter } from "@/lib/churn/radar-prefs";
+import {
+  readOwnerFilter, writeOwnerFilter, readTierFilter, writeTierFilter,
+} from "@/lib/churn/radar-prefs";
 import type { RadarBoardResponse, RadarBoardPoint } from "@/app/api/radar/board/route";
 import type { RadarStage, RadarLayer } from "@/lib/churn/radar-rules";
 import type { AckStatus } from "@/lib/churn/radar-state";
@@ -81,7 +83,7 @@ function yen(n: number | null): string {
 
 // ── 本体 ──────────────────────────────────────────────────────────────────────
 
-type ListScope  = "danger" | "lit" | "churn" | "all";
+type ListScope  = "danger" | "lit" | "critical" | "churn" | "all";
 type SortKey    = "renewal" | "score" | "aged";
 
 /**
@@ -95,6 +97,15 @@ const SORT_META: Record<SortKey, { label: string; note: string }> = {
   aged:    { label: "放置が長い順", note: "鳴りっぱなしの日数の順" },
 };
 
+/** 絞り込みのキー。Tier 未設定は "none" に寄せる */
+function tierKey(tier: number | null): string {
+  return tier == null ? "none" : String(tier);
+}
+
+const TIER_LABEL: Record<string, string> = {
+  "1": "Tier1", "2": "Tier2", "3": "Tier3", "5": "Tier5", none: "Tier未設定",
+};
+
 export default function ScopeView() {
   const router = useRouter();
   const [data, setData]       = useState<RadarBoardResponse | null>(null);
@@ -105,6 +116,12 @@ export default function ScopeView() {
   const [owner, setOwnerState] = useState<string>("all");
   useEffect(() => { setOwnerState(readOwnerFilter()); }, []);
   const setOwner = (v: string) => { setOwnerState(v); writeOwnerFilter(v); };
+  // Tier3 を監視対象に入れた（2026-10-14）。**Tier3 は低接触が通常運用**なので
+  // 接触空白（B1/B2）がほぼ全社で立ち、critical が倍増する。
+  // 「今週やる」を Tier1–2 の意味で見たい日があるので、Tier でも絞れるようにする
+  const [tier, setTierState] = useState<string>("all");
+  useEffect(() => { setTierState(readTierFilter()); }, []);
+  const setTier = (v: string) => { setTierState(v); writeTierFilter(v); };
   const [listScope, setListScope]   = useState<ListScope>("danger");
   const [sortKey, setSortKey]       = useState<SortKey>("renewal");
   const [hovered, setHovered] = useState<string | null>(null);
@@ -120,11 +137,14 @@ export default function ScopeView() {
   };
   useEffect(load, []);
 
-  const points = useMemo(() => {
-    if (!data) return [];
-    if (owner === "all") return data.points;
-    return data.points.filter(p => (p.ownerName ?? "—") === owner);
-  }, [data, owner]);
+  const matchOwner = (p: RadarBoardPoint) => owner === "all" || (p.ownerName ?? "—") === owner;
+  const matchTier  = (p: RadarBoardPoint) => tier  === "all" || tierKey(p.tier) === tier;
+
+  const points = useMemo(
+    () => (data?.points ?? []).filter(p => matchOwner(p) && matchTier(p)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, owner, tier],
+  );
 
   /**
    * 担当ごとの件数。押す前に何件になるか分かるようにする。
@@ -132,14 +152,29 @@ export default function ScopeView() {
    */
   const ownerCounts = useMemo(() => {
     const m = new Map<string, number>();
-    for (const p of data?.points ?? []) {
+    // Tier で絞った後の数にする。押した結果と件数が食い違うと、効いていないように見える
+    for (const p of (data?.points ?? []).filter(matchTier)) {
       const k = p.ownerName ?? "—";
       m.set(k, (m.get(k) ?? 0) + 1);
     }
     const list = [...m.entries()].sort((a, b) => b[1] - a[1]);
     if (owner !== "all" && !list.some(([n]) => n === owner)) list.push([owner, 0]);
     return list;
-  }, [data, owner]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, owner, tier]);
+
+  /** Tier ごとの件数。担当で絞った後の数にする（担当側と同じ考え方） */
+  const tierCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of (data?.points ?? []).filter(matchOwner)) {
+      const k = tierKey(p.tier);
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    const list = [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    if (tier !== "all" && !list.some(([k]) => k === tier)) list.push([tier, 0]);
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, owner, tier]);
 
   // **解約の連絡を受けた顧客は、もう予兆検知の仕事ではない。**
   // 危険圏に並び続けると、まだ手を打てる顧客がその下に埋もれる。
@@ -152,18 +187,20 @@ export default function ScopeView() {
 
   /** フィルタごとの母数。押す前に結果が分かるようボタンに出す */
   const scopeCounts = useMemo(() => ({
-    danger: lit.filter(p => inDangerZone(p.daysToRenewal)).length,
-    lit:    lit.length,
-    churn:  churnPlanned.length,
-    all:    points.length,
+    danger:   lit.filter(p => inDangerZone(p.daysToRenewal)).length,
+    lit:      lit.length,
+    critical: lit.filter(p => p.stage === "critical").length,
+    churn:    churnPlanned.length,
+    all:      points.length,
   }), [lit, points, churnPlanned]);
 
   const listed = useMemo(() => {
     const base =
       listScope === "danger"
         ? lit.filter(p => inDangerZone(p.daysToRenewal))
-        : listScope === "lit"   ? lit
-        : listScope === "churn" ? churnPlanned
+        : listScope === "lit"      ? lit
+        : listScope === "critical" ? lit.filter(p => p.stage === "critical")
+        : listScope === "churn"    ? churnPlanned
         : points;
     return [...base].sort((a, b) => {
       if (sortKey === "score") return b.score - a.score;
@@ -207,6 +244,7 @@ export default function ScopeView() {
     },
     hints: {
       担当フィルタ: owner,
+      Tierフィルタ: tier,
       リスト範囲: listScope,
       解約予定: churnPlanned.map(p => `${p.name}（${p.churnReport?.effectiveDate ?? "終了日未定"}）`),
       読込中: loading,
@@ -282,11 +320,13 @@ export default function ScopeView() {
         <div>
           <h1 className="text-[17px] font-bold text-slate-900">解約レーダー</h1>
           <p className="text-[11.5px] text-slate-500 mt-0.5">
-            {data?.asOf} 走査 ／ Tier1–2 の {points.length}社
+            {/* 走査した母数を出す。絞り込み後の件数はボタンとリスト見出しに出ているので、
+                ここが絞り込みで動くと「何社を見ているのか」が分からなくなる */}
+            {data?.asOf} 走査 ／ Tier1–3 の {data?.points.length ?? 0}社
             {data?.setupHint && <span className="text-amber-700 ml-2">{data.setupHint}</span>}
           </p>
         </div>
-        <div className="flex gap-1.5 items-center">
+        <div className="flex gap-1.5 items-center flex-wrap justify-end">
           {/* 押す前に何件になるか見せる。件数が出ていないと、押しても
               先頭の顔ぶれが変わらないフィルタは「効いていない」ように見える */}
           <button onClick={() => setOwner("all")}
@@ -309,6 +349,33 @@ export default function ScopeView() {
               <span className={`font-mono ${owner === name ? "text-slate-300" : "text-slate-400"}`}>{n}</span>
             </button>
           ))}
+          <span className="w-px h-4 bg-slate-200 mx-0.5" />
+
+          {/* Tier。**Tier3 は低接触が通常運用**で接触空白がほぼ全社に立つため、
+              「今週やる」を Tier1–2 の意味で見たい日がある。選んだ Tier は端末に残す */}
+          <button onClick={() => setTier("all")} title="すべての Tier を見る"
+            className={`text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1.5
+              ${tier === "all"
+                ? "bg-slate-900 border-slate-900 text-white font-bold"
+                : "bg-white border-slate-300 text-slate-600 hover:border-slate-400"}`}>
+            全Tier
+            <span className={`font-mono ${tier === "all" ? "text-slate-300" : "text-slate-400"}`}>
+              {(data?.points ?? []).filter(matchOwner).length}
+            </span>
+          </button>
+          {tierCounts.map(([key, n]) => (
+            <button key={key} onClick={() => setTier(key)}
+              className={`text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1.5
+                ${tier === key
+                  ? "bg-slate-900 border-slate-900 text-white font-bold"
+                  : "bg-white border-slate-300 text-slate-600 hover:border-slate-400"}`}>
+              {TIER_LABEL[key] ?? `Tier${key}`}
+              <span className={`font-mono ${tier === key ? "text-slate-300" : "text-slate-400"}`}>{n}</span>
+            </button>
+          ))}
+
+          <span className="w-px h-4 bg-slate-200 mx-0.5" />
+
           <button onClick={load} disabled={loading}
             className="text-[11px] px-2.5 py-1 rounded-full border border-slate-300 bg-white text-slate-600
               hover:border-slate-400 transition flex items-center gap-1 disabled:opacity-50">
@@ -579,8 +646,9 @@ export default function ScopeView() {
           <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-[11.5px] font-bold text-slate-900">
               {listScope === "danger" ? "危険圏（解約申出の期限まで30日以内＝更新31〜60日前）"
-                : listScope === "lit"   ? "点灯中のすべて"
-                : listScope === "churn" ? "解約予定（解約の報告を受けている顧客）"
+                : listScope === "lit"      ? "点灯中のすべて"
+                : listScope === "critical" ? "赤だけ（critical・今週やる）"
+                : listScope === "churn"    ? "解約予定（解約の報告を受けている顧客）"
                 : "全社"}
             </span>
             <span className="font-mono text-[11.5px] text-slate-500">
@@ -599,7 +667,10 @@ export default function ScopeView() {
             )}
           </div>
           <div className="flex gap-1.5 items-center flex-wrap">
-            {([["danger", "危険圏"], ["lit", "点灯中"], ["churn", "解約予定"], ["all", "全社"]] as [ListScope, string][]).map(([s, label]) => (
+            {([
+              ["danger", "危険圏"], ["critical", "赤だけ"], ["lit", "点灯中"],
+              ["churn", "解約予定"], ["all", "全社"],
+            ] as [ListScope, string][]).map(([s, label]) => (
               <button key={s} onClick={() => setListScope(s)}
                 className={`text-[11px] px-2.5 py-1 rounded-full border transition flex items-center gap-1.5
                   ${listScope === s
@@ -629,6 +700,8 @@ export default function ScopeView() {
             <CheckCircle2 className="w-5 h-5 text-emerald-600" />
             {listScope === "danger"
               ? "解約申出の期限が近くて落ちている顧客はいません。今週はここを見なくてよい。"
+              : listScope === "critical"
+              ? "critical はいません。今週やる案件はありません。"
               : listScope === "churn"
               ? "解約報告が立っている顧客はいません。個社ページの「解約報告」から立てられます。"
               : "該当する顧客はいません。"}
@@ -721,7 +794,7 @@ function RadarRow({ p, busy, onAck }: {
 
         {p.signals.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            {p.signals.map(s => {
+            {p.signals.map((s, i) => {
               // 根拠の現物が開けるものはチップ自体をリンクにする
               const url = s.refs?.find(r => r.url)?.url ?? null;
               const cls = `text-[11px] px-2 py-0.5 rounded flex items-center gap-1 ${
@@ -733,10 +806,10 @@ function RadarRow({ p, busy, onAck }: {
                 </>
               );
               return url ? (
-                <a key={s.id} href={url} target="_blank" rel="noreferrer"
+                <a key={`${s.id}-${i}`} href={url} target="_blank" rel="noreferrer"
                   className={`${cls} hover:underline`}>{body}</a>
               ) : (
-                <span key={s.id} className={cls}>{body}</span>
+                <span key={`${s.id}-${i}`} className={cls}>{body}</span>
               );
             })}
           </div>

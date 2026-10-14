@@ -178,6 +178,34 @@ function num(value: unknown): number | null {
  * @param sinceDate   この日以降のスナップショットを読む（既定 120日前）
  * @param withExcerpt 接点の本文抜粋も取る。1社の画面表示用。全社走査では false のまま
  */
+/**
+ * 走査対象の Tier。
+ *
+ * 当初は Tier1/2 だけだった（「Tier3 は件数が多く担当もいない」という前提）。
+ * **実際には Tier3 の active は31社しかなく、全社に担当がついていた**（2026-10-14 実測。
+ * Perry 30 / BB 1）。見ないでいる理由が無いので対象に入れた。65社 → 96社。
+ *
+ * ここを変えるときは、走査（radar-run）・言質抽出（batch/churn-voice）・
+ * バックテスト（ops/radar-backtest）の3つが同じ母集団を見るよう、必ずこの定数を使うこと。
+ * 片方だけ広げると、言質の立たない企業が混ざって判定が歪む。
+ */
+export const RADAR_TARGET_TIERS = [1, 2, 3] as const;
+
+/** 走査対象の WHERE 句。active かつ対象 Tier */
+export function radarTargetWhere(): string {
+  return `(status,eq,active)~and(tier,in,${RADAR_TARGET_TIERS.join(',')})`;
+}
+
+/** 走査対象の company_uid を引く。件数は100前後なので limit 500 で足りる */
+export async function fetchRadarTargetUids(): Promise<string[]> {
+  const rows = await nocoFetch<{ company_uid?: string | null }>(TABLE_IDS.companies, {
+    where:  radarTargetWhere(),
+    fields: 'company_uid',
+    limit:  '500',
+  }, false).catch(() => []);
+  return rows.map(r => r.company_uid?.trim()).filter((u): u is string => !!u);
+}
+
 export async function collectRadarFacts(
   uids: string[],
   sinceDate?: string,

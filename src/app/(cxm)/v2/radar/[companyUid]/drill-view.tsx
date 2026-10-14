@@ -370,8 +370,10 @@ export default function DrillView({ companyUid }: { companyUid: string }) {
             <p className="px-3.5 py-5 text-[12px] text-slate-500 text-center">
               点灯している要因はありません。
             </p>
-          ) : data.current.signals.map(s => (
-            <div key={s.id} className="px-3.5 py-2.5 border-b border-slate-50 last:border-b-0 flex gap-2.5">
+          ) : data.current.signals.map((s, i) => (
+            // 同じ ID のシグナルが2本立つことがある。key が衝突すると
+            // React が片方を落とし、根拠が黙って消える
+            <div key={`${s.id}-${i}`} className="px-3.5 py-2.5 border-b border-slate-50 last:border-b-0 flex gap-2.5">
               <span className="font-mono text-[10.5px] px-1.5 py-0.5 rounded h-fit flex-none text-white"
                 style={{ background: s.layer === "voice" ? STAGE_COLOR.critical : "#64748b" }}>
                 {s.id}

@@ -18,7 +18,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { nocoFetch, TABLE_IDS } from '@/lib/nocodb/client';
-import { collectRadarFacts, factsToInput, type RadarFacts } from '@/lib/churn/radar-input';
+import {
+  collectRadarFacts, factsToInput, fetchRadarTargetUids, type RadarFacts,
+} from '@/lib/churn/radar-input';
 import { evaluateRadar, type RadarResult, type RadarStage } from '@/lib/churn/radar-rules';
 import { requireOpsOrAdmin } from '@/lib/auth/guard';
 
@@ -76,15 +78,6 @@ function maxDate(a: string, b: string): string {
   return a > b ? a : b;
 }
 
-async function fetchTargetUids(): Promise<string[]> {
-  const rows = await nocoFetch<{ company_uid?: string | null }>(TABLE_IDS.companies, {
-    where:  '(status,eq,active)~and(tier,in,1,2)',
-    fields: 'company_uid',
-    limit:  '500',
-  }, false).catch(() => []);
-  return rows.map(r => r.company_uid?.trim()).filter((u): u is string => !!u);
-}
-
 /** 材料の中で最も古い観測日。ここより前を再生しても意味がない */
 function earliestFactDate(facts: RadarFacts): string | null {
   const candidates = [
@@ -111,7 +104,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<BacktestRespon
     const uidParam = sp.get('uid');
     const uids = uidParam
       ? uidParam.split(',').map(s => s.trim()).filter(Boolean)
-      : await fetchTargetUids();
+      : await fetchRadarTargetUids();
 
     if (uids.length === 0) {
       return NextResponse.json({ error: '対象企業が0件でした' }, { status: 400 });
