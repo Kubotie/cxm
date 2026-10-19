@@ -72,7 +72,14 @@ const PS = ['FDE_IN_PROGRESS','POC_IN_PROGRESS','APPO_SET','APPO_REQUESTING','CO
 const PS_JP = {FDE_IN_PROGRESS:'FDE進行',POC_IN_PROGRESS:'PoC進行',APPO_SET:'アポ確定',APPO_REQUESTING:'アポ打診中',CONSIDERING:'検討中',INTRO_PLANNED:'紹介予定',STAY:'ステイ',NURTURE:'ナーチャ',PASSED:'見送り',OUT_OF_SCOPE:'対象外'};
 const PS_COL = {FDE_IN_PROGRESS:'var(--p8)',POC_IN_PROGRESS:'var(--p6)',APPO_SET:'var(--p5)',APPO_REQUESTING:'var(--p4)',CONSIDERING:'var(--p3)',INTRO_PLANNED:'var(--p2)',STAY:'var(--warn)',NURTURE:'var(--p1)',PASSED:'var(--axis)',OUT_OF_SCOPE:'var(--axis)'};
 const ACTIVE_PS = ['FDE_IN_PROGRESS','POC_IN_PROGRESS','APPO_SET','APPO_REQUESTING','CONSIDERING'];
-const IND_JP = {BEAUTY_D2C:'美容D2C',HEALTHCARE:'ヘルスケア',FITNESS:'フィットネス',APPAREL:'アパレル',EC_RETAIL:'EC・小売',MANUFACTURER:'メーカー',IT_SAAS:'IT・SaaS',FINANCE:'金融',TELECOM_INFRA:'通信・インフラ',REAL_ESTATE:'不動産',HR:'人材',EDUCATION:'教育',ENTERTAINMENT:'エンタメ',TOURISM:'旅行・観光',AGENCY:'代理店',OTHER:'その他'};
+/* 業種の表示名。**Notion 顧客管理DB の「業種」の選択肢そのまま。**
+   【移植による変更 11/11】2026-10-19 Kubotie「略さないで」。
+   それまでは「美容D2C」「ヘルスケア」「EC・小売」「旅行・観光」と縮めて出していたため、
+   Notion の値（美容・コスメ・健康食品・D2C ほか）と違うものに見えて、
+   「ダッシュボードの業種はどこから来ているのか」という調査が起きた。
+   ⚠ 企業追加で Notion に書くときの選択肢もこれ（NC_IND_NOTION）。
+     Notion 側の選択肢名と 1 文字でも違うと書き込みが落ちるので、勝手に縮めないこと。 */
+const IND_JP = {BEAUTY_D2C:'美容・コスメ・健康食品・D2C',HEALTHCARE:'医療・ヘルスケア・製薬・医療機器',FITNESS:'フィットネス・ウェルネス',APPAREL:'アパレル・ファッション',EC_RETAIL:'EC・通販・小売',MANUFACTURER:'メーカー・製造・電機',IT_SAAS:'IT・SaaS・ソフトウェア・Web',FINANCE:'金融・保険・投資',TELECOM_INFRA:'通信・インフラ・エネルギー',REAL_ESTATE:'不動産・建設・住宅',HR:'人材・HR・採用',EDUCATION:'教育・スクール・EdTech',ENTERTAINMENT:'エンタメ・メディア',TOURISM:'観光・宿泊・催事',AGENCY:'代理店',OTHER:'その他'};
 const TIER_JP = t => t ? t.replace('TIER','Tier') : '—';
 /* 新規顧客のしるし。Tier の横に小さく出す（2026-10-19 Kubotie） */
 const NC_TAG = d => d && d.nc ? '<span class="nctag">新規</span>' : '';
@@ -556,7 +563,9 @@ var NEWCOS = {};
 const NC_NOTION_DS='25ef5c40-d968-45d7-9120-7f1878006682';
 const NC_OWN_NOTION={Paul:'Shinichi Nagai',Baba:'BB',Eri:'Eri Kitada',Kubotie:'Kubotie',Ava:'Ava',Utty:'Utty'};
 const NC_OWN_TWENTY={Paul:'SHINICHI_NAGAI',Baba:'BB',Eri:'ERI_KITADA',Kubotie:'KUBOTIE',Ava:'AVA',Utty:'UTTY'};
-const NC_IND_NOTION={BEAUTY_D2C:'美容・コスメ・健康食品・D2C',HEALTHCARE:'医療・ヘルスケア・製薬・医療機器',FITNESS:'フィットネス・ウェルネス',APPAREL:'アパレル・ファッション',EC_RETAIL:'EC・通販・小売',MANUFACTURER:'メーカー・製造・電機',IT_SAAS:'IT・SaaS・ソフトウェア・Web',FINANCE:'金融・保険・投資',TELECOM_INFRA:'通信・インフラ・エネルギー',REAL_ESTATE:'不動産・建設・住宅',HR:'人材・HR・採用',EDUCATION:'教育・スクール・EdTech',ENTERTAINMENT:'エンタメ・メディア',TOURISM:'観光・宿泊・催事',AGENCY:'代理店',OTHER:'その他'};
+/* 企業追加で Notion に書く業種。表示名と同じ（IND_JP の注記を見ること）。
+   2026-10-19 まで同じ中身を 2 か所に持っていた */
+const NC_IND_NOTION = IND_JP;
 const ncNorm = s => String(s||'').replace(/株式会社|有限会社|合同会社|\(株\)|（株）|\s|　/g,'').toLowerCase();
 function ncRaw(n){ return {cid:'nc_'+n.id, n:n.name, t:n.tier||null, ps:null, m:0, ind:n.ind||null, own:[], o:n.owners||[], icp:null, aw:null, src:'DASHBOARD', na:'', up:(n.createdAt||'').slice(0,10),
   url:n.notionUrl||null, opp:null, notes:[], docs:[], od:[], cs:null, dom:n.dom||'', asg:'担当3', slug:(typeof IND_FALLBACK==='object'&&IND_FALLBACK[n.ind])||null, lay:null, newco:true, sync:n.sync||{}, twentyId:n.twentyId||null}; }
@@ -1027,7 +1036,7 @@ function renderDeals(){
       <td class="num" title="${nD>1?'商談のうち最も早い日':''}">${d.apply?dateCell(d.apply.slice(5).replace('-','/'), false, d.apply.slice(0,4)!==String(TODAY.getFullYear())?`<span class="dim">'${d.apply.slice(2,4)}</span>`:''):'<span class="dim">—</span>'}</td>
       <td class="num" title="${nD>1?'商談のうち最も早い日':''}">${d.bill?d.bill.slice(5).replace('-','/'):d.close?d.close.replace('-','/'):'<span class="dim">—</span>'}</td>
       <td class="brc nac">${brCell(d)}</td>
-      <td style="white-space:nowrap">${IND_JP[d.ind]||'<span class="dim">—</span>'}</td>
+      <td class="indcell">${IND_JP[d.ind]||'<span class="dim">—</span>'}</td>
       <td>${potHtml(d)}</td>
       <td></td>
       <td class="nac">${naCell(d)}</td>

@@ -1650,3 +1650,6 @@ table.deals.iss{min-width:880px}
   font-size:10px; font-weight:800; letter-spacing:.02em; vertical-align:middle;
   background:color-mix(in oklab,var(--accent) 16%,transparent); color:var(--accent-ink);
 }
+
+/* 業種の列。略さない名前にしたので折り返す（2026-10-19） */
+#deals td.indcell{ min-width:9em; max-width:13em; white-space:normal; line-height:1.4; }
