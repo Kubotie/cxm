@@ -264,3 +264,28 @@ describe('キー日程（D-05・§9-4）', () => {
     assert.deepEqual(r.changed.sort(), ['budgetMonths', 'fiscalMonth']);
   });
 });
+
+// ── 新規顧客フラグ（2026-10-19）────────────────────────────────────────────
+
+test('新規顧客は Notion の checkbox。未設定は false', async () => {
+  const { CUSTOMER_PROP, CUSTOMER_READONLY_PROPS } =
+    await import('../src/lib/ptai/notion/schema.ts');
+  const { toAccountInfo } = await import('../src/lib/ptai/repository.ts');
+
+  assert.equal(CUSTOMER_PROP.newCustomer, '新規顧客');
+  // 書けないと画面から切り替えられない
+  assert.ok(!CUSTOMER_READONLY_PROPS.includes(CUSTOMER_PROP.newCustomer));
+
+  const base = {
+    pageId: 'p1', url: null, lastEditedTime: '', name: '某社',
+    tier: null, industry: null, owners3: [], mrr: null, curMrr: null, baseMrr: null,
+    accountIds: [], aimMrr: null, billingMonth: null, billingStage: null, barrier: null,
+    nextAction: null, nextActionDate: null, solutionStatus: null, companyRelation: [],
+    sfAccountId: null, sfAccountIds: [], sfCompanyIds: [], agency: null,
+    keyDates: { fiscalMonth: null, budgetMonths: null, renewalMonth: null },
+  };
+  assert.equal(toAccountInfo({ ...base, newCustomer: true } as never).newCustomer, true);
+  assert.equal(toAccountInfo({ ...base, newCustomer: false } as never).newCustomer, false);
+  // Notion の checkbox が空のときは undefined で届きうる。false に倒す
+  assert.equal(toAccountInfo(base as never).newCustomer, false);
+});

@@ -100,6 +100,8 @@ export interface RawCompany {
   /** 期初MRR。画面の「現在MRR（＋◯◯）」の括弧内は m − bm */
   bm: number;
   ind: string | null;
+  /** 新規顧客フラグ。Notion 顧客管理DB の「新規顧客」（2026-10-19） */
+  nc: boolean;
   slug: string | null;
   lay: string | null;
   own: string[];

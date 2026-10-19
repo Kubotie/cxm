@@ -304,6 +304,8 @@ async function writeEdits(
     };
     const patch: Record<string, unknown> = {};
     if ('aim' in company) patch.aimMrr = numOr(company.aim);
+    // 新規顧客フラグ（2026-10-19）。正本は Notion 顧客管理DB の checkbox
+    if ('nc' in company) patch.newCustomer = company.nc === true;
     if (kd.fiscal)  patch.fiscalMonth  = monthOf(kd.fiscal);
     if (kd.budget)  patch.budgetMonths = rangeOf(kd.budget);
     if (kd.renewal) patch.renewalMonth = monthOf(kd.renewal);

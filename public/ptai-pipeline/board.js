@@ -74,6 +74,8 @@ const PS_COL = {FDE_IN_PROGRESS:'var(--p8)',POC_IN_PROGRESS:'var(--p6)',APPO_SET
 const ACTIVE_PS = ['FDE_IN_PROGRESS','POC_IN_PROGRESS','APPO_SET','APPO_REQUESTING','CONSIDERING'];
 const IND_JP = {BEAUTY_D2C:'美容D2C',HEALTHCARE:'ヘルスケア',FITNESS:'フィットネス',APPAREL:'アパレル',EC_RETAIL:'EC・小売',MANUFACTURER:'メーカー',IT_SAAS:'IT・SaaS',FINANCE:'金融',TELECOM_INFRA:'通信・インフラ',REAL_ESTATE:'不動産',HR:'人材',EDUCATION:'教育',ENTERTAINMENT:'エンタメ',TOURISM:'旅行・観光',AGENCY:'代理店',OTHER:'その他'};
 const TIER_JP = t => t ? t.replace('TIER','Tier') : '—';
+/* 新規顧客のしるし。Tier の横に小さく出す（2026-10-19 Kubotie） */
+const NC_TAG = d => d && d.nc ? '<span class="nctag">新規</span>' : '';
 const MEMBERS = ['Paul','Baba','Eri','Kubotie','Ava','Utty'];
 
 /* ===================== 行動履歴の解析（Next Action 欄） ===================== */
@@ -183,6 +185,9 @@ function buildDeal0(c,i){
   const m = pick('m', null, c.m||null) || 0;   // 現在MRR は Notion 顧客DB（Twenty 経由）の最新値
   return {id:i, cid:c.cid, oid:opp?opp.id:null, n:c.n, t:pick('t', ec.tier, c.t), ps:c.ps, m, ind:pick('ind', ec.ind, c.ind), icp:c.icp, aw:c.aw,
     owners: c.o, ownerSplit: false, rawOwn:c.own, na:c.na, hist,
+    /* 【移植による変更 10/10】新規顧客フラグ（2026-10-19 Kubotie）。
+       正本は Notion 顧客管理DB の checkbox。保存するまでは画面の値を出す */
+    nc: (ec.nc !== undefined ? ec.nc === true : c.nc === true),
     nd: first ? iso(first.date) : null, naHead: first ? first.text : (c.na||''),
     le:c.up, url:c.url, dom:c.dom, cs:c.cs, notes:c.notes||[], docs:c.docs||[], od:c.od||[], sfid:c.sfid||null,
     st, opp, oppUp: opp ? opp.up : null, ph:p.ph, phEst:p.est, phWhy:p.why,
@@ -462,12 +467,22 @@ const AI_MIN = 100000;
    ③ （見込）追加MRR … 商談ごとに 金額 × 下の係数 を足したもの
 
    ⚠ ③ の係数は **PROB（Salesforce の DefaultProbability）とは別物**。
-     Kubotie 指示: Goal Shared 30 / Qualified Champion 50 / Evaluating 70 /
-                   Probable 90 / Won 100。
-     Verbal は上げず Probable と同じ 90（2026-10-02 Kubotie）。
-     変えるときはここだけ直せばよい。                                        */
-const FORECAST = {INACTIVE:0, ACTIVE:0, GOAL_SHARED:.30, QUALIFIED_CHAMPION:.50,
-  EVALUATING:.70, PROBABLE:.90, VERBAL:.90, WON:1, CLOSED_WON:1, ADMIN_CLOSE:0, CLOSED_LOST:0};
+     運用で決めた値で、予測の精度を見ながら変える。
+       2026-10-02 Kubotie: Goal Shared 30 / QC 50 / Evaluating 70 / Probable 90 / Won 100。
+                           Verbal は上げず Probable と同じ 90
+       2026-10-19 Kubotie: **全体に引き下げ**（読みが甘く出ていたため）。
+                           Active 10 / Goal Shared 15 / QC 30 / Evaluating 50 /
+                           Probable 70。Verbal 90 と Won 100 は据え置き。
+                           Active に初めて係数が付いた（それまで 0）
+     ⚠ 変えるときは **kpi.ts の FORECAST も同じ値にすること**（画面とサーバーで 2 本ある）。
+       毎朝のスナップショットは変更前の値で記録されているので、
+       期待値の推移は 2026-10-19 で段差ができる。                           */
+const FORECAST = {INACTIVE:0, ACTIVE:.10, GOAL_SHARED:.15, QUALIFIED_CHAMPION:.30,
+  EVALUATING:.50, PROBABLE:.70, VERBAL:.90, WON:1, CLOSED_WON:1, ADMIN_CLOSE:0, CLOSED_LOST:0};
+
+/* 係数の一覧を文字にする。説明文に数字を直書きすると、係数を変えたとき
+   片方だけ古いまま残る（2026-10-19 に実際そうなりかけた） */
+const fcText = () => PHASES.filter(p=>FORECAST[p]).map(p=>`${PH_JP[p]} ${Math.round(FORECAST[p]*100)}%`).join(' / ');
 
 /* 期初MRR。RAW の bm（Notion の「期初MRR」）。無い会社は増減 0 として扱う */
 const BASE_MRR = {};
@@ -719,7 +734,7 @@ function renderKpis(){
   document.getElementById('kpis').innerHTML=`
    <div class="card kpi hero"><div class="label">目標 合算MRR <span class="qi rq" data-tip="${esc(rulesHtml())}" tabindex="0" aria-label="計上ルール">?</span></div><div class="val num">${tgt?man(tgt):'—'}<small>円</small></div><div class="foot">${view==='team'?(allocGap()>0?'<b style="color:var(--plane)">⚠ 配分不足 '+man(allocGap())+'</b>':'期限 '+CONFIG.targetDue):tgt?'全体の '+Math.round(tgt/CONFIG.targetMrr*100)+'%':'目標配分なし'}</div><button type="button" class="editbtn" data-edit>目標を編集</button></div>
    ${lcard('plan','計画','既契約＋追加MRR','<b>計画（目標を全部取ったら）</b>会社ごとに 期初MRR（既契約）＋ 追加分 を足した合計です。追加分は ①（目標）追加MRR と受注した商談の金額の大きい方で、10万円以上の会社だけ数えます。<br>目標と同じ合算MRR の基準で、いまの計画で目標に届くかを見る値です。', plan, planN)}
-   ${kpiCard('var(--p5)','期待値（参考）', `<b>期待値（参考）</b>③（見込）追加MRR の合計。商談ごとに 金額 × フェーズの係数（Goal Shared 30% / Qualified Champion 50% / Evaluating 70% / Probable 90% / Verbal 90% / Won 100%）を足したものです。<br>商談の金額を入力済み：${cnt(ds,d=>m2(d)>0)}社`, man(exv), '円', tgt?`目標の ${pc(exv)}%`:'')}
+   ${kpiCard('var(--p5)','期待値（参考）', `<b>期待値（参考）</b>③（見込）追加MRR の合計。商談ごとに 金額 × フェーズの係数（${fcText()}）を足したものです。<br>商談の金額を入力済み：${cnt(ds,d=>m2(d)>0)}社`, man(exv), '円', tgt?`目標の ${pc(exv)}%`:'')}
    ${kpiCard('var(--crit)','ネクストアクション期限超過', `<b>ネクストアクション期限超過</b>商談のネクストアクションで、期日が過ぎている件数。サクセスの Todo は含みません。<br>商談中でネクストアクションが未入力：${noNa}社`, overdue, '件', noNa?`未入力 ${noNa}社`:'', overdue?'var(--crit)':'')}
    ${lcard('won','確定','受注した商談', `<b>確定</b>受注した商談がある会社の「期初MRR ＋ 受注した商談の金額」。${view==='team'?`<br>次のステージ（支給率 ${next.rate}）まで ${man(Math.max(0,next.at-wonV))}円`:''}`, wonV, wonN)}
    ${lcard('cmt','コミット','Probable 以上','<b>コミット</b>Probable 以上（Probable・Verbal・Won・受注）の商談がある会社の「期初MRR ＋ その商談の金額」。確率は掛けません。', cmt, cmtN)}
@@ -802,6 +817,8 @@ function renderMembers(){
 
 /* ===================== 有料化予定月別 ===================== */
 let fcMode='exp', missingOnly=false, fcCum=true;
+/* 新規顧客だけに絞る（2026-10-19 Kubotie）。Tier の横のしるしと同じ値で絞る */
+let newOnly=false;
 function monthsAhead(){ const out=[]; const d=new Date(TODAY.getFullYear(),TODAY.getMonth()+1,1); for(let k=0;k<12;k++){ const x=new Date(d.getFullYear(),d.getMonth()+k,1); out.push(`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}`);} return out; }
 let fcBase='apply';
 const ymOf = x => `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}`;
@@ -909,7 +926,7 @@ function renderPhasePanel(){
   const card=d=>{const late=d.nd&&ymd(d.nd)<TODAY&&ACTIVE_PS.includes(d.ps), soon=d.nd&&!late&&days(ymd(d.nd),TODAY)<=7;
     const fl=flagsOf(d);
     return `<div class="pcard ${d.ps==='STAY'?'stay':''}" role="button" tabindex="0" data-id="${d.id}">
-      <div class="r1"><div class="co">${esc(d.n)}<small>${TIER_JP(d.t)}・${PS_JP[d.ps]||'—'}・${IND_JP[d.ind]||'業種未設定'}</small></div><span class="own"><i style="background:${CONFIG.memberColor[d.owners[0]]}"></i>${d.owners.join('・')}</span></div>
+      <div class="r1"><div class="co">${esc(d.n)}<small>${TIER_JP(d.t)}${NC_TAG(d)}・${PS_JP[d.ps]||'—'}・${IND_JP[d.ind]||'業種未設定'}</small></div><span class="own"><i style="background:${CONFIG.memberColor[d.owners[0]]}"></i>${d.owners.join('・')}</span></div>
       <div class="r2"><div>現在MRR<b>${man1(d.m)}</b></div><div>期待値<b>${man1(expected(d))}</b></div><div>最終更新<b>${d.le.slice(5).replace('-','/')}</b></div></div>
       ${fl.length?`<div class="r3">${fl.map(([c,l])=>`<span class="chip ${c}">${c&&c!=='split'?'<i></i>':''}${esc(l)}</span>`).join('')}</div>`:''}
       <div class="na"><b>Next</b> ${esc(d.naHead||'（未入力）')}${d.nd?` <span class="${late?'late':soon?'soon':''}">／${d.nd.slice(5).replace('-','/')}${late?'（'+days(TODAY,ymd(d.nd))+'日超過）':''}</span>`:''}</div></div>`;};
@@ -977,12 +994,12 @@ function renderDeals(){
   renderGoal(); renderFeed();
   const fo=document.getElementById('fOwner').value, fp=document.getElementById('fPhase').value, fs=document.getElementById('fStatus').value, ft=document.getElementById('fTier').value, q=document.getElementById('fQ').value.trim();
   const base = view==='team'?DEALS:DEALS.filter(d=>d.owners.includes(view));
-  let ds=base.filter(d=>(!FS.owner.size||d.owners.some(o=>FS.owner.has(o)))&&(!FS.phase.size||phasesOf(d).some(p=>FS.phase.has(p)))&&(!fs||d.ps===fs)&&(!FS.tier.size||FS.tier.has(d.t))&&(!q||d.n.includes(q))&&(!missingOnly||(!baseMo(d)||!d.add)&&d.ph!=='CLOSED_LOST'));
+  let ds=base.filter(d=>(!FS.owner.size||d.owners.some(o=>FS.owner.has(o)))&&(!FS.phase.size||phasesOf(d).some(p=>FS.phase.has(p)))&&(!fs||d.ps===fs)&&(!FS.tier.size||FS.tier.has(d.t))&&(!q||d.n.includes(q))&&(!newOnly||d.nc)&&(!missingOnly||(!baseMo(d)||!d.add)&&d.ph!=='CLOSED_LOST'));
   const key={co:d=>d.n,o:d=>d.owners.join(),t:d=>d.t||'Z',ps:d=>PS.indexOf(d.ps),st:d=>PHASES.indexOf(d.ph),m:d=>d.m,add:d=>d.add,aim:d=>{const p=planOf(d);return p?(p.base+p.add)*goalCtx().w(d)+1e12:aimOf(d);},tot:total,cl:d=>d.close||'9999',ap:d=>d.apply||'9999',br:d=>(d.bs?BS_OPTS.indexOf(d.bs):9)+(d.br||'~'),pr:d=>FORECAST[d.ph]||0,exp:expected,add3:d=>m3(d),ind:d=>d.ind||'',pot:d=>(potOf(d)||{prio:-1}).prio,nd:d=>d.nd||'9999',le:d=>d.le}[sortKey];
   ds.sort((x,y)=>{const a=key(x),b=key(y);return (a>b?1:a<b?-1:0)*sortDir;});
   const th=(k,l,r,t,tp)=>`<th class="${r?'r':''}" data-k="${k}" ${t?`title="${t}"`:''} ${tp?`data-tip="${esc(tp)}"`:''} ${sortKey===k?`aria-sort="${sortDir>0?'ascending':'descending'}"`:''}>${l}${sortKey===k?(sortDir>0?' ▲':' ▼'):''}</th>`;
   const head=`<thead><tr>${th('co','企業／商談')}${th('o','担当')}${th('t','Tier')}${th('st','フェーズ')}${th('m','⑥ 現在MRR',1,'','毎朝 8 時に Company Database（Salesforce 連動）から同期した額。かっこ内は期初MRR からの増減')}${th('aim','① （目標）追加MRR',1,'この会社で追加したいMRR。クリックで入力')}${th('add','② （商談）追加MRR',1,'商談の金額の合計（失注・Admin Close は除く）')}${th('add3','③ （見込）追加MRR',1,'② を商談ごとに フェーズの係数 で割り引いた額')}${th('ap','申込完了日')}${th('cl','課金開始日')}${th('br','商談障壁')}${th('ind','業種')}${th('pot','ポテンシャル <span class="qi">?</span>',0,'',POT_HEAD_TIP)}<th>ニーズ</th><th>ネクストアクション</th>${th('nd','アクション期日')}${th('le','更新日')}</tr></thead>`;
-  const sig=[view,sortKey,sortDir,...['fStatus','fQ'].map(id=>document.getElementById(id).value),...Object.values(FS).map(v=>[...v].sort().join(',')),missingOnly].join('|');
+  const sig=[view,sortKey,sortDir,...['fStatus','fQ'].map(id=>document.getElementById(id).value),...Object.values(FS).map(v=>[...v].sort().join(',')),missingOnly,newOnly].join('|');
   if(sig!==pageSig){ page=1; pageSig=sig; }
   const pages=Math.max(1,Math.ceil(ds.length/pageSize)); page=Math.min(Math.max(1,page),pages);
   const all=ds; ds=all.slice((page-1)*pageSize, page*pageSize);
@@ -998,7 +1015,7 @@ function renderDeals(){
     const par=`<tr data-id="${d.id}" class="par${open?' open':''}">
       <td class="co" title="${esc(d.n)}">${nD?`<button type="button" class="caret" data-caret="${d.cid}" aria-expanded="${open}" aria-label="${open?'商談を閉じる':'商談を開く'}">${open?'▼':'▶'}</button>`:''}${esc(d.n)}<span class="cmeta">${nD?`<span class="chip dcnt">商談 ${nD}件</span>`:''}${RAW.companies[d.id]&&RAW.companies[d.id].newco?(()=>{ const sy=RAW.companies[d.id].sync||{}; const ok=sy.notion==='done'&&sy.twenty==='done'; return `<span class="chip ${ok?'ncok':'unsync'}" title="Notion：${sy.notion==='done'?'作成済み':'未作成'}／Twenty：${sy.twenty==='done'?'作成済み':'同期待ち'}">${ok?'新規':'新規・未同期'}</span>`; })():''}</span></td>
       <td>${d.owners.map(o=>`<span class="ownerchip"><i style="background:${CONFIG.memberColor[o]}"></i>${o}</span>`).join('<br>')}</td>
-      <td class="num">${TIER_JP(d.t)}</td>
+      <td class="num">${TIER_JP(d.t)}${NC_TAG(d)}</td>
       <td title="${esc(phBoth(d.ph))}${nD>1?'（いちばん進んでいる商談のフェーズ）':''}"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}</td>
       <td class="r num">${(()=>{ const L=mrrLift(d);
         if(L.next) return `${man1(d.m)}<span class="mrrnext" title="受注済み。課金開始で ${man1(d.m+L.next)} になります">${L.nextDate?mdj(L.nextDate)+'〜':''} ${man1(d.m+L.next)}</span>`;
@@ -1083,9 +1100,10 @@ function initFilters(){
   const add=(id,arr)=>{const el=document.getElementById(id);arr.forEach(([v,l])=>el.insertAdjacentHTML('beforeend',`<option value="${v}">${l}</option>`));};
   add('fOwner',MEMBERS.map(m=>[m,m])); add('fPhase',PHASES.map(s=>[s,PH_JP[s]])); add('fStatus',PS.map(s=>[s,PS_JP[s]])); add('fTier',['TIER1','TIER2','TIER3','TIER5'].map(t=>[t,TIER_JP(t)]));
   document.getElementById('fMissing').addEventListener('input',e=>{missingOnly=e.target.checked;renderForecast();});
+  document.getElementById('fNew').addEventListener('input',e=>{newOnly=e.target.checked;});
   document.getElementById('fDeals').addEventListener('input',e=>{ EXPANDED.clear(); if(e.target.checked) DEALS.forEach(d=>{ if(d.deals.length) EXPANDED.add(d.cid); }); renderDeals(); });
   initMS();
-  ['fStatus','fMissing','fQ'].forEach(id=>document.getElementById(id).addEventListener('input',()=>{statusFilter=document.getElementById('fStatus').value||null;renderFunnel();renderDeals();}));
+  ['fStatus','fMissing','fNew','fQ'].forEach(id=>document.getElementById(id).addEventListener('input',()=>{statusFilter=document.getElementById('fStatus').value||null;renderFunnel();renderDeals();}));
 }
 
 /* ===================== いま埋まっていない項目 ===================== */
@@ -1170,7 +1188,7 @@ function renderDrawer(){
   const d=DEALS[openId]; if(!d) return; const {flags,html}=summarize(d); writeHash();
   const head=document.getElementById('dHead');
   head.innerHTML=`<div class="row">
-      <div><div class="eyebrow">${TIER_JP(d.t)}・${IND_JP[d.ind]||'業種未設定'}　担当 ${d.owners.map(o=>`<span class="ownerchip"><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${CONFIG.memberColor[o]}"></i> ${o}</span>`).join(' ')}</div>
+      <div><div class="eyebrow">${TIER_JP(d.t)}${NC_TAG(d)}・${IND_JP[d.ind]||'業種未設定'}　担当 ${d.owners.map(o=>`<span class="ownerchip"><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${CONFIG.memberColor[o]}"></i> ${o}</span>`).join(' ')}</div>
       <h2 id="dTitle">${esc(d.n)}</h2></div>
       <div class="dhbtns"><button type="button" class="fullbtn" id="dFull" aria-pressed="${drawerFull}" title="${drawerFull?'サイドパネルに戻す':'全画面で表示'}">${drawerFull?'⤡ 戻す':'⤢ 全画面'}</button><button type="button" class="close" aria-label="閉じる">×</button></div></div>
     <div class="ctrl"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}${RAW_JP[d.st]?`<span class="chip">案件 ${RAW_JP[d.st]}</span>`:''}${d.url?`<a href="${esc(d.url)}" target="_blank" rel="noopener" style="font-size:12px">Notion 顧客ページ ↗</a>`:''}${sfLinks(d)}<span class="sub" style="margin-left:auto">企業の最終更新 ${d.le}</span></div>
@@ -1929,30 +1947,57 @@ function sumKeyDates(d){
   return `<section class="sx-sec"><header class="sx-sh"><h3>キー日程</h3><span class="sx-meta" data-tip="${esc('<b>キー日程</b>プランニングの前提になります。AI が推定した値は「推定」のまま入るので、確認したら「確定する」を押してください')}">プランニングの前提 <span class="qi rq">?</span></span></header>
     <div class="sx-kds3">${['fiscal','budget','renewal'].map(card).join('')}</div></section>`;
 }
+/* 企業詳細でクリックして直せる会社の項目。
+   【移植による変更 10/10】2026-10-19 に新規顧客（nc）を追加。
+   nc だけ true/false なので、選択肢との変換を str / parse で挟む。
+   ⚠ tier と ind は保存しても **Notion には書いていない**（db-write が見ていない）。
+     nc は書く。経路が違うので、同じ見た目でも挙動が違う点に注意。 */
 const CO_F={tier:{l:'Tier', raw:c=>c.t, cur:d=>d.t, opts:()=>['TIER1','TIER2','TIER3','TIER5'], lab:v=>TIER_JP(v)},
+  nc:{l:'新規顧客', raw:c=>c.nc===true, cur:d=>d.nc===true, blank:false,
+      opts:()=>['1','0'], lab:v=>v==='1'?'新規':'既存',
+      str:v=>v?'1':'0', parse:v=>v==='1'},
   ind:{l:'業種', raw:c=>c.ind, cur:d=>d.ind, opts:()=>Object.keys(IND_JP), lab:v=>IND_JP[v]||v}};
-function coPending(d,k){ const e=EDITS[d.cid]; const ec=(e&&e.company)||{}; return has(ec[k]) && ec[k]!==CO_F[k].raw(RAW.companies[d.id]||{}); }
+/* 選択肢の表示用。bool の項目は「（未設定）」を出さない */
+const coSel = (d,F) => F.str ? F.str(F.cur(d)) : (F.cur(d)||'');
+function coPending(d,k){ if(k==='nc') return false;   // nc は Notion に直接書くので待ちが無い
+  const e=EDITS[d.cid]; const ec=(e&&e.company)||{}; return has(ec[k]) && ec[k]!==CO_F[k].raw(RAW.companies[d.id]||{}); }
 function coEd(d,k){ const F=CO_F[k], v=F.cur(d), p=coPending(d,k);
-  return `<button type="button" class="coed" data-coed="${k}" title="クリックで変更（Twenty に同期）">${v?esc(F.lab(v)):'<span class="dim">未設定</span>'}<i aria-hidden="true">✎</i></button>${p?'<span class="sb2 ed">Twenty 同期待ち</span>':''}`; }
+  const tip = k==='nc' ? 'クリックで変更（Notion 顧客管理DB に保存）' : 'クリックで変更（Twenty に同期）';
+  const txt = F.str ? esc(F.lab(F.str(v))) : (v?esc(F.lab(v)):'<span class="dim">未設定</span>');
+  return `<button type="button" class="coed" data-coed="${k}" title="${tip}">${txt}<i aria-hidden="true">✎</i></button>${p?'<span class="sb2 ed">Twenty 同期待ち</span>':''}`; }
 async function saveCompanyField(d,k,val){
   const F=CO_F[k], raw=F.raw(RAW.companies[d.id]||{}), from=F.cur(d);
   const prev=EDITS[d.cid]||{}; const now=new Date().toISOString();
   const company={...(prev.company||{})};
-  if(!val || val===raw) delete company[k]; else company[k]=val;
-  company.twentyPending = Object.keys(CO_F).some(q=>has(company[q]) && company[q]!==CO_F[q].raw(RAW.companies[d.id]||{})) || undefined;
+  /* bool の項目（nc）は **いつも値を送る**。
+     「raw と同じなら消す」をすると、RAW が読み込み時のまま古いせいで
+     オンにした直後にオフへ戻せない（raw=false のままなので false→削除→書かれない）。
+     Notion 側は中身が同じなら書かずに素通しするので、毎回送っても無駄打ちにならない。
+     2026-10-19 に実機で踏んだ。 */
+  if(F.parse) company[k]=val;
+  else if(!val || val===raw) delete company[k]; else company[k]=val;
+  // nc は Notion に直接書くので、Twenty 同期待ちには数えない
+  company.twentyPending = Object.keys(CO_F).some(q=>q!=='nc' && has(company[q]) && company[q]!==CO_F[q].raw(RAW.companies[d.id]||{})) || undefined;
   if(!company.twentyPending) delete company.twentyPending;
   const body={companyId:d.cid, companyName:d.n, opportunityId:d.oid||null, opp:{...(prev.opp||{})}, company, deals:[...(prev.deals||[])], updatedAt:now, syncedAt:null};
-  await saveEditDoc(d, body, 'Twenty 同期待ちにしました');
-  if((from||null)!==(val||null)) logFeed(DEALS[d.id], [{kind:'co', deal:'', key:null, label:F.l, from:from?F.lab(from):'—', to:val?F.lab(val):'—'}]);
+  /* nc は Notion に書き切るので、手元の RAW も合わせる。
+     RAW は読み込み時の 1 回きりで取り直さないため、合わせないと
+     次の再描画で古い値に戻って見える */
+  if(F.parse){ const rc=RAW.companies[d.id]; if(rc) rc[k==='nc'?'nc':k]=val; }
+  await saveEditDoc(d, body, F.parse ? '保存しました' : 'Twenty 同期待ちにしました');
+  const lab = v => F.str ? F.lab(F.str(v)) : (v?F.lab(v):'—');
+  if((from??null)!==(val??null)) logFeed(DEALS[d.id], [{kind:'co', deal:'', key:null, label:F.l, from:lab(from), to:lab(val)}]);
 }
 document.addEventListener('click', e=>{
   const b=e.target.closest('[data-coed]'); if(!b || openId===null) return;
   e.preventDefault(); e.stopPropagation();
   const d=DEALS[openId], k=b.dataset.coed, F=CO_F[k];
   const sel=document.createElement('select'); sel.className='phsel'; sel.setAttribute('aria-label',F.l);
-  ['',...F.opts()].forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v?F.lab(v):'（未設定）'; if(v===(F.cur(d)||'')) o.selected=true; sel.appendChild(o); });
+  const now=coSel(d,F);
+  (F.blank===false ? F.opts() : ['',...F.opts()]).forEach(v=>{ const o=document.createElement('option'); o.value=v; o.textContent=v?F.lab(v):'（未設定）'; if(v===now) o.selected=true; sel.appendChild(o); });
   b.replaceWith(sel); sel.focus();
-  let done=false; const fin=()=>{ if(done) return; done=true; if(sel.value!==(F.cur(d)||'')) saveCompanyField(d,k,sel.value||null); else renderDrawer(); };
+  let done=false; const fin=()=>{ if(done) return; done=true;
+    if(sel.value!==now) saveCompanyField(d,k, F.parse ? F.parse(sel.value) : (sel.value||null)); else renderDrawer(); };
   sel.addEventListener('change',fin); sel.addEventListener('blur',()=>setTimeout(fin,0));
   sel.addEventListener('keydown',ev=>{ if(ev.key==='Escape'){ ev.stopPropagation(); done=true; renderDrawer(); } });
 }, true);
@@ -1961,9 +2006,9 @@ function sumInfo(d){
   const f=(l,v)=>`<div class="sx-i"><span>${l}</span><div>${v}</div></div>`;
   /* 【移植による変更】ICP判定・課題認識・ドメインは外す（2026-10-06 Utty 指摘「ICP判定は不要」）。
      いまの取り込み経路では 3 つとも常に空（raw-view で null 固定）で、「—」しか出ていなかった */
-  return `<section class="sx-sec"><header class="sx-sh"><h3>基本情報</h3><span class="sx-meta">Notion 顧客管理DB・Tier と業種はクリックで変更</span></header>
+  return `<section class="sx-sec"><header class="sx-sh"><h3>基本情報</h3><span class="sx-meta">Notion 顧客管理DB・Tier／新規顧客／業種はクリックで変更</span></header>
     <div class="sx-info">
-      ${f('Tier', coEd(d,'tier'))}${f('業種', coEd(d,'ind'))}
+      ${f('Tier', coEd(d,'tier'))}${f('新規顧客', coEd(d,'nc'))}${f('業種', coEd(d,'ind'))}
       ${f('主担当', `${esc(d.owners.join('、'))}<small>${c.asg?'Notion 担当3':'Twenty の値'}</small>`)}
       ${f('Ptengine AI担当', `${esc(d.rawOwn.join('、')||'—')}<small>Twenty</small>`)}
     </div>

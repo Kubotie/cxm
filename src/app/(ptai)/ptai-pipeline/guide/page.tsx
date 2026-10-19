@@ -43,6 +43,7 @@ export default async function GuidePage() {
               <ul>
                 <li><b>障壁</b>・<b>ニーズ</b>・<b>ネクストアクション</b></li>
                 <li><b>（目標）追加MRR</b>（この会社でいくら増やしたいか）</li>
+                <li><b>Tier</b>・<b>新規顧客</b>・<b>業種</b>（企業詳細の「基本情報」から）</li>
                 <li><b>到達予定</b>（各フェーズにいつ届くか）</li>
                 <li>サクセスの計画・Todo、組織図、議事録のメモ</li>
               </ul>
@@ -126,11 +127,11 @@ export default async function GuidePage() {
           <table className="pdoc-tbl pdoc-ph">
             <thead><tr><th>フェーズ</th><th>社内の言い方</th><th>③ の係数</th></tr></thead>
             <tbody>
-              <tr><td>Active</td><td>初回アポ実施前</td><td>—</td></tr>
-              <tr><td>Goal Shared</td><td>初回アポ実施済み</td><td>30%</td></tr>
-              <tr><td>Qualified Champion</td><td>トライアル開始済み</td><td>50%</td></tr>
-              <tr><td>Evaluating</td><td>トライアル運用評価段階</td><td>70%</td></tr>
-              <tr><td>Probable</td><td>最終見積もり提示済み</td><td>90%</td></tr>
+              <tr><td>Active</td><td>初回アポ実施前</td><td>10%</td></tr>
+              <tr><td>Goal Shared</td><td>初回アポ実施済み</td><td>15%</td></tr>
+              <tr><td>Qualified Champion</td><td>トライアル開始済み</td><td>30%</td></tr>
+              <tr><td>Evaluating</td><td>トライアル運用評価段階</td><td>50%</td></tr>
+              <tr><td>Probable</td><td>最終見積もり提示済み</td><td>70%</td></tr>
               <tr><td>Verbal</td><td>口頭合意獲得済み</td><td>90%</td></tr>
               <tr><td>Won</td><td>申込用紙回収済み</td><td>100%</td></tr>
               <tr><td>受注 (Closed Won)</td><td>契約締結済み</td><td>100%</td></tr>

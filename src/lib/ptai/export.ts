@@ -134,6 +134,8 @@ export async function buildExport(f: ExportFilter = {}) {
       cid:  c.cid,
       name: c.n,
       tier: c.t,
+      /** 新規顧客フラグ。Notion 顧客管理DB の「新規顧客」 */
+      newCustomer: c.nc === true,
       industry: c.ind,
       /** Ptengine AI ステータス */
       status: c.ps,

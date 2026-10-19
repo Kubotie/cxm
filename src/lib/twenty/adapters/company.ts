@@ -64,6 +64,8 @@ export function toRawCompany(c: Record<string, unknown>): RawCompany {
     // この経路（Twenty Company 直読み）には期初MRR が無い。増減は 0 として扱う
     bm:    currencyToYen(c.mrr),
     ind:   strOrNull(c.industryJp),
+    // この経路（Twenty Company 直読み）に新規顧客フラグは無い。正本は Notion
+    nc:    false,
     slug:  strOrNull(c.industrySlug),
     lay:   strOrNull(c.companySizeLayer),
     own,

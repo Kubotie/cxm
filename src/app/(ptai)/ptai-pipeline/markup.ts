@@ -142,6 +142,7 @@ export const BOARD_HTML = `
         <select id="fStatus" hidden aria-hidden="true"><option value="">すべて</option></select>
         <label><input type="checkbox" id="fDeals"> 商談をすべて開く</label>
         <label><input type="checkbox" id="fMissing"> 予定月・追加MRR 未入力のみ</label>
+        <label><input type="checkbox" id="fNew"> 新規顧客のみ</label>
         <input id="fQ" type="search" placeholder="企業名で検索" style="width:170px" aria-label="企業名で検索">
       </div>
     </div>

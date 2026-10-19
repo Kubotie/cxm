@@ -71,6 +71,12 @@ export const CUSTOMER_PROP = {
   agency:       '代理店(代理店経由の場合)',
   name:           '企業名',                            // title
   tier:            'Tier',                              // select
+  /**
+   * 新規顧客フラグ（checkbox）。2026-10-19 Kubotie 依頼で新設。
+   * Tier の横に出す。既存契約のある会社と、これから取りにいく会社を見分けるため
+   * （KDDI・ビッグローブ・生活情報サービスなど）。
+   */
+  newCustomer:     '新規顧客',                          // checkbox
   industry:        '業種',                              // select
   owner3:          '担当3',                             // multi_select（主担当）
   owner1:          '担当1',                             // multi_select（参照のみ）

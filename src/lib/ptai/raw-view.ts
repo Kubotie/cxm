@@ -51,6 +51,7 @@ function buildRawCompany(s: CompanySummary, deals: RawOpportunity[] | null): Raw
     m:    a.mrr,
     bm:   a.baseMrr,
     ind:  a.industry,
+    nc:   a.newCustomer === true,
     slug: null,
     lay:  null,
     own:  a.owners,

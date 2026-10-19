@@ -1643,3 +1643,10 @@ table.deals.iss{min-width:880px}
 /* 障壁もネクストアクションと同じく一覧から直接入力する（2026-10-08） */
 .brc.nac .brt{display:none}
 .brc.nac .nav{white-space:normal}
+
+/* 新規顧客のしるし（Tier の横。2026-10-19） */
+.nctag{
+  display:inline-block; margin-left:5px; padding:1px 6px; border-radius:999px;
+  font-size:10px; font-weight:800; letter-spacing:.02em; vertical-align:middle;
+  background:color-mix(in oklab,var(--accent) 16%,transparent); color:var(--accent-ink);
+}

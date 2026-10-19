@@ -44,6 +44,8 @@ export interface AccountInfo {
   tier:           string | null;
   /** ダッシュボードのコード（IT_SAAS など） */
   industry:       string | null;
+  /** 新規顧客フラグ。Notion 顧客管理DB の「新規顧客」 */
+  newCustomer:    boolean;
   /** 主担当の呼称（Paul / Baba …）。Notion の担当3 から変換済み */
   owners:         string[];
   /**
@@ -144,6 +146,7 @@ export function toAccountInfo(c: NotionCustomer): AccountInfo {
     name:           c.name,
     tier:           c.tier ? TIER_FROM_NOTION[c.tier] ?? null : null,
     industry:       c.industry ? INDUSTRY_FROM_NOTION[c.industry] ?? null : null,
+    newCustomer:    c.newCustomer === true,
     owners:         c.owners3.map(o => OWNER_FROM_NOTION[o] ?? o),
     // 同期済みの 現在MRR を優先する。⚠️MRR は人の手入力が古いまま残っている
     mrr:            c.curMrr ?? c.mrr ?? 0,

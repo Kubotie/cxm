@@ -15,10 +15,20 @@
 
 import { STAGE_ORDER, type Stage } from './twenty-test/schema';
 
-/** ③（見込）追加MRR の係数。Salesforce の DefaultProbability とは別物（運用で決めた値） */
+/**
+ * ③（見込）追加MRR の係数。Salesforce の DefaultProbability とは別物（運用で決めた値）。
+ *
+ * ⚠ **board.js の FORECAST と同じ値にすること。** 画面とサーバーで 2 本ある。
+ * ⚠ 毎朝のスナップショットは、その日の係数で記録される。係数を変えると
+ *   期待値の推移に段差ができる（遡って計算し直さない）。
+ *
+ * 変更の履歴:
+ *   2026-10-02 Goal Shared 30 / QC 50 / Evaluating 70 / Probable 90 / Won 100
+ *   2026-10-19 読みが甘く出ていたので全体に引き下げ。Active にも係数を付けた
+ */
 export const FORECAST: Record<string, number> = {
-  INACTIVE: 0, ACTIVE: 0, GOAL_SHARED: .30, QUALIFIED_CHAMPION: .50,
-  EVALUATING: .70, PROBABLE: .90, VERBAL: .90, WON: 1, CLOSED_WON: 1,
+  INACTIVE: 0, ACTIVE: .10, GOAL_SHARED: .15, QUALIFIED_CHAMPION: .30,
+  EVALUATING: .50, PROBABLE: .70, VERBAL: .90, WON: 1, CLOSED_WON: 1,
   ADMIN_CLOSE: 0, CLOSED_LOST: 0,
 };
 

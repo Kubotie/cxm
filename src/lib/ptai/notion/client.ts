@@ -184,6 +184,8 @@ export interface NotionCustomer {
   lastEditedTime: string;
   name:           string;
   tier:           string | null;
+  /** 新規顧客フラグ。未設定は false（Notion の checkbox は空＝false） */
+  newCustomer:    boolean;
   industry:       string | null;
   owners3:        string[];
   /** ⚠️MRR。もう画面では使わない（古い手入力が混ざっている） */
@@ -240,6 +242,7 @@ function toCustomer(page: Record<string, unknown>): NotionCustomer {
     lastEditedTime:  String(page.last_edited_time ?? ''),
     name:            String(r(CUSTOMER_PROP.name) ?? ''),
     tier:            (r(CUSTOMER_PROP.tier) as string | null) ?? null,
+    newCustomer:     r(CUSTOMER_PROP.newCustomer) === true,
     industry:        (r(CUSTOMER_PROP.industry) as string | null) ?? null,
     owners3:         (r(CUSTOMER_PROP.owner3) as string[] | null) ?? [],
     mrr:             (r(CUSTOMER_PROP.mrr) as number | null) ?? null,
@@ -289,6 +292,7 @@ export async function listCustomers(opts: { pageSize?: number; maxPages?: number
 /** 書き込める項目と、その Notion 上の型 */
 const WRITABLE: Record<keyof CustomerPatch, { prop: string; kind: string }> = {
   tier:           { prop: CUSTOMER_PROP.tier,           kind: 'select' },
+  newCustomer:    { prop: CUSTOMER_PROP.newCustomer,    kind: 'checkbox' },
   industry:       { prop: CUSTOMER_PROP.industry,       kind: 'select' },
   aimMrr:         { prop: CUSTOMER_PROP.aimMrr,         kind: 'number' },
   billingMonth:   { prop: CUSTOMER_PROP.billingMonth,   kind: 'date' },
@@ -304,6 +308,7 @@ const WRITABLE: Record<keyof CustomerPatch, { prop: string; kind: string }> = {
 
 export interface CustomerPatch {
   tier?:           string | null;
+  newCustomer?:    boolean;
   industry?:       string | null;
   aimMrr?:         number | null;
   billingMonth?:   string | null;

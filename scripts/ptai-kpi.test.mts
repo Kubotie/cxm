@@ -26,10 +26,25 @@ test('②（商談）追加MRR は失注と管理クローズを除いた合計'
   assert.equal(m2(c), 150);
 });
 
-test('③（見込）追加MRR は商談ごとに係数をかける。Verbal は 90%', () => {
-  assert.equal(FORECAST.VERBAL, .90);
+test('③（見込）追加MRR は商談ごとに係数をかける', () => {
+  // 2026-10-19 の値。Verbal は Probable に合わせず 90 のまま（2026-10-02 の決定）
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(FORECAST).filter(([, v]) => v)),
+    { ACTIVE: .10, GOAL_SHARED: .15, QUALIFIED_CHAMPION: .30,
+      EVALUATING: .50, PROBABLE: .70, VERBAL: .90, WON: 1, CLOSED_WON: 1 });
   const c = co({ deals: [deal('GOAL_SHARED', 100), deal('EVALUATING', 100), deal('VERBAL', 100)] });
-  assert.equal(m3(c), 30 + 70 + 90);
+  assert.equal(m3(c), 15 + 50 + 90);
+});
+
+test('画面（board.js）とサーバー（kpi.ts）の係数が同じ', async () => {
+  // 2 本あるので、片方だけ直すと画面とスナップショットがずれる
+  const src = await import('node:fs').then(fs =>
+    fs.readFileSync('public/ptai-pipeline/board.js', 'utf8'));
+  const m = src.match(/const FORECAST = \{([^}]+)\}/);
+  assert.ok(m, 'board.js の FORECAST が見つからない');
+  const board: Record<string, number> = {};
+  for (const [, k, v] of m![1].matchAll(/(\w+)\s*:\s*([\d.]+)/g)) board[k] = Number(v);
+  assert.deepEqual(board, FORECAST);
 });
 
 test('確定は WON と CLOSED_WON の両方', () => {
