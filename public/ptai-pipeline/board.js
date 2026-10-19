@@ -83,12 +83,12 @@ const IND_JP = {BEAUTY_D2C:'美容・コスメ・健康食品・D2C',HEALTHCARE:
 const TIER_JP = t => t ? t.replace('TIER','Tier') : '—';
 /* 新規顧客のしるし。Tier の横に小さく出す（2026-10-19 Kubotie） */
 const NC_TAG = d => d && d.nc ? '<span class="nctag">新規</span>' : '';
-/* 一覧で押して切り替えるほう。付いていない会社は薄く出し、行にカーソルを乗せると濃くなる。
-   128 行すべてに「既存」と出すと邪魔なので、付いていないときは「＋新規」にする */
-const NC_BTN = d => `<button type="button" class="nctag btn ${d.nc?'on':'off'}" data-nctog="${d.id}"`
+/* 一覧の「新規/既存」列。押すとその場で入れ替わる（Notion 顧客管理DB に保存）。
+   2026-10-19 Kubotie: 最初は Tier の横に重ねたが、列が狭くて折り返したので独立した列にした */
+const NC_BTN = d => `<button type="button" class="ncsw ${d.nc?'on':'off'}" data-nctog="${d.id}"`
   + ` aria-pressed="${d.nc?'true':'false'}"`
-  + ` title="${d.nc?'新規顧客のしるしを外す（Notion に保存）':'新規顧客にする（Notion に保存）'}">`
-  + `${d.nc?'新規':'＋新規'}</button>`;
+  + ` title="クリックで${d.nc?'「既存」':'「新規」'}に変える（Notion に保存）">`
+  + `${d.nc?'新規':'既存'}</button>`;
 const MEMBERS = ['Paul','Baba','Eri','Kubotie','Ava','Utty'];
 
 /* ===================== 行動履歴の解析（Next Action 欄） ===================== */
@@ -1010,10 +1010,10 @@ function renderDeals(){
   const fo=document.getElementById('fOwner').value, fp=document.getElementById('fPhase').value, fs=document.getElementById('fStatus').value, ft=document.getElementById('fTier').value, q=document.getElementById('fQ').value.trim();
   const base = view==='team'?DEALS:DEALS.filter(d=>d.owners.includes(view));
   let ds=base.filter(d=>(!FS.owner.size||d.owners.some(o=>FS.owner.has(o)))&&(!FS.phase.size||phasesOf(d).some(p=>FS.phase.has(p)))&&(!fs||d.ps===fs)&&(!FS.tier.size||FS.tier.has(d.t))&&(!q||d.n.includes(q))&&(!newOnly||d.nc)&&(!missingOnly||(!baseMo(d)||!d.add)&&d.ph!=='CLOSED_LOST'));
-  const key={co:d=>d.n,o:d=>d.owners.join(),t:d=>d.t||'Z',ps:d=>PS.indexOf(d.ps),st:d=>PHASES.indexOf(d.ph),m:d=>d.m,add:d=>d.add,aim:d=>{const p=planOf(d);return p?(p.base+p.add)*goalCtx().w(d)+1e12:aimOf(d);},tot:total,cl:d=>d.close||'9999',ap:d=>d.apply||'9999',br:d=>(d.bs?BS_OPTS.indexOf(d.bs):9)+(d.br||'~'),pr:d=>FORECAST[d.ph]||0,exp:expected,add3:d=>m3(d),ind:d=>d.ind||'',pot:d=>(potOf(d)||{prio:-1}).prio,nd:d=>d.nd||'9999',le:d=>d.le}[sortKey];
+  const key={co:d=>d.n,o:d=>d.owners.join(),t:d=>d.t||'Z',nc:d=>d.nc?0:1,ps:d=>PS.indexOf(d.ps),st:d=>PHASES.indexOf(d.ph),m:d=>d.m,add:d=>d.add,aim:d=>{const p=planOf(d);return p?(p.base+p.add)*goalCtx().w(d)+1e12:aimOf(d);},tot:total,cl:d=>d.close||'9999',ap:d=>d.apply||'9999',br:d=>(d.bs?BS_OPTS.indexOf(d.bs):9)+(d.br||'~'),pr:d=>FORECAST[d.ph]||0,exp:expected,add3:d=>m3(d),ind:d=>d.ind||'',pot:d=>(potOf(d)||{prio:-1}).prio,nd:d=>d.nd||'9999',le:d=>d.le}[sortKey];
   ds.sort((x,y)=>{const a=key(x),b=key(y);return (a>b?1:a<b?-1:0)*sortDir;});
   const th=(k,l,r,t,tp)=>`<th class="${r?'r':''}" data-k="${k}" ${t?`title="${t}"`:''} ${tp?`data-tip="${esc(tp)}"`:''} ${sortKey===k?`aria-sort="${sortDir>0?'ascending':'descending'}"`:''}>${l}${sortKey===k?(sortDir>0?' ▲':' ▼'):''}</th>`;
-  const head=`<thead><tr>${th('co','企業／商談')}${th('o','担当')}${th('t','Tier')}${th('st','フェーズ')}${th('m','⑥ 現在MRR',1,'','毎朝 8 時に Company Database（Salesforce 連動）から同期した額。かっこ内は期初MRR からの増減')}${th('aim','① （目標）追加MRR',1,'この会社で追加したいMRR。クリックで入力')}${th('add','② （商談）追加MRR',1,'商談の金額の合計（失注・Admin Close は除く）')}${th('add3','③ （見込）追加MRR',1,'② を商談ごとに フェーズの係数 で割り引いた額')}${th('ap','申込完了日')}${th('cl','課金開始日')}${th('br','商談障壁')}${th('ind','業種')}${th('pot','ポテンシャル <span class="qi">?</span>',0,'',POT_HEAD_TIP)}<th>ニーズ</th><th>ネクストアクション</th>${th('nd','アクション期日')}${th('le','更新日')}</tr></thead>`;
+  const head=`<thead><tr>${th('co','企業／商談')}${th('o','担当')}${th('t','Tier')}${th('nc','新規/既存',0,'','クリックで入れ替わります。Notion 顧客管理DB の「新規顧客」に保存されます')}${th('st','フェーズ')}${th('m','⑥ 現在MRR',1,'','毎朝 8 時に Company Database（Salesforce 連動）から同期した額。かっこ内は期初MRR からの増減')}${th('aim','① （目標）追加MRR',1,'この会社で追加したいMRR。クリックで入力')}${th('add','② （商談）追加MRR',1,'商談の金額の合計（失注・Admin Close は除く）')}${th('add3','③ （見込）追加MRR',1,'② を商談ごとに フェーズの係数 で割り引いた額')}${th('ap','申込完了日')}${th('cl','課金開始日')}${th('br','商談障壁')}${th('ind','業種')}${th('pot','ポテンシャル <span class="qi">?</span>',0,'',POT_HEAD_TIP)}<th>ニーズ</th><th>ネクストアクション</th>${th('nd','アクション期日')}${th('le','更新日')}</tr></thead>`;
   const sig=[view,sortKey,sortDir,...['fStatus','fQ'].map(id=>document.getElementById(id).value),...Object.values(FS).map(v=>[...v].sort().join(',')),missingOnly,newOnly].join('|');
   if(sig!==pageSig){ page=1; pageSig=sig; }
   const pages=Math.max(1,Math.ceil(ds.length/pageSize)); page=Math.min(Math.max(1,page),pages);
@@ -1030,7 +1030,8 @@ function renderDeals(){
     const par=`<tr data-id="${d.id}" class="par${open?' open':''}">
       <td class="co" title="${esc(d.n)}">${nD?`<button type="button" class="caret" data-caret="${d.cid}" aria-expanded="${open}" aria-label="${open?'商談を閉じる':'商談を開く'}">${open?'▼':'▶'}</button>`:''}${esc(d.n)}<span class="cmeta">${nD?`<span class="chip dcnt">商談 ${nD}件</span>`:''}${RAW.companies[d.id]&&RAW.companies[d.id].newco?(()=>{ const sy=RAW.companies[d.id].sync||{}; const ok=sy.notion==='done'&&sy.twenty==='done'; return `<span class="chip ${ok?'ncok':'unsync'}" title="Notion：${sy.notion==='done'?'作成済み':'未作成'}／Twenty：${sy.twenty==='done'?'作成済み':'同期待ち'}">${ok?'新規':'新規・未同期'}</span>`; })():''}</span></td>
       <td>${d.owners.map(o=>`<span class="ownerchip"><i style="background:${CONFIG.memberColor[o]}"></i>${o}</span>`).join('<br>')}</td>
-      <td class="num tiercell">${TIER_JP(d.t)}${NC_BTN(d)}</td>
+      <td class="num">${TIER_JP(d.t)}</td>
+      <td class="ncc">${NC_BTN(d)}</td>
       <td title="${esc(phBoth(d.ph))}${nD>1?'（いちばん進んでいる商談のフェーズ）':''}"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}</td>
       <td class="r num">${(()=>{ const L=mrrLift(d);
         if(L.next) return `${man1(d.m)}<span class="mrrnext" title="受注済み。課金開始で ${man1(d.m+L.next)} になります">${L.nextDate?mdj(L.nextDate)+'〜':''} ${man1(d.m+L.next)}</span>`;
@@ -1048,7 +1049,7 @@ function renderDeals(){
       <td class="nac">${naCell(d)}</td>
       <td class="num ${late?'late':soon?'soon':''}">${d.nd?d.nd.slice(5).replace('-','/'):'<span class="dim">—</span>'}${late?`<div style="font-size:11px">${days(TODAY,ymd(d.nd))}日超過</div>`:''}</td>
       <td class="num">${d.le.slice(5).replace('-','/')}</td></tr>`;
-    const sep = d.id===gHit ? `<tr class="gsep"><td colspan="17"><span>ここまでで目標 ${man(goalCtx().tgt)} に到達</span></td></tr>` : '';
+    const sep = d.id===gHit ? `<tr class="gsep"><td colspan="18"><span>ここまでで目標 ${man(goalCtx().tgt)} に到達</span></td></tr>` : '';
     if(!open) return par+sep;
     const subs=d.deals.map(x=>{
       const lost=x.ph==='CLOSED_LOST', fin=['CLOSED_WON','CLOSED_LOST'].includes(x.ph);
@@ -1056,7 +1057,7 @@ function renderDeals(){
       const naLate = na.date && ymd(na.date)<TODAY && !fin, naSoon = na.date && !naLate && days(ymd(na.date),TODAY)<=7;
       return `<tr class="sub" data-id="${d.id}" data-dk="${x.key}">
       <td class="co" title="${esc(x.name)}">${esc(x.name)}${x.primary&&!x.oid?'<span class="chip unsync" title="Twenty に Opportunity がありません。同期時に作成">Twenty 未作成</span>':!x.primary?'<span class="chip unsync" title="ダッシュボードで追加。同期時に Opportunity を作成">未同期</span>':''}</td>
-      <td></td><td></td>
+      <td></td><td></td><td></td>
       <td>${phChip(d,x)}</td>
       <td></td><td></td>
       <td class="r num">${x.add?man1(x.add)+(x.src&&x.src.add==='edit'&&x.primary?'<span class="chip estm">入力</span>':''):(lost?'<span class="dim">—</span>':sfFill(d,x))}</td>
@@ -1071,8 +1072,8 @@ function renderDeals(){
       <td class="num ${naLate?'late':naSoon?'soon':''}">${na.date?na.date.slice(5).replace('-','/'):'<span class="dim">—</span>'}${naLate?`<div style="font-size:11px">${days(TODAY,ymd(na.date))}日超過</div>`:''}</td>
       <td class="num">${x.up?x.up.slice(5).replace('-','/'):'<span class="dim">—</span>'}</td></tr>`;}).join('');
     return par+subs+sep;}).join('');
-  const foot=`<tfoot><tr><td colspan="4">絞り込み結果 ${all.length}社の合計</td><td class="r num">${man1(all.reduce((s,d)=>s+d.m,0))}</td><td class="r num">${man1(all.reduce((s,d)=>s+aimOf(d),0))}</td><td class="r num">${man1(all.reduce((s,d)=>s+m2(d),0))}</td><td class="r num">${man1(all.reduce((s,d)=>s+m3(d),0))}</td><td colspan="9"></td></tr></tfoot>`;
-  const tbl=document.getElementById('deals'); tbl.innerHTML=head+`<tbody>${rows||'<tr><td colspan="17" class="dim" style="padding:18px 8px">条件に合う企業はありません</td></tr>'}</tbody>`+foot;
+  const foot=`<tfoot><tr><td colspan="5">絞り込み結果 ${all.length}社の合計</td><td class="r num">${man1(all.reduce((s,d)=>s+d.m,0))}</td><td class="r num">${man1(all.reduce((s,d)=>s+aimOf(d),0))}</td><td class="r num">${man1(all.reduce((s,d)=>s+m2(d),0))}</td><td class="r num">${man1(all.reduce((s,d)=>s+m3(d),0))}</td><td colspan="9"></td></tr></tfoot>`;
+  const tbl=document.getElementById('deals'); tbl.innerHTML=head+`<tbody>${rows||'<tr><td colspan="18" class="dim" style="padding:18px 8px">条件に合う企業はありません</td></tr>'}</tbody>`+foot;
   renderPager(all.length,pages);
   tbl.querySelectorAll('tbody tr[data-id]').forEach(tr=>tr.onclick=e=>e.target.closest('input')?null:tr.dataset.dk?openDeal(+tr.dataset.id,'edit',tr.dataset.dk):openDeal(+tr.dataset.id,'sum'));
   wireAim(tbl); wireNa(tbl); wireBr(tbl);
