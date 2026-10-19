@@ -43,7 +43,8 @@ export default async function GuidePage() {
               <ul>
                 <li><b>障壁</b>・<b>ニーズ</b>・<b>ネクストアクション</b></li>
                 <li><b>（目標）追加MRR</b>（この会社でいくら増やしたいか）</li>
-                <li><b>Tier</b>・<b>新規顧客</b>・<b>業種</b>（企業詳細の「基本情報」から）</li>
+                <li><b>新規顧客</b>のしるし（一覧の Tier の横をクリック）</li>
+                <li><b>Tier</b>・<b>業種</b>（企業詳細の「基本情報」から）</li>
                 <li><b>到達予定</b>（各フェーズにいつ届くか）</li>
                 <li>サクセスの計画・Todo、組織図、議事録のメモ</li>
               </ul>

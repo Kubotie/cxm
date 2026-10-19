@@ -1650,6 +1650,20 @@ table.deals.iss{min-width:880px}
   font-size:10px; font-weight:800; letter-spacing:.02em; vertical-align:middle;
   background:color-mix(in oklab,var(--accent) 16%,transparent); color:var(--accent-ink);
 }
+/* 一覧で押して切り替えるほう */
+.nctag.btn{ border:1px solid transparent; cursor:pointer; font-family:inherit; }
+.nctag.btn:hover{ filter:brightness(.96); }
+.nctag.btn:focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+/* 付いていない会社は普段はほぼ見えない。行にカーソルを乗せると出る
+   （128 行すべてに印が並ぶと、付いている会社が埋もれる） */
+.nctag.btn.off{
+  background:transparent; color:var(--muted);
+  border-color:color-mix(in oklab,var(--ink) 14%,transparent); border-style:dashed;
+  opacity:0; transition:opacity .12s;
+}
+#deals tr:hover .nctag.btn.off,
+.nctag.btn.off:focus-visible{ opacity:1; }
+#deals td.tiercell{ white-space:nowrap; }
 
 /* 業種の列。略さない名前にしたので折り返す（2026-10-19） */
 #deals td.indcell{ min-width:9em; max-width:13em; white-space:normal; line-height:1.4; }

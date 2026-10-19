@@ -83,6 +83,12 @@ const IND_JP = {BEAUTY_D2C:'美容・コスメ・健康食品・D2C',HEALTHCARE:
 const TIER_JP = t => t ? t.replace('TIER','Tier') : '—';
 /* 新規顧客のしるし。Tier の横に小さく出す（2026-10-19 Kubotie） */
 const NC_TAG = d => d && d.nc ? '<span class="nctag">新規</span>' : '';
+/* 一覧で押して切り替えるほう。付いていない会社は薄く出し、行にカーソルを乗せると濃くなる。
+   128 行すべてに「既存」と出すと邪魔なので、付いていないときは「＋新規」にする */
+const NC_BTN = d => `<button type="button" class="nctag btn ${d.nc?'on':'off'}" data-nctog="${d.id}"`
+  + ` aria-pressed="${d.nc?'true':'false'}"`
+  + ` title="${d.nc?'新規顧客のしるしを外す（Notion に保存）':'新規顧客にする（Notion に保存）'}">`
+  + `${d.nc?'新規':'＋新規'}</button>`;
 const MEMBERS = ['Paul','Baba','Eri','Kubotie','Ava','Utty'];
 
 /* ===================== 行動履歴の解析（Next Action 欄） ===================== */
@@ -1024,7 +1030,7 @@ function renderDeals(){
     const par=`<tr data-id="${d.id}" class="par${open?' open':''}">
       <td class="co" title="${esc(d.n)}">${nD?`<button type="button" class="caret" data-caret="${d.cid}" aria-expanded="${open}" aria-label="${open?'商談を閉じる':'商談を開く'}">${open?'▼':'▶'}</button>`:''}${esc(d.n)}<span class="cmeta">${nD?`<span class="chip dcnt">商談 ${nD}件</span>`:''}${RAW.companies[d.id]&&RAW.companies[d.id].newco?(()=>{ const sy=RAW.companies[d.id].sync||{}; const ok=sy.notion==='done'&&sy.twenty==='done'; return `<span class="chip ${ok?'ncok':'unsync'}" title="Notion：${sy.notion==='done'?'作成済み':'未作成'}／Twenty：${sy.twenty==='done'?'作成済み':'同期待ち'}">${ok?'新規':'新規・未同期'}</span>`; })():''}</span></td>
       <td>${d.owners.map(o=>`<span class="ownerchip"><i style="background:${CONFIG.memberColor[o]}"></i>${o}</span>`).join('<br>')}</td>
-      <td class="num">${TIER_JP(d.t)}${NC_TAG(d)}</td>
+      <td class="num tiercell">${TIER_JP(d.t)}${NC_BTN(d)}</td>
       <td title="${esc(phBoth(d.ph))}${nD>1?'（いちばん進んでいる商談のフェーズ）':''}"><span class="chip ph" style="background:var(${PCOL[d.ph]});${d.ph==='CLOSED_LOST'?'color:var(--ink)':''}">${PH_JP[d.ph]}</span>${d.phEst?'<span class="chip estm">暫定</span>':''}</td>
       <td class="r num">${(()=>{ const L=mrrLift(d);
         if(L.next) return `${man1(d.m)}<span class="mrrnext" title="受注済み。課金開始で ${man1(d.m+L.next)} になります">${L.nextDate?mdj(L.nextDate)+'〜':''} ${man1(d.m+L.next)}</span>`;
@@ -1974,7 +1980,47 @@ function coEd(d,k){ const F=CO_F[k], v=F.cur(d), p=coPending(d,k);
   const tip = k==='nc' ? 'クリックで変更（Notion 顧客管理DB に保存）' : 'クリックで変更（Twenty に同期）';
   const txt = F.str ? esc(F.lab(F.str(v))) : (v?esc(F.lab(v)):'<span class="dim">未設定</span>');
   return `<button type="button" class="coed" data-coed="${k}" title="${tip}">${txt}<i aria-hidden="true">✎</i></button>${p?'<span class="sb2 ed">Twenty 同期待ち</span>':''}`; }
+/* 新規顧客フラグの保存。**一覧のボタンと企業詳細のプルダウンで同じ道を通る。**
+   正本は Notion 顧客管理DB の checkbox（db-write が書く）。
+   失敗したら元に戻して知らせる（黙って戻ると、付けたつもりのまま運用されてしまう）。 */
+let NC_BUSY = false;
+async function saveNc(d, val){
+  if(NC_BUSY) return;
+  NC_BUSY = true;
+  const prev = EDITS[d.cid];
+  const rc = RAW.companies[d.id];
+  const was = rc ? rc.nc === true : d.nc === true;
+  try{
+    const base = prev || {companyId:d.cid, companyName:d.n, opportunityId:d.oid||null, opp:{}, company:{}, deals:[]};
+    const body = {...base, company:{...(base.company||{}), nc: val},
+      deals:[...(base.deals||[])], updatedAt:new Date().toISOString(), syncedAt:null};
+    /* RAW は読み込み時の 1 回きりで取り直さないので、ここで合わせないと
+       次の再描画で古い値に戻って見える（2026-10-19 に実機で踏んだ） */
+    if(rc) rc.nc = val;
+    EDITS[d.cid] = body; rebuildDeals(); renderAll(); if(openId!==null) renderDrawer();
+    if(was !== val) logFeed(DEALS[d.id], [{kind:'co', deal:'', key:null, label:'新規顧客',
+      from: was?'新規':'既存', to: val?'新規':'既存'}]);
+    if(db){
+      try{ await db.doc('edits/'+d.cid).set(body); }
+      catch(_){
+        if(rc) rc.nc = was;
+        if(prev) EDITS[d.cid] = prev; else delete EDITS[d.cid];
+        rebuildDeals(); renderAll(); if(openId!==null) renderDrawer();
+        alert(`${d.n} の「新規顧客」を保存できませんでした。もう一度お試しください。`);
+      }
+    }
+  } finally { NC_BUSY = false; }
+}
+/* 一覧のボタン。行のクリック（企業詳細を開く）より先に受ける */
+document.addEventListener('click', e=>{
+  const b = e.target.closest('[data-nctog]'); if(!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const d = DEALS[+b.dataset.nctog]; if(!d) return;
+  saveNc(d, !d.nc);
+}, true);
+
 async function saveCompanyField(d,k,val){
+  if(k==='nc') return saveNc(d, val===true);
   const F=CO_F[k], raw=F.raw(RAW.companies[d.id]||{}), from=F.cur(d);
   const prev=EDITS[d.cid]||{}; const now=new Date().toISOString();
   const company={...(prev.company||{})};
