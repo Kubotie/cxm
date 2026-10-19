@@ -144,8 +144,10 @@ export async function buildExport(f: ExportFilter = {}) {
       currentMrr: num(c.m),
       /** 期初MRR。積み上げの土台 */
       baseMrr: typeof c.bm === 'number' ? c.bm : num(c.m),
-      /** ①（目標）追加MRR */
+      /** ①（Target）追加MRR。取りにいく上限（Notion の「想定追加MRR」） */
       aimMrr: num(co.aim),
+      /** ①（Commit）追加MRR。約束する数字（Notion の「Commit追加MRR」） */
+      commitMrr: num(co.commit),
       sfAccountId: c.sfid,
       url: c.url, domain: c.dom,
       customerSuccess: c.cs,
@@ -166,7 +168,7 @@ export async function buildExport(f: ExportFilter = {}) {
 
     if (inc.has('kpi')) {
       const k = toKpiCompany(c.cid, c.o, num(c.m),
-        typeof c.bm === 'number' ? c.bm : num(c.m), num(co.aim), deals);
+        typeof c.bm === 'number' ? c.bm : num(c.m), num(co.aim), deals, num(co.commit));
       const plan = planOf(k);
       out.kpi = {
         /** ②（商談）追加MRR の合計 */
@@ -203,7 +205,7 @@ export async function buildExport(f: ExportFilter = {}) {
   const targets = (t?.targets ?? {}) as Record<string, unknown>;
   const kpiCos: KpiCompany[] = rows.map(c => toKpiCompany(
     String(c.cid), c.owners as string[], num(c.currentMrr), num(c.baseMrr), num(c.aimMrr),
-    dealsOf(c)));
+    dealsOf(c), num(c.commitMrr)));
   const totals = [
     computeKpis(kpiCos, { scope: 'team', targetMrr: num(t?.targetMrr) || 40_000_000, today }),
     ...MEMBERS.map(m => computeKpis(kpiCos, { scope: m, targetMrr: num(targets[m]), today })),
@@ -390,7 +392,7 @@ export async function buildExport(f: ExportFilter = {}) {
 
 function toKpiCompany(
   cid: string, owners: string[], curMrr: number, baseMrr: number, aim: number,
-  deals: Array<Record<string, unknown>>,
+  deals: Array<Record<string, unknown>>, commit = 0,
 ): KpiCompany {
   const ds: KpiDeal[] = deals.map(d => ({
     stage:  String(d.stage ?? 'INACTIVE'),
@@ -398,5 +400,5 @@ function toKpiCompany(
     na:     (d.nextAction as string | null) ?? null,
     naDate: (d.nextActionDate as string | null) ?? null,
   }));
-  return { cid, owners: owners ?? [], curMrr, baseMrr, aim, deals: ds };
+  return { cid, owners: owners ?? [], curMrr, baseMrr, aim, commit, deals: ds };
 }

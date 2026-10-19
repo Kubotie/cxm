@@ -22,6 +22,36 @@ const KIND_JP: Record<Item["kind"], string> = {
 const RELEASES: Release[] = [
   {
     date: "2026-10-19",
+    label: "夕方",
+    items: [
+      {
+        kind: "new",
+        title: "（Commit）追加MRR を入れられるようにしました",
+        body:
+          "①（目標）追加MRR を「①（Target）追加MRR」に改名し、その右に「①（Commit）追加MRR」を足しました。" +
+          "Target は取りにいく上限、Commit は約束する数字です。どちらも表のセルをクリックして入力でき、" +
+          "Notion 顧客管理DB に保存されます（Target は「想定追加MRR」、Commit は新しく作った「Commit追加MRR」）。",
+      },
+      {
+        kind: "change",
+        title: "コミットとチャレンジに「いま / 置いた目標」を並べました",
+        body:
+          "コミットのカードは Commit の合計、チャレンジのカードは Target の合計を右に並べて出します。" +
+          "どちらも分子と同じ合算MRR（期初MRR ＋ 目標額、会社ごとに 1 回）で数えているので、" +
+          "そのまま比率として読めます。下に「目標比 ○%」も出ます。" +
+          "まだ入力が無いうちは何も出ません。",
+      },
+      {
+        kind: "fix",
+        title: "追加MRR を空にしても Notion に残っていました",
+        body:
+          "入力済みの金額を消しても、画面では空になるのに Notion には古い数字が残っていました。" +
+          "いまは空にすると Notion も空になります。",
+      },
+    ],
+  },
+  {
+    date: "2026-10-19",
     items: [
       {
         kind: "change",

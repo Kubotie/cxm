@@ -247,6 +247,7 @@ export async function buildDbView(): Promise<DbViewResult> {
         renewal: kd.renewalMonth != null ? (kd.renewalMonth === 'none' ? { none: true } : { month: kd.renewalMonth }) : null,
       }) : null,
       aim: cust?.aimMrr ?? null,
+      commit: cust?.commitMrr ?? null,
     });
 
     const data = clean({

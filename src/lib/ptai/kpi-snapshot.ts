@@ -115,6 +115,7 @@ const FIELDS: Array<[keyof KpiRow, string?]> = [
   ['commit', 'commitMrr'], ['commitCompanies'],
   ['challenge'], ['challengeCompanies'],
   ['pipeline', 'pipelineMrr'], ['pipelineCompanies'],
+  ['commitGoal'], ['challengeGoal'],
   ['overdue'], ['currentMrr'], ['baseMrr'], ['companies'], ['deals'],
 ];
 

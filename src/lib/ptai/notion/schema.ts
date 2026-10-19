@@ -105,7 +105,13 @@ export const CUSTOMER_PROP = {
    * 空なら Company Database の会社単位 MRR。
    */
   accountIds:      '対象アカウントID',                  // rich_text（人が入れる）
-  aimMrr:          '想定追加MRR',                       // number（双方向。§9-2）
+  aimMrr:          '想定追加MRR',                       // number（双方向。§9-2）。画面の ①（Target）追加MRR
+  /**
+   * ②の隣に出す（Commit）追加MRR。2026-10-19 Kubotie 依頼で新設。
+   * Target（想定追加MRR）が「取りにいく上限」、Commit が「約束する数字」。
+   * ⚠ 既存の数式 `⚠️合計MRR（MRR+想定追加MRR）` は Target 側を見ている。Commit は入らない。
+   */
+  commitMrr:       'Commit追加MRR',                     // number（双方向）
   billingMonth:    '課金開始予定月',                    // date（書く）
   billingStage:    '課金ステージ',                      // select（書く。§9-2）
   barrier:         '阻害の中身/これがあれば課金する',   // rich_text（書く）

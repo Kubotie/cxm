@@ -1665,3 +1665,12 @@ table.deals.iss{min-width:880px}
 
 /* 業種の列。略さない名前にしたので折り返す（2026-10-19） */
 #deals td.indcell{ min-width:9em; max-width:13em; white-space:normal; line-height:1.4; }
+
+/* コミット／チャレンジの「いま / 置いた目標」（2026-10-19） */
+.kpi .val .lgoal{
+  margin-left:6px; font-size:15px; font-weight:700; color:var(--muted);
+  letter-spacing:-.01em;
+}
+.kpi .foot .lgpct{ margin-left:8px; color:var(--ink-2); }
+/* （Commit）追加MRR のセル。Target を超えていたら気づけるように */
+#deals .aimv.cmt.over{ color:var(--plane); }

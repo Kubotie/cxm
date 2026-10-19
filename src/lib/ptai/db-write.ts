@@ -306,6 +306,8 @@ async function writeEdits(
     };
     const patch: Record<string, unknown> = {};
     if ('aim' in company) patch.aimMrr = numOr(company.aim);
+    // （Commit）追加MRR（2026-10-19）。Target（aim）とは別の列
+    if ('commit' in company) patch.commitMrr = numOr(company.commit);
     // 新規顧客フラグ（2026-10-19）。正本は Notion 顧客管理DB の checkbox
     if ('nc' in company) patch.newCustomer = company.nc === true;
 

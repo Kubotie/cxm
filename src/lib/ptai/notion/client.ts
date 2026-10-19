@@ -197,6 +197,8 @@ export interface NotionCustomer {
   /** 対象アカウントID（Ptengine の Account ID）。1 社を複数行に分けるときだけ入る */
   accountIds:     string[];
   aimMrr:         number | null;
+  /** （Commit）追加MRR。約束する数字。Target（aimMrr）とは別 */
+  commitMrr:      number | null;
   billingMonth:   string | null;
   billingStage:   string | null;
   barrier:        string | null;
@@ -250,6 +252,7 @@ function toCustomer(page: Record<string, unknown>): NotionCustomer {
     baseMrr:         (r(CUSTOMER_PROP.baseMrr) as number | null) ?? null,
     accountIds:      parseIds(r(CUSTOMER_PROP.accountIds) as string | null),
     aimMrr:          (r(CUSTOMER_PROP.aimMrr) as number | null) ?? null,
+    commitMrr:       (r(CUSTOMER_PROP.commitMrr) as number | null) ?? null,
     billingMonth:    (r(CUSTOMER_PROP.billingMonth) as string | null) ?? null,
     billingStage:    (r(CUSTOMER_PROP.billingStage) as string | null) ?? null,
     barrier:         (r(CUSTOMER_PROP.barrier) as string | null) || null,
@@ -295,6 +298,7 @@ const WRITABLE: Record<keyof CustomerPatch, { prop: string; kind: string }> = {
   newCustomer:    { prop: CUSTOMER_PROP.newCustomer,    kind: 'checkbox' },
   industry:       { prop: CUSTOMER_PROP.industry,       kind: 'select' },
   aimMrr:         { prop: CUSTOMER_PROP.aimMrr,         kind: 'number' },
+  commitMrr:      { prop: CUSTOMER_PROP.commitMrr,      kind: 'number' },
   billingMonth:   { prop: CUSTOMER_PROP.billingMonth,   kind: 'date' },
   billingStage:   { prop: CUSTOMER_PROP.billingStage,   kind: 'select' },
   barrier:        { prop: CUSTOMER_PROP.barrier,        kind: 'rich_text' },
@@ -311,6 +315,7 @@ export interface CustomerPatch {
   newCustomer?:    boolean;
   industry?:       string | null;
   aimMrr?:         number | null;
+  commitMrr?:      number | null;
   billingMonth?:   string | null;
   billingStage?:   string | null;
   barrier?:        string | null;

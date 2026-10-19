@@ -68,6 +68,7 @@ export async function loadKpiSource(): Promise<KpiSource> {
       // 期初MRR が未設定の会社は、画面の baseMrrOf と同じく現在MRR を土台にする
       baseMrr: typeof c.bm === 'number' ? c.bm : num(c.m),
       aim: num(co.aim),
+      commit: num(co.commit),
       deals,
     };
   });

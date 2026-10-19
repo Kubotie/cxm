@@ -307,3 +307,20 @@ test('Tier と業種は画面の鍵と Notion の選択肢を相互に変換で�
     assert.notEqual(INDUSTRY_TO_NOTION.OTHER, only);
   }
 });
+
+test('Target と Commit は別の Notion 列。空にすると null を書く', async () => {
+  const { CUSTOMER_PROP, CUSTOMER_READONLY_PROPS } =
+    await import('../src/lib/ptai/notion/schema.ts');
+  assert.equal(CUSTOMER_PROP.aimMrr,    '想定追加MRR');     // ①（Target）
+  assert.equal(CUSTOMER_PROP.commitMrr, 'Commit追加MRR');   // ①（Commit）
+  assert.notEqual(CUSTOMER_PROP.aimMrr, CUSTOMER_PROP.commitMrr);
+  for (const p of [CUSTOMER_PROP.aimMrr, CUSTOMER_PROP.commitMrr]) {
+    assert.ok(!CUSTOMER_READONLY_PROPS.includes(p), `${p} が書けない`);
+  }
+
+  // ⚠ 画面は空欄のとき **鍵ごと消さず null を送る**。消すとサーバーが
+  //   「送られていない」と判断して Notion を触らず、古い数字が残る（2026-10-19）
+  const board = await import('node:fs')
+    .then(fs => fs.readFileSync('public/ptai-pipeline/board.js', 'utf8'));
+  assert.match(board, /const company=\{\.\.\.\(cur\.company\|\|\{\}\), \[key\]: yen \?\? null\}/);
+});

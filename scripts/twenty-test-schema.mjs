@@ -316,6 +316,8 @@ const SCHEMA = [
       ['challengeCompanies', 'NUMBER', 'チャレンジの社数'],
       ['pipelineMrr',  'NUMBER', 'パイプライン'],
       ['pipelineCompanies',  'NUMBER', 'パイプラインの社数'],
+      ['commitGoal',   'NUMBER', 'コミットの分母（①Commit 追加MRR の合算）'],
+      ['challengeGoal','NUMBER', 'チャレンジの分母（①Target 追加MRR の合算）'],
       ['overdue',      'NUMBER', 'ネクストアクション期限超過（件）'],
       ['currentMrr',   'NUMBER', '現在MRR 合計'],
       ['baseMrr',      'NUMBER', '期初MRR 合計'],

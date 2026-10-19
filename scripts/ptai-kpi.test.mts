@@ -18,7 +18,7 @@ import {
 import { withDeltas, todayJst, toPoint } from '../src/lib/ptai/kpi-snapshot.ts';
 
 const co = (p: Partial<KpiCompany> = {}): KpiCompany =>
-  ({ cid: 'c1', owners: ['Paul'], curMrr: 0, baseMrr: 0, aim: 0, deals: [], ...p });
+  ({ cid: 'c1', owners: ['Paul'], curMrr: 0, baseMrr: 0, aim: 0, commit: 0, deals: [], ...p });
 const deal = (stage: string, addMrr: number, extra = {}) => ({ stage, addMrr, ...extra });
 
 test('②（商談）追加MRR は失注と管理クローズを除いた合計', () => {
@@ -176,4 +176,23 @@ test('Salesforce は人ではないので、会社の担当者に読み替える
   const { SYSTEM_ACTORS } = await import('../src/lib/ptai/export.ts');
   assert.ok(SYSTEM_ACTORS.has('Salesforce'));
   assert.ok(!SYSTEM_ACTORS.has('Paul'));
+});
+
+test('コミット／チャレンジの分母は合算MRR 基準（2026-10-19）', () => {
+  // 分子（コミット＝Probable 以上の合算MRR）と同じ土台でないと比率が読めない
+  const cos = [
+    co({ cid: 'a', baseMrr: 1_000_000, aim: 500_000, commit: 300_000 }),
+    co({ cid: 'b', baseMrr: 2_000_000, aim: 400_000, commit: 0 }),   // Commit 未入力
+  ];
+  const r = computeKpis(cos, { targetMrr: 0, today: '2026-10-19' });
+  // 置いた会社だけ、期初MRR を 1 回ずつ足す
+  assert.equal(r.commitGoal, 1_000_000 + 300_000);
+  assert.equal(r.challengeGoal, (1_000_000 + 500_000) + (2_000_000 + 400_000));
+});
+
+test('計画は Target のまま。Commit は混ぜない（2026-10-19 Kubotie）', () => {
+  const only = [co({ baseMrr: 1_000_000, aim: 0, commit: 900_000 })];
+  assert.equal(planOf(only[0]), null);   // Commit だけでは計画に入らない
+  const both = [co({ baseMrr: 1_000_000, aim: 500_000, commit: 900_000 })];
+  assert.deepEqual(planOf(both[0]), { base: 1_000_000, add: 500_000 });
 });

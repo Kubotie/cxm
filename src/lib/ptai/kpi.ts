@@ -57,8 +57,10 @@ export interface KpiCompany {
   curMrr: number;
   /** 期初MRR。積み上げの土台はこちら（現在MRR だと受注ぶんが二重になる） */
   baseMrr: number;
-  /** ①（目標）追加MRR */
+  /** ①（Target）追加MRR。取りにいく上限 */
   aim: number;
+  /** ①（Commit）追加MRR。約束する数字。計画には使わない（2026-10-19 Kubotie） */
+  commit: number;
   deals: KpiDeal[];
 }
 
@@ -124,6 +126,8 @@ export interface KpiRow {
   pipeline: number;   pipelineCompanies: number;
   /** ネクストアクションの期限超過（件数） */
   overdue: number;
+  /** コミット／チャレンジのカードに添える分母（合算MRR 基準） */
+  commitGoal: number; challengeGoal: number;
   /** 参考 */
   currentMrr: number; baseMrr: number;
   companies: number;  deals: number;
@@ -167,6 +171,9 @@ export function computeKpis(
     challenge: sum(c => rung(c, atLeast(c, 'QUALIFIED_CHAMPION'))), challengeCompanies: cnt(c => atLeast(c, 'QUALIFIED_CHAMPION') > 0),
     pipeline:  sum(c => rung(c, m2(c))),                        pipelineCompanies:  cnt(c => m2(c) > 0),
     overdue,
+    // 「いまここまで来た / これだけ置いた」の分母。置いた会社の期初MRR を 1 回だけ足す
+    commitGoal:    sum(c => rung(c, c.commit)),
+    challengeGoal: sum(c => rung(c, c.aim)),
     currentMrr: sum(c => c.curMrr),
     baseMrr:    sum(c => c.baseMrr),
     companies:  inScope.length,

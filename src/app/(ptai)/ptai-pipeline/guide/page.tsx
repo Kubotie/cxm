@@ -42,7 +42,8 @@ export default async function GuidePage() {
               <h3>この画面で入れるもの</h3>
               <ul>
                 <li><b>障壁</b>・<b>ニーズ</b>・<b>ネクストアクション</b></li>
-                <li><b>（目標）追加MRR</b>（この会社でいくら増やしたいか）</li>
+                <li><b>（Target）追加MRR</b>（この会社で取りにいく上限）</li>
+                <li><b>（Commit）追加MRR</b>（この会社で約束する数字）</li>
                 <li><b>新規／既存</b>（一覧の「新規/既存」列を押すと入れ替わります）</li>
                 <li><b>Tier</b>・<b>業種</b>（企業詳細の「基本情報」から。Notion に反映されます）</li>
                 <li><b>到達予定</b>（各フェーズにいつ届くか）</li>

@@ -56,6 +56,8 @@ export interface AccountInfo {
   /** 期初MRR。初回同期を焼き付けたもの。画面の増減（かっこ内）はこれとの差 */
   baseMrr:        number;
   aimMrr:         number;
+  /** （Commit）追加MRR。Notion 顧客管理DB の「Commit追加MRR」 */
+  commitMrr:      number;
   billingMonth:   string | null;
   billingStage:   string | null;
   barrier:        string | null;
@@ -153,6 +155,7 @@ export function toAccountInfo(c: NotionCustomer): AccountInfo {
     // 期初が無い会社（同期が付かなかった 7 社）は増減 0 として扱う
     baseMrr:        c.baseMrr ?? c.curMrr ?? c.mrr ?? 0,
     aimMrr:         c.aimMrr ?? 0,
+    commitMrr:      c.commitMrr ?? 0,
     billingMonth:   c.billingMonth,
     billingStage:   c.billingStage,
     barrier:        c.barrier,
