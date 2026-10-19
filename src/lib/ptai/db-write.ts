@@ -28,7 +28,9 @@ import {
 } from './twenty-test/client';
 import { TEST_OBJECTS, normalizeStage, type Stage } from './twenty-test/schema';
 import { getCustomer, updateCustomerWithExtras, listTargetRows, updateTargetRow } from './notion/client';
-import { OWNER_FROM_NOTION } from './notion/schema';
+import {
+  OWNER_FROM_NOTION, TIER_TO_NOTION, INDUSTRY_TO_NOTION, INDUSTRY_FROM_NOTION,
+} from './notion/schema';
 import { assertStageChangeAllowed, APPROVER_REQUIRED_MESSAGE } from './edit-guard';
 import { actorStampFor, type ActorStamp } from './staff';
 import { pushOpportunityFields } from './salesforce/client';
@@ -306,6 +308,25 @@ async function writeEdits(
     if ('aim' in company) patch.aimMrr = numOr(company.aim);
     // 新規顧客フラグ（2026-10-19）。正本は Notion 顧客管理DB の checkbox
     if ('nc' in company) patch.newCustomer = company.nc === true;
+
+    // ── Tier と業種（2026-10-19）────────────────────────────────────────
+    //   画面の「基本情報」で変えられるのに、**ここで拾っていなかったため
+    //   Notion に書かれていなかった**。画面にだけ残り、開き直すと元に戻る。
+    //   画面は英語の鍵（TIER1 / BEAUTY_D2C）、Notion は日本語の選択肢なので変換する。
+    if ('tier' in company) {
+      const t = str(company.tier);
+      patch.tier = t ? TIER_TO_NOTION[t] ?? null : null;
+    }
+    if ('ind' in company) {
+      const k = str(company.ind);
+      /* ⚠ Notion には画面に無い細かい区分（公共・団体・士業／要確認）がある。
+         これらは画面では「その他」に見えるので、そのまま書き戻すと
+         細かい区分が「その他」に潰れる。**同じ鍵に落ちるなら触らない。** */
+      const cur = customer?.industry ?? null;
+      if (!(cur && INDUSTRY_FROM_NOTION[cur] === k)) {
+        patch.industry = k ? INDUSTRY_TO_NOTION[k] ?? null : null;
+      }
+    }
     if (kd.fiscal)  patch.fiscalMonth  = monthOf(kd.fiscal);
     if (kd.budget)  patch.budgetMonths = rangeOf(kd.budget);
     if (kd.renewal) patch.renewalMonth = monthOf(kd.renewal);

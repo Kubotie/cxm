@@ -289,3 +289,21 @@ test('新規顧客は Notion の checkbox。未設定は false', async () => {
   // Notion の checkbox が空のときは undefined で届きうる。false に倒す
   assert.equal(toAccountInfo(base as never).newCustomer, false);
 });
+
+test('Tier と業種は画面の鍵と Notion の選択肢を相互に変換できる', async () => {
+  const { TIER_TO_NOTION, TIER_FROM_NOTION, INDUSTRY_TO_NOTION, INDUSTRY_FROM_NOTION } =
+    await import('../src/lib/ptai/notion/schema.ts');
+
+  // Notion の Tier は 未顧客 / Tier1 / Tier2 / Tier3 / Tier5（2026-10-19 実測）
+  assert.deepEqual(Object.values(TIER_TO_NOTION).sort(),
+    ['Tier1', 'Tier2', 'Tier3', 'Tier5', '未顧客'].sort());
+  for (const [k, v] of Object.entries(TIER_TO_NOTION)) assert.equal(TIER_FROM_NOTION[v], k);
+  for (const [k, v] of Object.entries(INDUSTRY_TO_NOTION)) assert.equal(INDUSTRY_FROM_NOTION[v], k);
+
+  // Notion にしかない細かい区分。画面では「その他」に見えるので、
+  // そのまま書き戻すと区分が潰れる。db-write はこれを検知して書かない
+  for (const only of ['公共・団体・士業', '要確認']) {
+    assert.equal(INDUSTRY_FROM_NOTION[only], 'OTHER');
+    assert.notEqual(INDUSTRY_TO_NOTION.OTHER, only);
+  }
+});

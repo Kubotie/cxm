@@ -80,7 +80,9 @@ const ACTIVE_PS = ['FDE_IN_PROGRESS','POC_IN_PROGRESS','APPO_SET','APPO_REQUESTI
    ⚠ 企業追加で Notion に書くときの選択肢もこれ（NC_IND_NOTION）。
      Notion 側の選択肢名と 1 文字でも違うと書き込みが落ちるので、勝手に縮めないこと。 */
 const IND_JP = {BEAUTY_D2C:'美容・コスメ・健康食品・D2C',HEALTHCARE:'医療・ヘルスケア・製薬・医療機器',FITNESS:'フィットネス・ウェルネス',APPAREL:'アパレル・ファッション',EC_RETAIL:'EC・通販・小売',MANUFACTURER:'メーカー・製造・電機',IT_SAAS:'IT・SaaS・ソフトウェア・Web',FINANCE:'金融・保険・投資',TELECOM_INFRA:'通信・インフラ・エネルギー',REAL_ESTATE:'不動産・建設・住宅',HR:'人材・HR・採用',EDUCATION:'教育・スクール・EdTech',ENTERTAINMENT:'エンタメ・メディア',TOURISM:'観光・宿泊・催事',AGENCY:'代理店',OTHER:'その他'};
-const TIER_JP = t => t ? t.replace('TIER','Tier') : '—';
+/* Tier の表示。Notion の選択肢は 未顧客 / Tier1 / Tier2 / Tier3 / Tier5。
+   NONE をそのまま出していて画面に「NONE」と見えていた（2026-10-19 Kubotie 指摘） */
+const TIER_JP = t => !t ? '—' : t==='NONE' ? '未顧客' : t.replace('TIER','Tier');
 /* 新規顧客のしるし。Tier の横に小さく出す（2026-10-19 Kubotie） */
 const NC_TAG = d => d && d.nc ? '<span class="nctag">新規</span>' : '';
 /* 一覧の「新規/既存」列。押すとその場で入れ替わる（Notion 顧客管理DB に保存）。
@@ -1097,7 +1099,7 @@ function goPage(p){ page=p; renderDeals(); document.getElementById('deals').clos
 document.getElementById('pgPrev').onclick=()=>goPage(page-1);
 document.getElementById('pgNext').onclick=()=>goPage(page+1);
 document.getElementById('pgSize').addEventListener('input',e=>{ pageSize=+e.target.value; page=1; try{localStorage.setItem('pgaBoard.pageSize',String(pageSize));}catch(_){} renderDeals(); });
-const MS_DEF={owner:{lab:'担当',all:'全員',opts:()=>MEMBERS.map(m=>[m,m])},phase:{lab:'フェーズ',all:'すべて',opts:()=>PHASES.map(p=>[p,PH_JP[p]])},tier:{lab:'Tier',all:'すべて',opts:()=>['TIER1','TIER2','TIER3','TIER5'].map(t=>[t,TIER_JP(t)])}};
+const MS_DEF={owner:{lab:'担当',all:'全員',opts:()=>MEMBERS.map(m=>[m,m])},phase:{lab:'フェーズ',all:'すべて',opts:()=>PHASES.map(p=>[p,PH_JP[p]])},tier:{lab:'Tier',all:'すべて',opts:()=>['NONE','TIER1','TIER2','TIER3','TIER5'].map(t=>[t,TIER_JP(t)])}};
 function msSummary(){ for(const k in MS_DEF){ const el=document.getElementById('ms-'+k); if(!el) continue; const def=MS_DEF[k], sel=FS[k];
   const txt=!sel.size?def.all:sel.size===1?((def.opts().find(o=>sel.has(o[0]))||[,''])[1]):`${sel.size}件`;
   el.querySelector('summary').innerHTML=`${def.lab} <b>${esc(txt)}</b> ▾`; el.classList.toggle('on',sel.size>0);
@@ -1114,7 +1116,7 @@ function initMS(){
 }
 function initFilters(){
   const add=(id,arr)=>{const el=document.getElementById(id);arr.forEach(([v,l])=>el.insertAdjacentHTML('beforeend',`<option value="${v}">${l}</option>`));};
-  add('fOwner',MEMBERS.map(m=>[m,m])); add('fPhase',PHASES.map(s=>[s,PH_JP[s]])); add('fStatus',PS.map(s=>[s,PS_JP[s]])); add('fTier',['TIER1','TIER2','TIER3','TIER5'].map(t=>[t,TIER_JP(t)]));
+  add('fOwner',MEMBERS.map(m=>[m,m])); add('fPhase',PHASES.map(s=>[s,PH_JP[s]])); add('fStatus',PS.map(s=>[s,PS_JP[s]])); add('fTier',['NONE','TIER1','TIER2','TIER3','TIER5'].map(t=>[t,TIER_JP(t)]));
   document.getElementById('fMissing').addEventListener('input',e=>{missingOnly=e.target.checked;renderForecast();});
   document.getElementById('fNew').addEventListener('input',e=>{newOnly=e.target.checked;});
   document.getElementById('fDeals').addEventListener('input',e=>{ EXPANDED.clear(); if(e.target.checked) DEALS.forEach(d=>{ if(d.deals.length) EXPANDED.add(d.cid); }); renderDeals(); });
@@ -1968,19 +1970,20 @@ function sumKeyDates(d){
    nc だけ true/false なので、選択肢との変換を str / parse で挟む。
    ⚠ tier と ind は保存しても **Notion には書いていない**（db-write が見ていない）。
      nc は書く。経路が違うので、同じ見た目でも挙動が違う点に注意。 */
-const CO_F={tier:{l:'Tier', raw:c=>c.t, cur:d=>d.t, opts:()=>['TIER1','TIER2','TIER3','TIER5'], lab:v=>TIER_JP(v)},
+const CO_F={tier:{l:'Tier', raw:c=>c.t, cur:d=>d.t, opts:()=>['NONE','TIER1','TIER2','TIER3','TIER5'], lab:v=>TIER_JP(v)},
   nc:{l:'新規顧客', raw:c=>c.nc===true, cur:d=>d.nc===true, blank:false,
       opts:()=>['1','0'], lab:v=>v==='1'?'新規':'既存',
       str:v=>v?'1':'0', parse:v=>v==='1'},
   ind:{l:'業種', raw:c=>c.ind, cur:d=>d.ind, opts:()=>Object.keys(IND_JP), lab:v=>IND_JP[v]||v}};
 /* 選択肢の表示用。bool の項目は「（未設定）」を出さない */
 const coSel = (d,F) => F.str ? F.str(F.cur(d)) : (F.cur(d)||'');
-function coPending(d,k){ if(k==='nc') return false;   // nc は Notion に直接書くので待ちが無い
-  const e=EDITS[d.cid]; const ec=(e&&e.company)||{}; return has(ec[k]) && ec[k]!==CO_F[k].raw(RAW.companies[d.id]||{}); }
-function coEd(d,k){ const F=CO_F[k], v=F.cur(d), p=coPending(d,k);
-  const tip = k==='nc' ? 'クリックで変更（Notion 顧客管理DB に保存）' : 'クリックで変更（Twenty に同期）';
+/* 2026-10-19: Tier・業種・新規顧客はどれも保存時に Notion へ書き切るので、
+   「同期待ち」という状態が無くなった。以前は Tier と業種がサーバー側で
+   拾われておらず、待ちバッジが出たまま一生消えなかった */
+function coPending(){ return false; }
+function coEd(d,k){ const F=CO_F[k], v=F.cur(d);
   const txt = F.str ? esc(F.lab(F.str(v))) : (v?esc(F.lab(v)):'<span class="dim">未設定</span>');
-  return `<button type="button" class="coed" data-coed="${k}" title="${tip}">${txt}<i aria-hidden="true">✎</i></button>${p?'<span class="sb2 ed">Twenty 同期待ち</span>':''}`; }
+  return `<button type="button" class="coed" data-coed="${k}" title="クリックで変更（Notion 顧客管理DB に保存）">${txt}<i aria-hidden="true">✎</i></button>`; }
 /* 新規顧客フラグの保存。**一覧のボタンと企業詳細のプルダウンで同じ道を通る。**
    正本は Notion 顧客管理DB の checkbox（db-write が書く）。
    失敗したら元に戻して知らせる（黙って戻ると、付けたつもりのまま運用されてしまう）。 */
@@ -2022,25 +2025,23 @@ document.addEventListener('click', e=>{
 
 async function saveCompanyField(d,k,val){
   if(k==='nc') return saveNc(d, val===true);
-  const F=CO_F[k], raw=F.raw(RAW.companies[d.id]||{}), from=F.cur(d);
+  const F=CO_F[k], from=F.cur(d);
   const prev=EDITS[d.cid]||{}; const now=new Date().toISOString();
-  const company={...(prev.company||{})};
-  /* bool の項目（nc）は **いつも値を送る**。
-     「raw と同じなら消す」をすると、RAW が読み込み時のまま古いせいで
-     オンにした直後にオフへ戻せない（raw=false のままなので false→削除→書かれない）。
-     Notion 側は中身が同じなら書かずに素通しするので、毎回送っても無駄打ちにならない。
-     2026-10-19 に実機で踏んだ。 */
-  if(F.parse) company[k]=val;
-  else if(!val || val===raw) delete company[k]; else company[k]=val;
-  // nc は Notion に直接書くので、Twenty 同期待ちには数えない
-  company.twentyPending = Object.keys(CO_F).some(q=>q!=='nc' && has(company[q]) && company[q]!==CO_F[q].raw(RAW.companies[d.id]||{})) || undefined;
-  if(!company.twentyPending) delete company.twentyPending;
+  /* 【移植による変更 11/11】2026-10-19 Kubotie「Tier を変えたら Notion も上書きしたい」。
+     Tier・業種・新規顧客の 3 つとも **Notion 顧客管理DB が正本**で、保存すると書き戻す。
+     それまで Tier と業種はサーバー側が拾っておらず、画面にだけ残って
+     開き直すと元に戻っていた（「Twenty 同期待ち」と出たまま一生同期されない）。
+
+     ⚠ **いつも値を送る。** 「読み込んだ値と同じなら送らない」にすると、
+       RAW は読み込み時の 1 回きりで取り直さないので、変えた直後に
+       元の値へ戻せない（送られずに握りつぶされる）。
+       Notion 側は中身が同じなら書かないので、毎回送っても無駄打ちにならない。 */
+  const company={...(prev.company||{}), [k]: val};
   const body={companyId:d.cid, companyName:d.n, opportunityId:d.oid||null, opp:{...(prev.opp||{})}, company, deals:[...(prev.deals||[])], updatedAt:now, syncedAt:null};
-  /* nc は Notion に書き切るので、手元の RAW も合わせる。
-     RAW は読み込み時の 1 回きりで取り直さないため、合わせないと
-     次の再描画で古い値に戻って見える */
-  if(F.parse){ const rc=RAW.companies[d.id]; if(rc) rc[k==='nc'?'nc':k]=val; }
-  await saveEditDoc(d, body, F.parse ? '保存しました' : 'Twenty 同期待ちにしました');
+  // 手元の RAW も合わせる。合わせないと次の再描画で古い値に戻って見える
+  const rc=RAW.companies[d.id]; const rk={tier:'t', ind:'ind', nc:'nc'}[k];
+  if(rc && rk) rc[rk]=val;
+  await saveEditDoc(d, body, '保存しました（Notion 顧客管理DB）');
   const lab = v => F.str ? F.lab(F.str(v)) : (v?F.lab(v):'—');
   if((from??null)!==(val??null)) logFeed(DEALS[d.id], [{kind:'co', deal:'', key:null, label:F.l, from:lab(from), to:lab(val)}]);
 }
