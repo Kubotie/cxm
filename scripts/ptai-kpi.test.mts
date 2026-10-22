@@ -210,3 +210,31 @@ test('画面は日付が変わったら TODAY を差し替える（2026-10-22）
   }
   assert.match(src, /renderAll\(\); watchDayChange\(\);/, '起動時に監視を始めていない');
 });
+
+test('入力中は作り直さず、書きかけはブラウザに残す（2026-10-22）', async () => {
+  const src = await import('node:fs')
+    .then(fs => fs.readFileSync('public/ptai-pipeline/board.js', 'utf8'));
+
+  /* ポーリング（6 秒ごと）で来る再描画は必ず guardedRender を通す。
+     素通しすると入力中のフォームごと消える。
+     ⚠ 人が保存を押したときの再描画は素通しでよい（結果をすぐ見たいので）。
+       ここで見るのは onSnapshot の中だけ。 */
+  const body = src.slice(src.indexOf("db.doc('settings/sfSync')"));
+  for (const m of body.matchAll(/\.onSnapshot\(([\s\S]*?)\}, (?:err|\(\))/g)) {
+    const cb = m[1];
+    if (!/render(All|Drawer)\(/.test(cb)) continue;
+    assert.ok(cb.includes('guardedRender'),
+      `guardedRender を通していないポーリングがある:\n${cb.slice(0, 200)}`);
+  }
+  assert.ok(src.includes('function guardedRender'));
+  assert.ok(src.includes('function flushPendingRender'));
+
+  // 書きかけの置き場。送れたら消すこと
+  assert.ok(src.includes('const Draft = {'));
+  assert.ok(src.includes('Draft.clear(dkey)'), '完了の入力は送れたら消す');
+  assert.ok(src.includes('if(k) Draft.clear(k)'), '商談の入力は送れたら消す');
+
+  // 完了の入力: 結果メモは外し、呼び名はネクストアクションに揃えた
+  assert.ok(!src.includes('data-note'), '結果メモが残っている');
+  assert.ok(src.includes('完了してネクストアクションを登録'));
+});

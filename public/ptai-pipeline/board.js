@@ -25,6 +25,75 @@ function refreshToday(){
   TODAY = t;
   return true;
 }
+/* ═══ 【移植による変更 14/14】入力中の保護と下書きの保存（PtAI 共通）═══════
+   2026-10-22 Kubotie 指摘「入力途中のものが自動で閉じてしまった」。
+
+   この画面は 6 秒ごとに保存先を見に行き、更新があると画面を作り直す。
+   作り直すと **入力中のフォームごと消える**（完了の入力、商談の入力、
+   表のセル、どれも同じ）。他の人が同じ会社をいじっただけでも起きる。
+
+   対策は 2 段構え。
+     ① 入力中は作り直しを見送る。手が止まったらまとめて流す
+     ② それでも消えたとき（再読み込み・誤操作）に備え、
+        打った内容をこまめにブラウザへ残し、開き直したら戻す
+
+   ⚠ ② は**この端末のブラウザにしか残らない**。保存ではない。
+     サーバーに届いたら必ず消すこと（残すと古い下書きが復活する）。 */
+
+/** 下書き置き場。保存ではないので、送れたら消す */
+const DRAFT_PREFIX = 'ptai.draft.';
+const DRAFT_TTL = 7 * 24 * 60 * 60 * 1000;   // 1 週間で捨てる
+const Draft = {
+  save(key, v){ try{ localStorage.setItem(DRAFT_PREFIX+key, JSON.stringify({at:Date.now(), v})); }catch(_){} },
+  load(key){
+    try{
+      const r = JSON.parse(localStorage.getItem(DRAFT_PREFIX+key) || 'null');
+      if(!r || !r.at) return null;
+      if(Date.now() - r.at > DRAFT_TTL){ Draft.clear(key); return null; }
+      return r.v;
+    }catch(_){ return null; }
+  },
+  clear(key){ try{ localStorage.removeItem(DRAFT_PREFIX+key); }catch(_){} },
+  /** 入力欄に繋ぐ。打つたびに残し、送れたら消す。戻した値があれば true */
+  wire(key, els){
+    const read = () => { const o={}; for(const k in els) o[k] = els[k] ? els[k].value : ''; return o; };
+    const saved = Draft.load(key);
+    let restored = false;
+    if(saved){
+      for(const k in els){ if(els[k] && saved[k] && !els[k].value){ els[k].value = saved[k]; restored = true; } }
+    }
+    const on = () => { const o=read(); Object.values(o).some(v=>v) ? Draft.save(key,o) : Draft.clear(key); };
+    for(const k in els){ if(els[k]) els[k].addEventListener('input', on); }
+    return restored;
+  },
+};
+
+/** いま人が入力している最中か。開きっぱなしのフォームも入力中とみなす */
+function isEditing(){
+  // 開いている入力フォーム（完了の入力・表のセル・その場のプルダウン）
+  if(document.querySelector('.nadf, .aimedit, .naedit, select.phsel')) return true;
+  const a = document.activeElement;
+  if(!a || !a.matches) return false;
+  if(!a.matches('input, textarea, select, [contenteditable="true"]')) return false;
+  // 絞り込みや検索はいつ作り直しても困らない
+  return !a.closest('.filters, .toolbar');
+}
+
+/** 入力中なら作り直しを見送り、手が止まったら流す */
+let PENDING_RENDER = null;
+function guardedRender(fn){
+  if(isEditing()){ PENDING_RENDER = fn; return; }
+  PENDING_RENDER = null;
+  fn();
+}
+function flushPendingRender(){
+  if(!PENDING_RENDER || isEditing()) return;
+  const f = PENDING_RENDER; PENDING_RENDER = null;
+  try{ f(); }catch(e){ console.error('[ptai] 保留していた描き直しに失敗', e); }
+}
+// 入力欄から離れた少しあとに流す（別の欄へ移っただけなら流さない）
+document.addEventListener('focusout', () => setTimeout(flushPendingRender, 300), true);
+
 /** 日付が変わったら画面を作り直す。描画は renderAll に任せる */
 function watchDayChange(){
   const tick = () => { if(!refreshToday()) return;
@@ -2259,19 +2328,23 @@ document.addEventListener('click', e=>{
   e.preventDefault(); e.stopPropagation();
   const d=DEALS[openId], key=b.dataset.nadone; const row=b.closest('.dna');
   const f=document.createElement('div'); f.className='nadf';
-  /* 次の一手は必須。空のままでは完了にできない */
-  f.innerHTML=`<div class="nadf-r"><label>結果メモ<span class="opt">任意</span></label>`
-    + `<input type="text" data-note placeholder="例：稟議は11月に回ると確認" aria-label="結果メモ"></div>`
-    + `<div class="nadf-r"><label>次の一手<span class="req">必須</span></label>`
+  /* ネクストアクションは必須。空のままでは完了にできない。
+     【移植による変更 14/14】2026-10-22 Kubotie:
+       ・結果メモは外した（書かれないまま残り、完了の手数を増やしていた）
+       ・「次の一手」という言い方をやめ、表と同じ「ネクストアクション」に揃えた */
+  f.innerHTML=`<div class="nadf-r"><label>ネクストアクション<span class="req">必須</span></label>`
     + `<textarea data-next rows="2" placeholder="この商談を前に進める次の1手（例：見積を提出し稟議の日程を確認）" aria-label="次のネクストアクション" required></textarea></div>`
     + `<div class="nadf-r"><label>次の期日<span class="opt">任意</span></label>`
     + `<input type="date" data-nextdue aria-label="次のアクション期日"></div>`
     + `<div class="nadf-a"><span class="nadf-m" role="status"></span>`
-    + `<button type="button" class="btn sm" data-ok>完了して次の一手を登録</button>`
+    + `<button type="button" class="btn sm" data-ok>完了してネクストアクションを登録</button>`
     + `<button type="button" class="btn ghost sm" data-cancel>やめる</button></div>`;
   row.after(f); b.hidden=true;
-  const note=f.querySelector('[data-note]'), nxt=f.querySelector('[data-next]'), due=f.querySelector('[data-nextdue]');
+  const nxt=f.querySelector('[data-next]'), due=f.querySelector('[data-nextdue]');
   const msg=f.querySelector('.nadf-m');
+  // 打った内容をこまめにブラウザへ残す。送れたら消す
+  const dkey=`nadone:${d.cid}:${key}`;
+  if(Draft.wire(dkey, {next:nxt, due})) msg.textContent='書きかけを戻しました';
   nxt.focus();
   const okBtn=f.querySelector('[data-ok]');
   let sending=false;
@@ -2282,15 +2355,17 @@ document.addEventListener('click', e=>{
        もう一度押せると同じ完了が重なる（2026-10-08 に 4 件重なった） */
     sending=true; okBtn.disabled=true; okBtn.textContent='保存中…';
     msg.textContent=''; msg.style.color='var(--muted)';
-    try{ await completeNa(d,key,note.value.trim(),n,due.value||null); }
-    catch(_){ sending=false; okBtn.disabled=false; okBtn.textContent='完了して次の一手を登録';
+    try{ await completeNa(d,key,null,n,due.value||null); Draft.clear(dkey); }
+    catch(_){ sending=false; okBtn.disabled=false; okBtn.textContent='完了してネクストアクションを登録';
       msg.style.color=''; msg.textContent='保存できませんでした。もう一度お試しください'; }
   };
   okBtn.onclick=ok;
-  [note,nxt,due].forEach(el=>{ el.onkeydown=ev=>{ ev.stopPropagation();
+  [nxt,due].forEach(el=>{ el.onkeydown=ev=>{ ev.stopPropagation();
     if(ev.key==='Enter' && !(el===nxt && ev.shiftKey)){ ev.preventDefault(); ok(); }
-    if(ev.key==='Escape'){ f.remove(); b.hidden=false; } }; });
-  f.querySelector('[data-cancel]').onclick=()=>{ f.remove(); b.hidden=false; };
+    /* Escape で閉じても書きかけは消さない。開き直すと戻る
+       （打ち直しになるのがいちばん困る。2026-10-22） */
+    if(ev.key==='Escape'){ f.remove(); b.hidden=false; flushPendingRender(); } }; });
+  f.querySelector('[data-cancel]').onclick=()=>{ f.remove(); b.hidden=false; flushPendingRender(); };
 }, true);
 function msRow(y){
   if(['CLOSED_WON','CLOSED_LOST'].includes(y.ph)) return '';
@@ -2602,7 +2677,11 @@ async function saveEditDoc(d, body, doneMsg){
   /* 【移植による変更】混み合い（Twenty の回数制限）で落ちることがあるので 3 回まで、間隔を空けて送り直す。
      全置換なので送り直しても二重にはならない（2026-10-06 Eri 指摘） */
   for(let k=0;k<3;k++){ try{ await ref.set(body); err=null; break; }catch(e){ err=e; if(e.code!=='unavailable') break; if(msg) msg.textContent='混み合っています。送り直しています…'; await new Promise(r=>setTimeout(r,(1500<<k)+Math.random()*800)); } }
-  if(!err){ await ensureFollowUps(DEALS[d.id]); renderDrawer(); const m=document.getElementById('efMsg'); if(m) m.textContent=doneMsg||'保存しました'; }
+  if(!err){
+    // 送れたので書きかけは捨てる。残すと次に開いたとき古い内容が戻ってくる
+    const k=document.getElementById('efForm')?.dataset.draftKey; if(k) Draft.clear(k);
+    await ensureFollowUps(DEALS[d.id]); renderDrawer();
+    const m=document.getElementById('efMsg'); if(m) m.textContent=doneMsg||'保存しました'; }
   else { renderDrawer(); const m=document.getElementById('efMsg'); if(m) m.textContent = err.code==='quota_exceeded'?'保存容量の上限に達しています':'保存できませんでした。編集権限があるか確認してください（この画面には反映済み）'; }
 }
 function wireMs(d){
@@ -2651,6 +2730,17 @@ function msRead(){
 function wireEditForm(d){
   const f=document.getElementById('efForm'); if(!f) return;
   wireMs(d);
+  /* 【移植による変更 14/14】書きかけをブラウザに残す（2026-10-22 Kubotie）。
+     保存までに間があり、再読み込みや別タブの更新で消えると打ち直しになる。
+     戻すのは**空の欄だけ**。すでに値がある欄は上書きしない
+     （保存済みの値を古い書きかけで潰さないため）。 */
+  const efKey = `deal:${d.cid}:${editDeal || 'main'}`;
+  const efEls = {};
+  for(const id of ['efName','efBr','efNeed','efNa']){ const el=document.getElementById(id); if(el) efEls[id]=el; }
+  if(Object.keys(efEls).length && Draft.wire(efKey, efEls)){
+    const m=document.getElementById('efMsg'); if(m) m.textContent='書きかけを戻しました（まだ保存されていません）';
+  }
+  f.dataset.draftKey = efKey;
   f.querySelectorAll('[data-dsel]').forEach(b=>b.onclick=()=>{ const k=b.dataset.dsel;
     if(k==='new'){ editDeal = editDeal==='new' ? null : 'new'; DEAL_OPEN=null; }
     else { const id=d.cid+'|'+k; if(DEAL_OPEN===id){ DEAL_OPEN=null; } else { DEAL_OPEN=id; editDeal=k; } }
@@ -3644,21 +3734,23 @@ document.getElementById('edForm').addEventListener('submit',async e=>{
   if(!db){dbState='off';renderSaveInfo();return;}
   dbState='on'; tgtRef=db.doc('settings/targets'); renderSaveInfo();
   db.doc('settings/sfSync').onSnapshot(snap=>{ SFSTAT = snap.exists ? snap.data() : null; renderSfStat(); }, ()=>{});
-  tgtRef.onSnapshot(snap=>{ if(snap.exists){applySettings(snap.data());renderAll();} renderSaveInfo(); },
+  tgtRef.onSnapshot(snap=>{ if(snap.exists){applySettings(snap.data()); guardedRender(renderAll);} renderSaveInfo(); },
     err=>{ if(err&&err.code==='revoked'){dbState='off';tgtRef=null;renderSaveInfo();} });
   db.collection('plans').onSnapshot(qs=>{
     PLANS=qs.docs.filter(x=>x.exists).map(x=>x.data());
-    DEALS.forEach(applyPlans); renderAll(); if(openId!==null) renderDrawer();
+    DEALS.forEach(applyPlans);
+    guardedRender(()=>{ renderAll(); if(openId!==null) renderDrawer(); });
   }, err=>{ if(err&&err.code==='revoked') db=null; });
   db.collection('orgs').onSnapshot(qs=>{
     const next={}; qs.docs.forEach(doc=>{ if(doc.exists) next[doc.id]=doc.data(); }); ORGS=next;
-    if(openId!==null) renderDrawer();
+    guardedRender(()=>{ if(openId!==null) renderDrawer(); });
   }, err=>{ if(err&&err.code==='revoked') db=null; });
   db.collection('chatwork').onSnapshot(qs=>{
     const next={}; qs.docs.forEach(doc=>{ if(doc.exists) next[doc.id]=doc.data(); }); CW=next;
   }, err=>{ if(err&&err.code==='revoked') db=null; });
   db.collection('newcos').onSnapshot(qs=>{
-    const next={}; qs.docs.forEach(doc=>{ if(doc.exists) next[doc.id]=doc.data(); }); NEWCOS=next; applyNewcos(); renderAll(); if(openId!==null) renderDrawer();
+    const next={}; qs.docs.forEach(doc=>{ if(doc.exists) next[doc.id]=doc.data(); }); NEWCOS=next; applyNewcos();
+    guardedRender(()=>{ renderAll(); if(openId!==null) renderDrawer(); });
   }, err=>{ if(err&&err.code==='revoked') db=null; });
   db.collection('feed').orderBy('at','desc').limit(200).onSnapshot(qs=>{
     /* 【移植による変更】保存先（Twenty の操作記録）に担当の列が無いので、会社から引き直す（2026-10-06）。
@@ -3672,15 +3764,17 @@ document.getElementById('edForm').addEventListener('submit',async e=>{
   }, err=>{ if(err&&err.code==='revoked') db=null; });
   db.collection('aplans').onSnapshot(qs=>{
     const next={}; qs.docs.forEach(doc=>{ if(doc.exists) next[doc.id]=doc.data(); }); APLAN=next;
-    DEALS.forEach(applyPlans); if(openId!==null && dTab==='plan') renderDrawer();
+    DEALS.forEach(applyPlans);
+    guardedRender(()=>{ if(openId!==null && dTab==='plan') renderDrawer(); });
   }, err=>{ if(err&&err.code==='revoked') db=null; });
   db.collection('recent').onSnapshot(qs=>{
     const next={}; qs.docs.forEach(doc=>{ if(doc.exists) next[doc.id]=doc.data(); }); RECENT=next;
-    if(openId!==null && dTab==='sum') renderDrawer();
+    guardedRender(()=>{ if(openId!==null && dTab==='sum') renderDrawer(); });
   }, err=>{ if(err&&err.code==='revoked') db=null; });
   db.collection('edits').onSnapshot(qs=>{
     const next={}; qs.docs.forEach(doc=>{ if(doc.exists) next[doc.id]=doc.data(); }); EDITS=next;
-    rebuildDeals(); renderAll(); if(openId!==null) renderDrawer();
+    rebuildDeals();
+    guardedRender(()=>{ renderAll(); if(openId!==null) renderDrawer(); });
   }, err=>{ if(err&&err.code==='revoked') db=null; });
 })();
 
