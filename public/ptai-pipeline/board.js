@@ -7,7 +7,35 @@
         2026-10-01 Kubotie 指示。計算式は FORECAST / ladder の注記を見ること */
 const RAW = window.__PGA_RAW;
 /* ===================== 設定 ===================== */
-const TODAY = (d=>new Date(d.getFullYear(),d.getMonth(),d.getDate()))(new Date());
+/* ═══ 【移植による変更 13/13】日付をまたいでも止まらないようにする ═══════════
+   2026-10-22 Kubotie 指摘「10/20 の期日が 2 日過ぎているのに『今日』のまま」。
+
+   この画面は開きっぱなしで使う。TODAY を読み込み時の 1 回きりにしていたため、
+   日付が変わっても**その日のまま固まり**、期限超過・「今日」「あと N 日」・
+   道のりの「今日」線・お知らせが前の日の判定を出し続けていた。
+   80 箇所が TODAY を見ているので、ここを差し替えて描き直す。
+
+   ⚠ const にしないこと。差し替えられなくなる。 */
+const startOfDay = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+let TODAY = startOfDay(new Date());
+/** 日付が変わっていたら差し替える。変わったときだけ true */
+function refreshToday(){
+  const t = startOfDay(new Date());
+  if(t.getTime() === TODAY.getTime()) return false;
+  TODAY = t;
+  return true;
+}
+/** 日付が変わったら画面を作り直す。描画は renderAll に任せる */
+function watchDayChange(){
+  const tick = () => { if(!refreshToday()) return;
+    try{ renderAll(); if(typeof openId!=='undefined' && openId!==null) renderDrawer(); }
+    catch(e){ console.error('[ptai] 日付の切り替えで描き直せませんでした', e); } };
+  // 1 分ごと。加えて、たたんでいたタブに戻った瞬間にも見る
+  // （ノートを閉じていた間はタイマーが止まるので、これが無いと戻っても古いまま）
+  setInterval(tick, 60000);
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) tick(); });
+  window.addEventListener('focus', tick);
+}
 const CONFIG = {
   targetMrr: 40000000,
   targetDue: '2026-12',
@@ -3658,7 +3686,7 @@ document.getElementById('edForm').addEventListener('submit',async e=>{
 
 document.getElementById('fetched').textContent = RAW.fetched.replace('T',' ').replace('Z',' UTC');
 const reopen = restoreHash();
-initFilters(); initGoalForm(); initNewco(); document.getElementById('isAll').addEventListener('input',renderIssues); renderGaps(); renderAll();
+initFilters(); initGoalForm(); initNewco(); document.getElementById('isAll').addEventListener('input',renderIssues); renderGaps(); renderAll(); watchDayChange();
 if(reopen) reopen();
 
 /* ===== 詳細パネルの幅（左端をドラッグ） ===== */

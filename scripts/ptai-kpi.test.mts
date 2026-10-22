@@ -196,3 +196,17 @@ test('計画は Target のまま。Commit は混ぜない（2026-10-19 Kubotie�
   const both = [co({ baseMrr: 1_000_000, aim: 500_000, commit: 900_000 })];
   assert.deepEqual(planOf(both[0]), { base: 1_000_000, add: 500_000 });
 });
+
+test('画面は日付が変わったら TODAY を差し替える（2026-10-22）', async () => {
+  // この画面は開きっぱなしで使う。TODAY を読み込み時の 1 回きりにしていたため、
+  // 日付が変わっても前の日のまま固まり、2 日過ぎた期日が「今日」と出ていた
+  const src = await import('node:fs')
+    .then(fs => fs.readFileSync('public/ptai-pipeline/board.js', 'utf8'));
+  assert.match(src, /^let TODAY = startOfDay\(new Date\(\)\);$/m, 'TODAY は差し替えられる必要がある');
+  assert.doesNotMatch(src, /^const TODAY =/m, 'const だと差し替えられない');
+  // 戻ってきた瞬間にも見る（たたんでいる間はタイマーが止まる）
+  for (const hook of ['setInterval(tick', "visibilitychange", "'focus', tick"]) {
+    assert.ok(src.includes(hook), `${hook} が無い`);
+  }
+  assert.match(src, /renderAll\(\); watchDayChange\(\);/, '起動時に監視を始めていない');
+});
